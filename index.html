@@ -6663,8 +6663,8 @@ window.delStaff=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.STAFF,id);
 const CLIENT_TYPE_LABEL={detail:'Détaillant',grossiste:'Grossiste',resto:'Restauration',hotel:'Hôtel',particulier:'Particulier',autre:'Autre'};
 const CLIENT_TYPE_CSS={detail:'b-g',grossiste:'b-bl',resto:'b-a',hotel:'b-pu',particulier:'b-gr',autre:'b-gr'};
 const PAIE_LABEL={comptant:'Comptant',credit7:'Crédit 7j',credit15:'Crédit 15j',credit30:'Crédit 30j',mobile_money:'Mobile Money'};
-const SALE_STATUT_LABEL={pending:'En attente',confirmed:'Confirmée',delivered:'Livrée',invoiced:'Facturée',paid:'Soldée',cancelled:'Annulée'};
-const SALE_STATUT_CSS={pending:'b-a',confirmed:'b-bl',delivered:'b-g',invoiced:'b-inv',paid:'b-g',cancelled:'b-r'};
+const SALE_STATUT_LABEL={pending:'En attente',confirmed:'Confirmée',delivered:'Livrée',partially_delivered:'Partielle',invoiced:'Facturée',paid:'Soldée',cancelled:'Annulée'};
+const SALE_STATUT_CSS={pending:'b-a',confirmed:'b-bl',delivered:'b-g',partially_delivered:'b-a',invoiced:'b-inv',paid:'b-g',cancelled:'b-r'};
 const PAIE_MODE_LABEL={especes:'Espèces',wave:'Wave',orange_money:'Orange Money',mtn:'MTN Money',virement:'Virement',credit:'Crédit'};
 
 async function renderClients(ca){
@@ -6791,11 +6791,11 @@ async function renderCommandes(ca){
       <td style="white-space:nowrap">
       <td style="white-space:nowrap">
         ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'confirmed')" title="Confirmer"><i class="fas fa-check"></i></button> `:''}
-        ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
+        ${(s.statut==='confirmed'||s.statut==='partially_delivered')?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer${s.statut==='partially_delivered'?' (suite)':''}"><i class="fas fa-truck"></i></button> `:''}
         ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
-        ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="openFacturePreview(${s.id})" title="Prévisualiser facture"><i class="fas fa-eye"></i></button> ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacturePro(${s.id})" title="Imprimer PDF"><i class="fas fa-print"></i></button> `:""} `:''}
+        ${(s.statut==='delivered'||s.statut==='partially_delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="previewBL(${s.id},'${s.numBL||''}')" title="Aperçu BL"><i class="fas fa-eye"></i></button> <button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="Imprimer BL"><i class="fas fa-file-alt"></i></button> `:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm" style="background:#f0fdf4;color:#166534;border:.5px solid #86efac" onclick="openFacturePreview(${s.id})" title="Facture"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-gh" onclick="printFacturePro(${s.id})" title="Imprimer PDF"><i class="fas fa-print"></i></button> `:''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -6849,11 +6849,11 @@ window.filterCommandes=async function(clientId){
       <td style="white-space:nowrap">
       <td style="white-space:nowrap">
         ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'confirmed')" title="Confirmer"><i class="fas fa-check"></i></button> `:''}
-        ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
+        ${(s.statut==='confirmed'||s.statut==='partially_delivered')?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer${s.statut==='partially_delivered'?' (suite)':''}"><i class="fas fa-truck"></i></button> `:''}
         ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
-        ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="openFacturePreview(${s.id})" title="Prévisualiser facture"><i class="fas fa-eye"></i></button> ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacturePro(${s.id})" title="Imprimer PDF"><i class="fas fa-print"></i></button> `:""} `:''}
+        ${(s.statut==='delivered'||s.statut==='partially_delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="previewBL(${s.id},'${s.numBL||''}')" title="Aperçu BL"><i class="fas fa-eye"></i></button> <button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="Imprimer BL"><i class="fas fa-file-alt"></i></button> `:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm" style="background:#f0fdf4;color:#166534;border:.5px solid #86efac" onclick="openFacturePreview(${s.id})" title="Facture"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-gh" onclick="printFacturePro(${s.id})" title="Imprimer PDF"><i class="fas fa-print"></i></button> `:''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -9865,14 +9865,140 @@ function agingClass(j) {
 }
 
 window.livrerVente = async function(id) {
-  var sales = await getAll(S.SALES);
-  var s = sales.find(function(x){return x.id===id;});
-  if (!s) return;
-  var numBL = s.numBL || await genNumBL();
-  var dateLiv = new Date().toISOString().slice(0,10);
-  await updRec(S.SALES, id, Object.assign({},s,{statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()}));
-  toast('Livraison enregistree -- ' + numBL);
-  await renderCommandes(document.getElementById('contentArea'));
+  const sales   = await getAll(S.SALES);
+  const clients = await getAll(S.CLIENTS);
+  const s = sales.find(x=>x.id===id);
+  if(!s){ toast('Commande introuvable','err'); return; }
+  const c = clients.find(x=>x.id===(s.clientId||s.client_id))||{};
+  const cfg = await getExploitationSettings();
+  const numBL = s.numBL || await genNumBL();
+  const today = new Date().toISOString().slice(0,10);
+  const lignes = s.lignes&&s.lignes.length ? s.lignes
+    : [{designation:s.produit||'Produit', qte:s.qty||0, unite:'u', prixUnit:s.prixUnit||0}];
+
+  // Supprimer modal existant
+  document.getElementById('ovLivraisonModal')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'ovLivraisonModal';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto';
+  ov.onclick = e => { if(e.target===ov) ov.remove(); };
+
+  const lignesRows = lignes.map((l,i)=>`
+    <tr style="border-bottom:.5px solid var(--color-border-tertiary)">
+      <td style="padding:8px 6px;font-size:12px"><strong>${esc(l.designation||'—')}</strong></td>
+      <td style="padding:8px 6px;text-align:center;font-size:12px;color:var(--color-text-secondary)">${l.qte||0}</td>
+      <td style="padding:8px 6px;text-align:center;font-size:11px;color:var(--color-text-tertiary)">${esc(l.unite||'u')}</td>
+      <td style="padding:8px 6px;text-align:center">
+        <input type="number" id="qte_liv_${i}" value="${l.qte||0}" min="0" max="${l.qte||999}"
+          style="width:70px;text-align:center;padding:3px 6px;border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);font-size:12px"
+          oninput="majStatutPartiel()">
+      </td>
+      <td style="padding:8px 6px;text-align:center;font-size:11px" id="reste_${i}">
+        <span style="color:var(--color-text-tertiary)">0 restant</span>
+      </td>
+    </tr>`).join('');
+
+  ov.innerHTML = `
+  <div style="background:var(--color-background-primary);border-radius:var(--border-radius-lg);width:100%;max-width:640px;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#1e40af,#3b82f6);padding:14px 20px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="color:#fff;font-weight:500;font-size:15px">🚚 Enregistrer une livraison</div>
+        <div style="color:rgba(255,255,255,.8);font-size:11px">${esc(s.ref||numBL)} — ${esc(c.nom||'—')}</div>
+      </div>
+      <button onclick="document.getElementById('ovLivraisonModal').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer">✕</button>
+    </div>
+
+    <div style="padding:20px">
+
+      <!-- Infos livraison -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div class="fg"><label>N° BL</label>
+          <input type="text" id="bl_num" value="${esc(numBL)}" style="font-weight:600;color:#1e40af"></div>
+        <div class="fg"><label>Date de livraison *</label>
+          <input type="date" id="bl_date" value="${today}"></div>
+        <div class="fg"><label>Livreur / Chauffeur</label>
+          <input type="text" id="bl_livreur" placeholder="Nom du livreur"></div>
+        <div class="fg"><label>Véhicule / Moyen</label>
+          <select id="bl_vehicule">
+            <option value="">— Choisir —</option>
+            <option value="Tricycle">🛺 Tricycle</option>
+            <option value="Moto">🏍️ Moto</option>
+            <option value="Camionnette">🚐 Camionnette</option>
+            <option value="Camion">🚛 Camion</option>
+            <option value="Remis en main propre">🤝 Remis en main propre</option>
+            <option value="Autre">Autre</option>
+          </select></div>
+        <div class="fg"><label>Adresse de livraison</label>
+          <input type="text" id="bl_adresse" value="${esc(c.adresse||c.ville||'')}" placeholder="Adresse client"></div>
+        <div class="fg"><label>Heure de livraison</label>
+          <input type="time" id="bl_heure" value="${new Date().toTimeString().slice(0,5)}"></div>
+      </div>
+
+      <!-- Lignes à livrer -->
+      <div style="font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Quantités livrées</div>
+      <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);overflow:hidden;margin-bottom:10px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:.5px solid var(--color-border-tertiary)">
+            <th style="padding:8px 6px;font-size:10px;text-align:left;color:var(--color-text-tertiary);font-weight:500;text-transform:uppercase">Produit</th>
+            <th style="padding:8px 6px;font-size:10px;text-align:center;color:var(--color-text-tertiary);font-weight:500;text-transform:uppercase">Commandé</th>
+            <th style="padding:8px 6px;font-size:10px;text-align:center;color:var(--color-text-tertiary);font-weight:500;text-transform:uppercase">Unité</th>
+            <th style="padding:8px 6px;font-size:10px;text-align:center;color:var(--color-text-tertiary);font-weight:500;text-transform:uppercase">Livré</th>
+            <th style="padding:8px 6px;font-size:10px;text-align:center;color:var(--color-text-tertiary);font-weight:500;text-transform:uppercase">Restant</th>
+          </tr></thead>
+          <tbody>${lignesRows}</tbody>
+        </table>
+      </div>
+
+      <!-- Statut livraison partielle -->
+      <div id="bl_statut_info" style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px;padding:8px 12px;background:var(--color-background-secondary);border-radius:var(--border-radius-md)">
+        Livraison complète
+      </div>
+
+      <!-- Notes -->
+      <div class="fg" style="margin-bottom:14px"><label>Notes / Instructions de livraison</label>
+        <input type="text" id="bl_notes" placeholder="Accès, contact sur place, température, conditionnement spécial..."></div>
+
+      <!-- Actions -->
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-p" style="flex:1" onclick="confirmerLivraison(${id},'${numBL}')">
+          <i class="fas fa-truck"></i> Confirmer la livraison
+        </button>
+        <button class="btn btn-gh" onclick="previewBL(${id},'${numBL}')">
+          <i class="fas fa-eye"></i> Aperçu BL
+        </button>
+        <button class="btn btn-gh" onclick="document.getElementById('ovLivraisonModal').remove()">
+          Annuler
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  const _lignesLiv=${JSON.stringify(lignes)};
+  function majStatutPartiel(){
+    let complet=true, partiel=false;
+    _lignesLiv.forEach(function(l,i){
+      const qCom=parseInt(l.qte||0);
+      const qLiv=parseInt(document.getElementById('qte_liv_'+i)?.value||0);
+      const reste=qCom-qLiv;
+      const el=document.getElementById('reste_'+i);
+      if(el) el.innerHTML=reste>0?'<span style="color:#d97706;font-size:11px">'+reste+' restant</span>':'<span style="color:#15803d;font-size:10px">✅</span>';
+      if(qLiv<qCom){complet=false; if(qLiv>0) partiel=true;}
+      if(qLiv>qCom) document.getElementById('qte_liv_'+i).value=qCom;
+    });
+    const info=document.getElementById('bl_statut_info');
+    if(info){
+      if(complet) info.innerHTML='<span style="color:#15803d">✅ Livraison complète</span>';
+      else if(partiel) info.innerHTML='<span style="color:#d97706">⚠️ Livraison partielle — une 2ème livraison sera nécessaire</span>';
+      else info.innerHTML='<span style="color:#dc2626">❌ Aucune quantité saisie</span>';
+    }
+  }
+  setTimeout(majStatutPartiel,100);
+  <\/script>`;
+
+  document.body.appendChild(ov);
 };
 
 window.facturerVente = async function(id) {
@@ -10356,90 +10482,230 @@ function buildAndPrintFacture(s, c, cfg){
 window.printFacture = async function(id){
   await openFacturePreview(id);
 };
+// ── Confirmer livraison depuis modal ────────────────────────
+window.confirmerLivraison = async function(saleId, numBLDefault){
+  const numBL    = document.getElementById('bl_num')?.value.trim()||numBLDefault;
+  const dateLiv  = document.getElementById('bl_date')?.value;
+  const livreur  = document.getElementById('bl_livreur')?.value.trim();
+  const vehicule = document.getElementById('bl_vehicule')?.value;
+  const adresse  = document.getElementById('bl_adresse')?.value.trim();
+  const heure    = document.getElementById('bl_heure')?.value;
+  const notes    = document.getElementById('bl_notes')?.value.trim();
+  if(!dateLiv){ toast('Date de livraison requise','err'); return; }
+
+  // Récupérer les quantités livrées
+  const sales = await getAll(S.SALES);
+  const s = sales.find(x=>x.id===saleId);
+  if(!s){ toast('Commande introuvable','err'); return; }
+  const lignesCmd = s.lignes&&s.lignes.length ? s.lignes
+    : [{designation:s.produit||'Produit',qte:s.qty||0,unite:'u',prixUnit:s.prixUnit||0}];
+
+  const lignesLiv = lignesCmd.map((l,i)=>{
+    const qLiv = parseInt(document.getElementById('qte_liv_'+i)?.value||0);
+    return {...l, qteLivree:qLiv, qteRestante:(l.qte||0)-qLiv};
+  });
+  const totalLivre   = lignesLiv.reduce((a,l)=>a+(l.qteLivree||0),0);
+  const totalCommande= lignesLiv.reduce((a,l)=>a+(l.qte||0),0);
+  const estPartielle = totalLivre < totalCommande;
+  const statut = estPartielle ? 'partially_delivered' : 'delivered';
+
+  // Historique des livraisons (pour livraisons partielles)
+  const livraisonsHist = s.livraisons||[];
+  livraisonsHist.push({
+    numBL, date:dateLiv, heure, livreur, vehicule, adresse, notes,
+    lignes:lignesLiv, partielle:estPartielle, ts:Date.now()
+  });
+
+  await updRec(S.SALES, saleId, {
+    ...s,
+    statut,
+    numBL: s.numBL||numBL,
+    dateLiv,
+    livreur:   livreur||s.livreur,
+    vehicule:  vehicule||s.vehicule,
+    adresseLiv:adresse||s.adresseLiv,
+    livraisons:livraisonsHist,
+    ts: Date.now()
+  });
+
+  document.getElementById('ovLivraisonModal')?.remove();
+  if(estPartielle){
+    toast('⚠️ Livraison partielle enregistrée — '+totalLivre+'/'+totalCommande+' unités livrées');
+  } else {
+    toast('✅ Livraison complète enregistrée — '+numBL);
+  }
+  await renderCommandes(document.getElementById('contentArea'));
+};
+
+// ── Aperçu BL avant impression ─────────────────────────────
+window.previewBL = async function(saleId, numBLParam){
+  const [sales,clients] = await Promise.all([getAll(S.SALES),getAll(S.CLIENTS)]);
+  const s = sales.find(x=>x.id===saleId)||sales.find(x=>x.id===parseInt(saleId));
+  if(!s){ toast('Commande introuvable','err'); return; }
+  const c   = clients.find(x=>x.id===(s.clientId||s.client_id))||{};
+  const cfg = await getExploitationSettings();
+  const numBL = s.numBL||numBLParam||'BL-PREVIEW';
+  buildAndPrintBL(s, c, cfg, numBL, true);
+};
+
+// ── Impression BL ───────────────────────────────────────────
 window.printBL = async function(id){
-  var sales   = await getAll(S.SALES);
-  var clients = await getAll(S.CLIENTS);
-  var s = sales.find(x=>x.id===id);
+  const [sales,clients] = await Promise.all([getAll(S.SALES),getAll(S.CLIENTS)]);
+  const s = sales.find(x=>x.id===id);
   if(!s){ toast('Vente introuvable','err'); return; }
-  var c   = clients.find(x=>x.id===s.clientId)||{};
-  var cfg = await getExploitationSettings();
-  var lignes = s.lignes && s.lignes.length ? s.lignes
-    : [{designation:s.produit||'Produit',qte:s.qty||0,unite:'u'}];
-  var rows = lignes.map(l=>
-    `<tr><td><strong>${esc(l.designation||'--')}</strong></td>`
-    +`<td style="text-align:right;font-weight:700;font-size:13px">${l.qte||0}</td>`
-    +`<td>${esc(l.unite||'u')}</td><td style="color:#888"></td></tr>`
-  ).join('');
-  var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
-    ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
-  var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-  <title>BL ${esc(s.numBL||s.ref||'')}</title>
+  const c   = clients.find(x=>x.id===(s.clientId||s.client_id))||{};
+  const cfg = await getExploitationSettings();
+  buildAndPrintBL(s, c, cfg, s.numBL||s.ref, false);
+};
+
+// ── Construction & impression du BL ────────────────────────
+function buildAndPrintBL(s, c, cfg, numBL, preview){
+  const lignes = s.lignes&&s.lignes.length ? s.lignes
+    : [{designation:s.produit||'Produit',qte:s.qty||0,unite:'u',prixUnit:s.prixUnit||0}];
+  // Prendre la dernière livraison pour les qtes livrées si partielle
+  const dernLiv = s.livraisons&&s.livraisons.length ? s.livraisons[s.livraisons.length-1] : null;
+  const lignesAff = dernLiv&&dernLiv.lignes ? dernLiv.lignes : lignes.map(l=>({...l,qteLivree:l.qte||0}));
+  const livreur  = dernLiv?.livreur  || s.livreur  || '';
+  const vehicule = dernLiv?.vehicule || s.vehicule  || '';
+  const adresse  = dernLiv?.adresse  || s.adresseLiv|| c.adresse||c.ville||'';
+  const notes    = dernLiv?.notes    || s.notes     || '';
+  const heure    = dernLiv?.heure    || '';
+
+  const totalCmd = lignes.reduce((a,l)=>a+(l.qte||0),0);
+  const totalLiv = lignesAff.reduce((a,l)=>a+(l.qteLivree||l.qte||0),0);
+  const estPartielle = totalLiv<totalCmd && totalLiv>0;
+  const estComplete  = totalLiv>=totalCmd;
+
+  const rowsLignes = lignesAff.map((l,i)=>{
+    const qCmd = l.qte||0;
+    const qLiv = l.qteLivree!=null?l.qteLivree:qCmd;
+    const qRest= Math.max(0,qCmd-qLiv);
+    const ok   = qRest===0;
+    return `<tr style="background:${i%2?'#f9fafb':'#fff'};border-bottom:1px solid #e5e7eb">
+      <td style="padding:8px 10px;font-size:12px"><strong>${esc(l.designation||'—')}</strong></td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px">${qCmd}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:700;color:${ok?'#15803d':'#d97706'}">${qLiv}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:11px;color:#6b7280">${esc(l.unite||'u')}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:11px;color:${qRest>0?'#d97706':'#15803d'}">${qRest>0?qRest+' restant':'✓'}</td>
+      <td style="padding:8px 10px;font-size:11px;color:#888">${esc(l.observations||'')}</td>
+    </tr>`;
+  }).join('');
+
+  // Historique livraisons (si plusieurs)
+  let histLiv='';
+  if(s.livraisons&&s.livraisons.length>1){
+    histLiv='<div style="margin-top:16px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;margin-bottom:6px">Historique des livraisons</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:#f1f5f9"><th style="padding:5px 8px;text-align:left">Date</th><th>Livreur</th><th>Véhicule</th><th style="text-align:center">Livré</th><th>Statut</th></tr></thead><tbody>'
+      +s.livraisons.map(lv=>{
+        const qLiv=lv.lignes?lv.lignes.reduce((a,l)=>a+(l.qteLivree||0),0):0;
+        return '<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:5px 8px">'+lv.date+(lv.heure?' '+lv.heure:'')+'</td><td style="padding:5px 8px">'+esc(lv.livreur||'—')+'</td><td style="padding:5px 8px">'+esc(lv.vehicule||'—')+'</td><td style="padding:5px 8px;text-align:center;font-weight:600">'+qLiv+'</td><td style="padding:5px 8px">'+( lv.partielle?'<span style="color:#d97706">Partielle</span>':'<span style="color:#15803d">Complète</span>')+'</td></tr>';
+      }).join('')
+      +'</tbody></table></div>';
+  }
+
+  const banqueFtr = cfg.nomBanque&&cfg.numeroCompte
+    ? 'Domiciliation : '+cfg.nomBanque+' | Compte : '+cfg.numeroCompte+(cfg.codeBic?' | BIC : '+cfg.codeBic:'') : '';
+
+  const statutBadge = estComplete
+    ? '<span style="background:#dcfce7;color:#15803d;padding:3px 10px;border-radius:6px;font-weight:700;font-size:11px">✅ LIVRAISON COMPLÈTE</span>'
+    : estPartielle
+    ? '<span style="background:#fef9c3;color:#854d0e;padding:3px 10px;border-radius:6px;font-weight:700;font-size:11px">⚠️ LIVRAISON PARTIELLE ('+totalLiv+'/'+totalCmd+')</span>'
+    : '';
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  <title>BL ${esc(numBL)}</title>
   <style>
     *{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}
     .doc{max-width:210mm;margin:0 auto;padding:12mm}
-    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e40af;padding-bottom:14px;margin-bottom:16px;gap:20px}
-    .doc-type{font-size:22px;font-weight:800;color:#1e40af;letter-spacing:1px}
-    .doc-meta{text-align:right;font-size:11px;color:#444;line-height:1.7;margin-top:4px}
-    .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
-    .party{border-radius:8px;padding:10px 13px;font-size:11px;line-height:1.7}
-    .party-em{background:#eff6ff;border:1px solid #bfdbfe}
-    .party-cl{background:#f8f9fa;border:1px solid #e5e7eb}
-    .plbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px}
-    table{width:100%;border-collapse:collapse;margin-bottom:16px}
-    thead th{background:#1e40af;color:#fff;padding:8px 10px;font-size:10px;text-align:left;text-transform:uppercase}
-    tbody td{padding:8px 10px;border-bottom:1px solid #e5e7eb}
-    tbody tr:nth-child(even){background:#f9fafb}
-    .sign{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:50px;text-align:center;font-size:11px}
-    .sbox{border-top:2px solid #ccc;padding-top:12px;color:#555}
-    .ftr{border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8}
-    @media print{@page{margin:10mm;size:A4}button{display:none}}
-  </style></head><body><div class="doc">
-  <div class="hdr">
+    @media print{@page{margin:10mm;size:A4}button{display:none}.no-print{display:none}}
+  </style>
+  </head><body><div class="doc">
+
+  <!-- En-tête -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e40af;padding-bottom:14px;margin-bottom:18px;gap:20px">
     ${buildEmetteurHeader(cfg)}
     <div style="text-align:right">
-      <div class="doc-type">BON DE LIVRAISON</div>
-      <div class="doc-meta">
-        <strong>${esc(s.numBL||s.ref||'—')}</strong><br>
-        Date livraison : <strong>${s.dateLiv||s.date||'—'}</strong><br>
-        ${s.numFacture?'Facture réf : <strong>'+esc(s.numFacture)+'</strong><br>':'Facture à établir<br>'}
+      <div style="font-size:26px;font-weight:800;color:#1e40af;letter-spacing:2px">BON DE LIVRAISON</div>
+      <div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:6px;padding:4px 14px;display:inline-block;font-weight:700;color:#1e40af;font-size:14px;margin:6px 0">${esc(numBL)}</div>
+      <div style="font-size:11px;color:#4b5563;line-height:1.9">
+        Date livraison : <strong>${s.dateLiv||dernLiv?.date||'—'}</strong>${heure?' à '+heure:''}<br>
+        ${s.numFacture?'Facture : <strong>'+esc(s.numFacture)+'</strong><br>':''}
+        Commande réf : ${esc(s.ref||s.id||'—')}
       </div>
     </div>
   </div>
-  <div class="parties">
-    <div class="party party-em">
-      <div class="plbl">Expéditeur</div>
-      <strong>${esc(cfg.nomExploitation||'—')}</strong><br>
-      ${cfg.adresse?esc(cfg.adresse)+'<br>':''}${cfg.ville||''}<br>
+
+  <!-- Statut livraison -->
+  ${statutBadge?'<div style="margin-bottom:14px">'+statutBadge+'</div>':''}
+
+  <!-- Parties -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:11px 13px;font-size:11px;line-height:1.8">
+      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px">Expéditeur</div>
+      <strong style="font-size:13px">${esc(cfg.nomExploitation||'—')}</strong><br>
+      ${cfg.adresse?esc(cfg.adresse)+'<br>':''}${cfg.ville?esc(cfg.ville)+', ':''}${esc(cfg.pays||'')}<br>
       ${cfg.telephone?'Tél : '+esc(cfg.telephone):''}
     </div>
-    <div class="party party-cl">
-      <div class="plbl">Destinataire</div>
-      <strong>${esc(c.nom||'—')}</strong><br>
-      ${c.adresse?esc(c.adresse)+'<br>':''}${c.ville?esc(c.ville)+'<br>':''}
+    <div style="background:#f8f9fa;border:1px solid #e5e7eb;border-radius:8px;padding:11px 13px;font-size:11px;line-height:1.8">
+      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px">Destinataire</div>
+      <strong style="font-size:13px">${esc(c.nom||'—')}</strong><br>
+      ${adresse?esc(adresse)+'<br>':''}${c.ville&&!adresse?esc(c.ville)+'<br>':''}
       ${c.tel?'Tél : '+esc(c.tel):''}
     </div>
   </div>
-  <table>
-    <thead><tr><th>Désignation produit</th><th style="text-align:right">Qté livrée</th><th>Unité</th><th>Observations</th></tr></thead>
-    <tbody>${rows}</tbody>
+
+  <!-- Infos livraison -->
+  ${livreur||vehicule?`<div style="background:#f8f9fa;border:1px solid #e5e7eb;border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:11px;display:flex;gap:20px">
+    ${livreur?'<span>🚚 Livreur : <strong>'+esc(livreur)+'</strong></span>':''}
+    ${vehicule?'<span>🚗 Véhicule : <strong>'+esc(vehicule)+'</strong></span>':''}
+    ${heure?'<span>⏰ Heure : <strong>'+heure+'</strong></span>':''}
+  </div>`:''}
+
+  <!-- Tableau produits -->
+  <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+    <thead><tr style="background:#1e40af;color:#fff">
+      <th style="padding:8px 10px;font-size:10px;text-align:left;font-weight:600;text-transform:uppercase">Désignation</th>
+      <th style="padding:8px 10px;font-size:10px;text-align:center;font-weight:600;text-transform:uppercase">Commandé</th>
+      <th style="padding:8px 10px;font-size:10px;text-align:center;font-weight:600;text-transform:uppercase">Livré</th>
+      <th style="padding:8px 10px;font-size:10px;text-align:center;font-weight:600;text-transform:uppercase">Unité</th>
+      <th style="padding:8px 10px;font-size:10px;text-align:center;font-weight:600;text-transform:uppercase">Restant</th>
+      <th style="padding:8px 10px;font-size:10px;text-align:left;font-weight:600;text-transform:uppercase">Observations</th>
+    </tr></thead>
+    <tbody>${rowsLignes}</tbody>
   </table>
-  ${s.paie==='comptant'
-    ? `<div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 14px;font-size:12px;margin-bottom:16px">💰 Paiement comptant exigé à la livraison : <strong>${(s.totalHT||0).toLocaleString('fr-FR')} ${cfg.devise||'F'}</strong></div>`
-    : `<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:10px 14px;font-size:12px;margin-bottom:16px">📄 Paiement différé — Facture à émettre.${s.dateEcheance?' Échéance : <strong>'+s.dateEcheance+'</strong>':''}</div>`}
-  <div class="sign">
-    <div class="sbox">Signature & cachet livreur<br><br><br><br></div>
-    <div class="sbox">Signature & cachet client<br><em style="font-size:10px;color:#888">(Bon pour accord)</em><br><br></div>
+
+  <!-- Paiement -->
+  <div style="background:${s.paie==='comptant'?'#fffbeb':'#eff6ff'};border:1px solid ${s.paie==='comptant'?'#fbbf24':'#93c5fd'};border-radius:6px;padding:9px 14px;margin-bottom:16px;font-size:11px">
+    ${s.paie==='comptant'
+      ?'💰 Paiement comptant exigé à la livraison : <strong>'+(s.totalHT||0).toLocaleString('fr-FR')+' '+(cfg.devise||'FCFA')+'</strong>'
+      :'📄 Paiement différé'+(s.dateEcheance?' — Échéance : <strong>'+s.dateEcheance+'</strong>':'')+( s.numFacture?' — Facture '+esc(s.numFacture):'')
+    }
   </div>
-  <div class="ftr">
+
+  ${notes?'<div style="background:#f9fafb;border-radius:6px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:#555;font-style:italic">📝 Notes : '+esc(notes)+'</div>':''}
+
+  ${histLiv}
+
+  <!-- Signatures -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:30px;margin-top:40px;text-align:center;font-size:11px;color:#555">
+    <div style="border-top:1.5px solid #ccc;padding-top:10px">Signature livreur<br><br><br></div>
+    <div style="border-top:1.5px solid #ccc;padding-top:10px">Signature responsable<br><em style="font-size:10px;color:#888">(Émetteur)</em><br><br></div>
+    <div style="border-top:1.5px solid #ccc;padding-top:10px">Signature client<br><em style="font-size:10px;color:#888">(Bon pour accord)</em><br><br></div>
+  </div>
+
+  <!-- Pied -->
+  <div style="border-top:1.5px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8">
     ${banqueFtr?banqueFtr+'<br>':''}
-    ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}
+    ${esc(cfg.nomExploitation||'AviNest Pro')} — Document édité le ${new Date().toLocaleDateString('fr-FR')} par SANIX AviNest Pro
   </div>
+
   </div></body></html>`;
-  var w = window.open('','_blank','width=900,height=700');
+
+  const w = window.open('','_blank','width=960,height=800');
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 600);
-};
+  if(!preview) setTimeout(()=>w.print(), 600);
+}
 
 
 window.renderCreances = async function(ca) {
