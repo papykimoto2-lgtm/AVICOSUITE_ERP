@@ -12885,69 +12885,7 @@ async function renderRapports(ca){
 
   <!-- TAB: RAPPORTS & ENVOI -->
   <div id="rptab-envoi-content" class="tab-content" style="display:none;max-width:860px;margin:0 auto">
-
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-hd"><span>📋 Générer & Envoyer un rapport</span></div>
-      <div class="card-bd">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
-          ${[
-            ['jour','📅','Rapport Journalier','Activité du jour','var(--g4)','var(--g1)'],
-            ['semaine','📆','Rapport Hebdomadaire','7 derniers jours','var(--blue-bg)','var(--blue)'],
-            ['mois','🗓️','Rapport Mensuel','Mois en cours','var(--amber-bg)','var(--amber-d)'],
-            ['annee','📈','Rapport Annuel',new Date().getFullYear(),'#faf5ff','#7c3aed'],
-          ].map(([t,ico,lbl,sub,bg,col])=>`
-            <div style="background:${bg};border-radius:12px;padding:16px;text-align:center">
-              <div style="font-size:26px;margin-bottom:5px">${ico}</div>
-              <div style="font-weight:700;font-size:12px;color:${col};margin-bottom:3px">${lbl}</div>
-              <div style="font-size:10px;color:var(--text3);margin-bottom:10px">${sub}</div>
-              <div style="display:flex;gap:5px;justify-content:center;flex-wrap:wrap">
-                <button class="btn btn-p btn-sm" onclick="envoyerRapport('${t}','whatsapp')"><i class="fab fa-whatsapp"></i> WA</button>
-                <button class="btn btn-gh btn-sm" onclick="envoyerRapport('${t}','email')"><i class="fas fa-envelope"></i> Email</button>
-                <button class="btn btn-s btn-sm" onclick="previewRapport('${t}')"><i class="fas fa-eye"></i> Aperçu</button>
-              </div>
-            </div>`).join('')}
-        </div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-hd"><span>⚙️ Destinations</span></div>
-      <div class="card-bd">
-        <div class="form-grid" style="margin-bottom:12px">
-          <div class="fg"><label><i class="fab fa-whatsapp" style="color:#25D366"></i> WhatsApp</label><input id="cfgWhatsapp" type="tel" placeholder="+225XXXXXXXXXX" value="${cfg.whatsapp||''}"></div>
-          <div class="fg"><label><i class="fas fa-envelope" style="color:var(--blue)"></i> Email</label><input id="cfgEmail" type="email" placeholder="directeur@…" value="${cfg.email||''}"></div>
-          <div class="fg"><label>Nom exploitation</label><input id="cfgNom" type="text" placeholder="Mon élevage" value="${cfg.nom||'Sanix AviNest'}"></div>
-        </div>
-        <button class="btn btn-p" onclick="sauvegarderCfgRapport()"><i class="fas fa-save"></i> Enregistrer</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-hd">
-        <span>🤖 Envoi automatique</span>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:600">
-          <input type="checkbox" id="cfgAutoActif" ${cfg.autoActif?'checked':''} onchange="toggleAutoRapport(this.checked)" style="width:16px;height:16px">
-          Activer
-        </label>
-      </div>
-      <div class="card-bd">
-        <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:9px 13px;font-size:11px;color:var(--amber-d);margin-bottom:12px">
-          <i class="fas fa-info-circle"></i> Fonctionne tant que la page est ouverte. WhatsApp : une fenêtre s'ouvrira à l'heure définie.
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
-          ${[['autoJour','heureJour','18:00','📅 Journalier'],['autoSemaine','heureSemaine','07:00','📆 Hebdo (lundi)'],['autoMois','heureMois','07:00','🗓️ Mensuel (1er)']].map(([chk,heure,def,lbl])=>`
-            <div style="border:1.5px solid var(--border);border-radius:10px;padding:12px">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                <input type="checkbox" id="cfg${chk.charAt(0).toUpperCase()+chk.slice(1)}" ${cfg[chk]?'checked':''} style="width:14px;height:14px">
-                <span style="font-weight:700;font-size:11px">${lbl}</span>
-              </div>
-              <div class="fg"><label style="font-size:10px">Heure</label><input type="time" id="cfg${heure.charAt(0).toUpperCase()+heure.slice(1)}" value="${cfg[heure]||def}"></div>
-            </div>`).join('')}
-        </div>
-        <div style="margin-top:12px"><button class="btn btn-p" onclick="sauvegarderCfgRapport()"><i class="fas fa-save"></i> Enregistrer planification</button></div>
-      </div>
-    </div>
-
+    <div id="rapEnvoiInner"><div style="text-align:center;padding:40px;color:var(--color-text-tertiary)"><i class="fas fa-spinner fa-spin"></i> Chargement...</div></div>
   </div>
 
   <!-- TAB: ALERTES WHATSAPP -->
@@ -13379,6 +13317,10 @@ window.switchRapTab = function(tab){
     if(btn){ btn.classList.toggle('active', t===tab); }
   });
   if(tab==='alertes') renderAlertesWA();
+  if(tab==='envoi'){
+    const inner = document.getElementById('rapEnvoiInner');
+    if(inner) renderPanneauRapports(inner);
+  }
 };
 
 window.setRapportPreset = function(preset, dmin, dmax){
@@ -13825,6 +13767,446 @@ function buildCorpsBilan(data, cfg){
   <div style="border-top:2px dashed #ccc;margin:16px 0"></div>
   ${buildCorpsCommercial(data,cfg)}`;
 }
+
+// ══════════════════════════════════════════════════════════════
+//  RAPPORT JOURNALIER AUTOMATIQUE — SANIX AviNest Pro
+//  PDF A4 · WhatsApp · Email · Planification automatique
+// ══════════════════════════════════════════════════════════════
+
+const RAPPORT_SCHED_KEY = 'sanix_rapport_sched';
+const RAPPORT_LAST_KEY  = 'sanix_rapport_last';
+
+function getRapportSched(){ try{return JSON.parse(localStorage.getItem(RAPPORT_SCHED_KEY)||'{}');}catch(e){return{};} }
+function saveRapportSched(c){ localStorage.setItem(RAPPORT_SCHED_KEY, JSON.stringify(c)); }
+
+// ── Génération PDF A4 Rapport Journalier ────────────────────
+async function genRapportPDF(data, cfg, titre){
+  const nf = v => Math.round(v||0).toLocaleString('fr-FR');
+  const pct = (n,d) => d>0 ? (n/d*100).toFixed(1)+'%' : '—';
+  const col = (v,s1,s2) => v>=s1?'#15803d':v>=s2?'#d97706':'#dc2626';
+
+  const lotsLayer  = data.lotsLayer||[];
+  const lotsBroil  = data.lotsBroiler||[];
+  const totalOeufs = data.totalOeufs||0;
+  const totalMorts = data.totalMorts||0;
+  const caTotal    = data.caTotal||0;
+  const recettes   = data.recettes||0;
+  const depenses   = data.depenses||0;
+  const solde      = recettes-depenses;
+  const critique   = (data.critiques||[]).length;
+  const pannes     = data.pannesActives||0;
+
+  // Indicateurs de santé
+  const noteGlobale = Math.round(
+    (totalOeufs>0?80:40)*0.25 +
+    (totalMorts<5?90:totalMorts<20?70:40)*0.25 +
+    (caTotal>0?85:50)*0.25 +
+    (critique===0?95:critique<3?70:40)*0.25
+  );
+  const noteCol  = noteGlobale>=80?'#15803d':noteGlobale>=60?'#d97706':'#dc2626';
+  const noteBg   = noteGlobale>=80?'#dcfce7':noteGlobale>=60?'#fef9c3':'#fee2e2';
+
+  // Ventes détail
+  const ventesRows = (data.ventesDetail ? Object.values(data.ventesDetail) : []).map(v=>
+    `<tr><td>${esc(v.designation||'—')}</td><td style="text-align:center">${v.qte||0}</td><td style="text-align:right;font-weight:600">${nf(v.montant)} F</td></tr>`
+  ).join('') || '<tr><td colspan="3" style="text-align:center;color:#9ca3af">Aucune vente</td></tr>';
+
+  // Stocks critiques
+  const stockRows = (data.critiques||[]).slice(0,5).map(p=>
+    `<tr><td>${esc(p.nom)}</td><td style="text-align:center;color:#dc2626;font-weight:600">${parseFloat(p.stock||0).toFixed(1)} ${esc(p.unite||'')}</td><td style="text-align:center;color:#6b7280">${parseFloat(p.seuil||0)} ${esc(p.unite||'')}</td></tr>`
+  ).join('') || '<tr><td colspan="3" style="text-align:center;color:#15803d">✅ Aucun article en alerte</td></tr>';
+
+  // Mini sparkline SVG barres (données des 7 derniers jours)
+  function miniBar(vals, col1){
+    if(!vals||!vals.length) return '';
+    const max=Math.max(...vals,1);
+    const w=8,g=2,h=30;
+    const bars=vals.map((v,i)=>{
+      const bh=Math.round(v/max*h)||2;
+      return `<rect x="${i*(w+g)}" y="${h-bh}" width="${w}" height="${bh}" rx="2" fill="${col1}" opacity="0.8"/>`;
+    }).join('');
+    return `<svg width="${vals.length*(w+g)}" height="${h}" viewBox="0 0 ${vals.length*(w+g)} ${h}" style="display:inline-block;vertical-align:middle">${bars}</svg>`;
+  }
+
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  <title>${esc(titre||'Rapport Journalier')}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;line-height:1.5}
+    .doc{max-width:210mm;margin:0 auto;padding:10mm 12mm}
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a5c2a;padding-bottom:12px;margin-bottom:16px}
+    .doc-title{font-size:20px;font-weight:800;color:#1a5c2a;letter-spacing:1px}
+    .doc-meta{text-align:right;font-size:10px;color:#4b5563;line-height:1.8}
+    .note-badge{display:inline-block;padding:6px 16px;border-radius:50px;font-weight:800;font-size:18px;background:${noteBg};color:${noteCol};margin-top:4px}
+    .section{margin-bottom:14px}
+    .sec-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e5e7eb}
+    .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:14px}
+    .kpi{background:#f9fafb;border:.5px solid #e5e7eb;border-radius:6px;padding:8px 10px}
+    .kpi-val{font-size:18px;font-weight:700;margin:2px 0}
+    .kpi-lbl{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px}
+    .kpi-sub{font-size:10px;color:#9ca3af}
+    .kpi-g .kpi-val{color:#15803d}.kpi-r .kpi-val{color:#dc2626}.kpi-a .kpi-val{color:#d97706}.kpi-b .kpi-val{color:#1e40af}
+    table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:10px}
+    thead th{background:#1a5c2a;color:#fff;padding:5px 8px;font-weight:600;text-align:left}
+    tbody td{padding:5px 8px;border-bottom:.5px solid #e5e7eb}
+    tbody tr:nth-child(even){background:#f9fafb}
+    .alert-box{border-radius:6px;padding:7px 12px;margin-bottom:8px;font-size:10px}
+    .alert-ok{background:#dcfce7;border:.5px solid #86efac;color:#14532d}
+    .alert-warn{background:#fef9c3;border:.5px solid #fbbf24;color:#78350f}
+    .alert-crit{background:#fee2e2;border:.5px solid #fca5a5;color:#7f1d1d}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .ftr{border-top:1px solid #e5e7eb;margin-top:16px;padding-top:8px;font-size:9px;color:#9ca3af;text-align:center}
+    .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:60px;font-weight:900;color:rgba(26,92,42,.04);pointer-events:none;white-space:nowrap}
+    @media print{@page{margin:8mm;size:A4}button,.no-print{display:none}}
+  </style></head><body>
+  <div class="watermark">SANIX AviNest Pro</div>
+  <div class="doc">
+
+  <!-- EN-TÊTE -->
+  <div class="hdr">
+    <div>
+      ${cfg.logoBase64?`<img src="${cfg.logoBase64}" style="max-height:50px;max-width:140px;display:block;margin-bottom:6px">`:
+        `<div style="font-size:16px;font-weight:800;color:#1a5c2a">${esc(cfg.nomExploitation||'MON ÉLEVAGE')}</div>`}
+      <div style="font-size:10px;color:#4b5563;margin-top:4px">
+        ${cfg.adresse?esc(cfg.adresse)+', ':''} ${esc(cfg.ville||'')} ${esc(cfg.pays||'Côte d\'Ivoire')}<br>
+        ${cfg.telephone?'Tél : '+esc(cfg.telephone):''}
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div class="doc-title">RAPPORT JOURNALIER</div>
+      <div class="doc-meta">
+        📅 <strong>${new Date(data.todayStr||Date.now()).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</strong><br>
+        Généré le ${new Date().toLocaleString('fr-FR')}<br>
+        <div class="note-badge">${noteGlobale}/100</div>
+        <div style="font-size:9px;color:${noteCol};margin-top:3px">Note de performance globale</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALERTES -->
+  ${critique>0?`<div class="alert-crit">⚠️ <strong>${critique} article(s) en stock critique</strong> — Commander immédiatement</div>`:''}
+  ${pannes>0?`<div class="alert-warn">🔧 <strong>${pannes} panne(s) active(s)</strong> sur les équipements</div>`:''}
+  ${totalMorts>=10?`<div class="alert-crit">💀 <strong>${totalMorts} mortalité(s) aujourd'hui</strong> — Vérifier l'élevage</div>`:''}
+  ${critique===0&&pannes===0&&totalMorts<5?`<div class="alert-ok">✅ Aucune alerte critique — Journée nominale</div>`:''}
+
+  <!-- KPIs PRINCIPAUX -->
+  <div class="kpi-grid" style="margin-top:12px">
+    <div class="kpi kpi-b"><div class="kpi-lbl">Lots actifs</div><div class="kpi-val">${(data.lotsLayer?.length||0)+(data.lotsBroiler?.length||0)}</div><div class="kpi-sub">${data.lotsLayer?.length||0} ponte · ${data.lotsBroiler?.length||0} chair</div></div>
+    <div class="kpi ${totalOeufs>0?'kpi-g':'kpi-a'}"><div class="kpi-lbl">Œufs collectés</div><div class="kpi-val">${nf(totalOeufs)}</div><div class="kpi-sub">Aujourd'hui</div></div>
+    <div class="kpi ${totalMorts<5?'kpi-g':totalMorts<20?'kpi-a':'kpi-r'}"><div class="kpi-lbl">Mortalités</div><div class="kpi-val">${totalMorts}</div><div class="kpi-sub">Têtes perdues</div></div>
+    <div class="kpi kpi-g"><div class="kpi-lbl">CA du jour</div><div class="kpi-val">${nf(caTotal/1000)}K</div><div class="kpi-sub">FCFA</div></div>
+    <div class="kpi ${solde>=0?'kpi-g':'kpi-r'}"><div class="kpi-lbl">Solde net</div><div class="kpi-val">${solde>=0?'+':''}${nf(solde/1000)}K</div><div class="kpi-sub">Recettes − Dépenses</div></div>
+    <div class="kpi ${critique===0?'kpi-g':'kpi-r'}"><div class="kpi-lbl">Stocks alertes</div><div class="kpi-val">${critique}</div><div class="kpi-sub">Articles critiques</div></div>
+  </div>
+
+  <!-- DEUX COLONNES -->
+  <div class="two-col">
+
+    <!-- Élevage -->
+    <div class="section">
+      <div class="sec-title">🐔 Élevage & Production</div>
+      ${lotsLayer.map(lot=>{
+        const eggsLot=(data.eggsP||[]).filter(e=>(e.flockId||e.flock_id)===lot.id);
+        const oeufsLot=eggsLot.reduce((a,e)=>a+(e.eggCount||0),0);
+        return `<div style="background:#f9fafb;border-radius:4px;padding:6px 8px;margin-bottom:6px;border-left:3px solid #1a5c2a">
+          <strong style="font-size:11px">🥚 ${esc(lot.nom)}</strong><br>
+          <span style="color:#6b7280">Œufs : <strong>${oeufsLot}</strong> · Age : J${Math.floor((new Date()-new Date(lot.startDate||lot.date_entree))/(1000*3600*24))}</span>
+        </div>`;
+      }).join('')}
+      ${lotsBroil.map(lot=>{
+        const poids=(data.growthP||[]).filter(g=>(g.flockId||g.flock_id)===lot.id).slice(-1)[0]?.avgWeight||0;
+        return `<div style="background:#f9fafb;border-radius:4px;padding:6px 8px;margin-bottom:6px;border-left:3px solid #d97706">
+          <strong style="font-size:11px">🍗 ${esc(lot.nom)}</strong><br>
+          <span style="color:#6b7280">Poids moy : <strong>${poids}g</strong> · J${Math.floor((new Date()-new Date(lot.startDate||lot.date_entree))/(1000*3600*24))}</span>
+        </div>`;
+      }).join('')}
+      ${!lotsLayer.length&&!lotsBroil.length?'<div style="color:#9ca3af;font-size:10px">Aucun lot actif</div>':''}
+    </div>
+
+    <!-- Finance -->
+    <div class="section">
+      <div class="sec-title">💰 Finance du jour</div>
+      <table>
+        <tbody>
+          <tr><td>Recettes</td><td style="text-align:right;color:#15803d;font-weight:600">+${nf(recettes)} F</td></tr>
+          <tr><td>Dépenses</td><td style="text-align:right;color:#dc2626;font-weight:600">−${nf(depenses)} F</td></tr>
+          <tr style="border-top:1px solid #1a5c2a"><td><strong>Solde net</strong></td><td style="text-align:right;font-weight:800;color:${solde>=0?'#15803d':'#dc2626'}">${solde>=0?'+':''}${nf(solde)} F</td></tr>
+        </tbody>
+      </table>
+      <div class="sec-title" style="margin-top:10px">📦 Stocks (${critique} alerte${critique>1?'s':''})</div>
+      <table>
+        <thead><tr><th>Produit</th><th style="text-align:center">Stock</th><th style="text-align:center">Seuil</th></tr></thead>
+        <tbody>${stockRows}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Ventes détail -->
+  <div class="section">
+    <div class="sec-title">🛒 Ventes du jour (${data.nbVentes||0} commande${(data.nbVentes||0)>1?'s':''})</div>
+    <table>
+      <thead><tr><th>Produit / Service</th><th style="text-align:center">Quantité</th><th style="text-align:right">Montant</th></tr></thead>
+      <tbody>${ventesRows}</tbody>
+      ${caTotal>0?`<tfoot><tr style="background:#f0fdf4;font-weight:700"><td colspan="2">TOTAL CA du jour</td><td style="text-align:right;color:#15803d">${nf(caTotal)} FCFA</td></tr></tfoot>`:''}
+    </table>
+  </div>
+
+  <!-- GMAO & Fab -->
+  <div class="two-col">
+    <div class="section">
+      <div class="sec-title">🔧 Maintenance</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;background:${pannes>0?'#fee2e2':'#dcfce7'};border-radius:4px;padding:6px 10px;text-align:center">
+          <div style="font-size:16px;font-weight:700;color:${pannes>0?'#dc2626':'#15803d'}">${pannes}</div>
+          <div style="font-size:9px;color:#6b7280">Panne(s) active(s)</div>
+        </div>
+        <div style="flex:1;background:#f0fdf4;border-radius:4px;padding:6px 10px;text-align:center">
+          <div style="font-size:16px;font-weight:700;color:#15803d">${data.maintP?.length||0}</div>
+          <div style="font-size:9px;color:#6b7280">Maintenance(s) réalisée(s)</div>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="sec-title">🏭 Fabrication aliments</div>
+      <div style="background:#f9fafb;border-radius:4px;padding:6px 10px;text-align:center">
+        <div style="font-size:16px;font-weight:700;color:#0891b2">${nf(data.kgFabriques||0)} kg</div>
+        <div style="font-size:9px;color:#6b7280">${data.ordresP?.length||0} ordre(s) de fabrication</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pied de page -->
+  <div class="ftr">
+    ${esc(cfg.nomExploitation||'SANIX AviNest Pro')} · ${esc(cfg.adresse||'')} ${esc(cfg.ville||'')} · ${cfg.telephone?'Tél : '+esc(cfg.telephone):''}<br>
+    Rapport généré automatiquement le ${new Date().toLocaleString('fr-FR')} par SANIX AviNest Pro
+  </div>
+
+  </div></body></html>`;
+  return html;
+}
+
+// ── Envoi rapport (WhatsApp ou Email) ───────────────────────
+window.envoyerRapport = async function(type, canal){
+  const cfg  = getRapportConfig();
+  const data = await collectRapportData(type);
+  const titres = {jour:'Rapport Journalier',semaine:'Rapport Hebdomadaire',mois:'Rapport Mensuel',annee:'Rapport Annuel'};
+  const titre  = titres[type]||'Rapport';
+
+  if(canal==='whatsapp'){
+    const num = cfg.whatsapp||prompt('Numéro WhatsApp (ex: +22507XXXXXXXX) :');
+    if(!num){ toast('Numéro requis','err'); return; }
+    const texte = genRapportTexte(data,'whatsapp');
+    envoyerWhatsApp(texte, num);
+    toast('✅ WhatsApp ouvert — validez l\'envoi');
+  } else if(canal==='email'){
+    const email = cfg.email||prompt('Adresse email :');
+    if(!email){ toast('Email requis','err'); return; }
+    const texte = genRapportTexte(data,'email');
+    envoyerEmail(texte, email, titre+' — SANIX AviNest Pro');
+    toast('✅ Client email ouvert');
+  } else if(canal==='pdf'){
+    const cfgExp = await getExploitationSettings();
+    const html   = await genRapportPDF(data, cfgExp, titre);
+    const w = window.open('','_blank','width=960,height=800');
+    if(!w){ toast('Autoriser les pop-ups','err'); return; }
+    w.document.write(html); w.document.close();
+    setTimeout(()=>w.print(), 600);
+  }
+};
+
+// ── Aperçu PDF dans une modale ───────────────────────────────
+window.aperçuRapportPDF = async function(type){
+  const cfg    = await getExploitationSettings();
+  const data   = await collectRapportData(type);
+  const titres = {jour:'Rapport Journalier',semaine:'Rapport Hebdomadaire',mois:'Rapport Mensuel',annee:'Rapport Annuel'};
+  const html   = await genRapportPDF(data, cfg, titres[type]||'Rapport');
+  const w = window.open('','_blank','width=960,height=800');
+  if(!w){ toast('Autoriser les pop-ups','err'); return; }
+  w.document.write(html); w.document.close();
+};
+
+// ── Planification automatique ────────────────────────────────
+let _rapportTimer = null;
+
+async function executerRapportAuto(){
+  const sched = getRapportSched();
+  if(!sched.actif) return;
+  const now   = new Date();
+  const hhmm  = now.toTimeString().slice(0,5);
+  const today = now.toISOString().slice(0,10);
+  const lastJ = localStorage.getItem(RAPPORT_LAST_KEY+'_jour');
+  const lastS = localStorage.getItem(RAPPORT_LAST_KEY+'_semaine');
+
+  // Rapport journalier
+  if(sched.jourActif && hhmm===sched.heureJour && lastJ!==today){
+    localStorage.setItem(RAPPORT_LAST_KEY+'_jour', today);
+    const data = await collectRapportData('jour');
+    const texte = genRapportTexte(data,'whatsapp');
+    if(sched.waNumero){ envoyerWhatsApp(texte, sched.waNumero); }
+    if(sched.waNumero2){ envoyerWhatsApp(texte, sched.waNumero2); }
+    addAlertHist({type:'rapport_jour_auto', numero:sched.waNumero, extrait:'Rapport journalier automatique '+today});
+  }
+
+  // Rapport hebdomadaire (lundi matin)
+  if(sched.semActif && now.getDay()===1 && hhmm===sched.heureSem && lastS!==today){
+    localStorage.setItem(RAPPORT_LAST_KEY+'_semaine', today);
+    const data = await collectRapportData('semaine');
+    const texte = genRapportTexte(data,'whatsapp');
+    if(sched.waNumero){ envoyerWhatsApp(texte, sched.waNumero); }
+    addAlertHist({type:'rapport_sem_auto', numero:sched.waNumero, extrait:'Rapport hebdomadaire automatique'});
+  }
+
+  // Rapport mensuel (1er du mois)
+  if(sched.moisActif && now.getDate()===1 && hhmm===sched.heureMois && lastS!==today+'_mois'){
+    localStorage.setItem(RAPPORT_LAST_KEY+'_semaine', today+'_mois');
+    const data = await collectRapportData('mois');
+    const texte = genRapportTexte(data,'whatsapp');
+    if(sched.waNumero){ envoyerWhatsApp(texte, sched.waNumero); }
+    addAlertHist({type:'rapport_mois_auto', numero:sched.waNumero, extrait:'Rapport mensuel automatique'});
+  }
+}
+
+function demarrerRapportAuto(){
+  if(_rapportTimer) clearInterval(_rapportTimer);
+  _rapportTimer = setInterval(executerRapportAuto, 60000);
+  console.log('[SANIX] Moteur rapports auto démarré');
+}
+
+if(window.PRODUCTION_MODE) setTimeout(demarrerRapportAuto, 6000);
+
+// ── Panneau de gestion des rapports dans Rapports & Envoi ────
+async function renderPanneauRapports(el){
+  const sched  = getRapportSched();
+  const cfg    = await getExploitationSettings();
+  const data   = await collectRapportData('jour');
+  const today  = new Date().toISOString().slice(0,10);
+  const hist   = getAlertHist().filter(h=>h.type&&h.type.startsWith('rapport'));
+  const textePreview = genRapportTexte(data,'whatsapp');
+
+  el.innerHTML = `
+  <!-- Status moteur -->
+  <div style="background:${sched.actif?'#dcfce7':'#f1f5f9'};border:.5px solid ${sched.actif?'#86efac':'#e2e8f0'};border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+    <span style="font-size:20px">${sched.actif?'🟢':'⚪'}</span>
+    <div>
+      <strong style="color:${sched.actif?'#15803d':'var(--color-text-secondary)'}">${sched.actif?'Envoi automatique actif':'Envoi automatique inactif'}</strong>
+      <div style="font-size:11px;color:var(--color-text-secondary)">${sched.actif?'Vérification toutes les minutes':'Activez ci-dessous pour automatiser vos rapports'}</div>
+    </div>
+    <button onclick="testerRapportMaintenant()" class="btn btn-sm btn-gh" style="margin-left:auto"><i class="fas fa-vial"></i> Tester maintenant</button>
+  </div>
+
+  <!-- 4 cartes rapport -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px">
+    ${[
+      ['jour','📅','Rapport Journalier','Activité du jour','#dcfce7','#15803d'],
+      ['semaine','📆','Rapport Hebdomadaire','7 derniers jours','#e0f2fe','#0369a1'],
+      ['mois','🗓️','Rapport Mensuel','Mois en cours','#fef9c3','#854d0e'],
+      ['annee','📈','Rapport Annuel',new Date().getFullYear(),'#f3e8ff','#6b21a8'],
+    ].map(([t,ico,lbl,sub,bg,col])=>`
+    <div style="background:${bg};border:.5px solid rgba(0,0,0,.08);border-radius:var(--border-radius-md);padding:12px;text-align:center">
+      <div style="font-size:24px;margin-bottom:4px">${ico}</div>
+      <div style="font-size:12px;font-weight:500;color:${col};margin-bottom:2px">${lbl}</div>
+      <div style="font-size:10px;color:var(--color-text-secondary);margin-bottom:10px">${sub}</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="btn btn-sm" style="background:#25D366;color:#fff;border:none;border-radius:6px;padding:4px;font-size:11px;cursor:pointer" onclick="envoyerRapport('${t}','whatsapp')"><i class="fab fa-whatsapp"></i> WhatsApp</button>
+        <button class="btn btn-sm" style="background:${col};color:#fff;border:none;border-radius:6px;padding:4px;font-size:11px;cursor:pointer" onclick="envoyerRapport('${t}','pdf')"><i class="fas fa-file-pdf"></i> PDF A4</button>
+        <button class="btn btn-sm btn-gh" style="font-size:11px" onclick="aperçuRapportPDF('${t}')"><i class="fas fa-eye"></i> Aperçu</button>
+      </div>
+    </div>`).join('')}
+  </div>
+
+  <!-- Configuration planification -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd" style="background:linear-gradient(135deg,#1a5c2a,#2d9348);color:#fff;border-radius:var(--r) var(--r) 0 0">
+      <span>⚙️ Planification automatique des rapports</span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div class="fg"><label>📱 WhatsApp principal</label>
+          <input type="tel" id="rschWA" value="${sched.waNumero||cfg.whatsapp||''}" placeholder="+225 07 79 18 10 75"></div>
+        <div class="fg"><label>📱 WhatsApp secondaire</label>
+          <input type="tel" id="rschWA2" value="${sched.waNumero2||''}" placeholder="+225 XX XX XX XX"></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:14px">
+        ${[
+          ['jourActif','heureJour','18:00','📅 Rapport journalier (chaque soir)'],
+          ['semActif','heureSem','07:00','📆 Rapport hebdo (chaque lundi matin)'],
+          ['moisActif','heureMois','07:00','🗓️ Rapport mensuel (1er du mois)'],
+        ].map(([chk,h,def,lbl])=>`
+        <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;cursor:pointer;margin-bottom:6px">
+            <input type="checkbox" id="rsch_${chk}" ${sched[chk]?'checked':''} style="width:14px;height:14px">&nbsp;${lbl}
+          </label>
+          <input type="time" id="rsch_${h}" value="${sched[h]||def}"
+            style="font-size:12px;padding:4px 8px;border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);width:100%">
+        </div>`).join('')}
+        <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="rsch_actif" ${sched.actif?'checked':''} style="width:14px;height:14px">
+            <strong>Activer l'automatisation</strong>
+          </label>
+          <div style="font-size:10px;color:var(--color-text-tertiary);text-align:center">Requiert que la page reste ouverte dans le navigateur</div>
+        </div>
+      </div>
+
+      <button class="btn btn-p" onclick="sauvegarderRapportSched()"><i class="fas fa-save"></i> Enregistrer la planification</button>
+    </div>
+  </div>
+
+  <!-- Aperçu du rapport du jour -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd"><span>👁️ Aperçu — Rapport du jour en WhatsApp</span></div>
+    <div class="card-bd">
+      <pre style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:12px;font-size:11px;line-height:1.7;white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:var(--font-mono)">${esc(textePreview)}</pre>
+    </div>
+  </div>
+
+  <!-- Historique envois -->
+  <div class="card">
+    <div class="card-hd"><span>📋 Historique des envois de rapports</span></div>
+    <div class="card-bd tbl-wrap">
+      ${hist.length ? `<table class="tbl" style="font-size:12px">
+        <thead><tr><th>Date/Heure</th><th>Type</th><th>Canal</th><th>Aperçu</th></tr></thead>
+        <tbody>${hist.slice(0,15).map(h=>{
+          const t={rapport_jour_auto:'📅 Journalier auto',rapport_sem_auto:'📆 Hebdo auto',rapport_mois_auto:'🗓️ Mensuel auto'};
+          return `<tr>
+            <td style="font-size:11px;color:var(--color-text-tertiary)">${new Date(h.ts).toLocaleString('fr-FR')}</td>
+            <td>${t[h.type]||h.type}</td>
+            <td style="font-size:11px"><i class="fab fa-whatsapp" style="color:#25D366"></i> ${h.numero||'—'}</td>
+            <td style="font-size:10px;color:var(--color-text-tertiary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.extrait||'—')}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>` : '<div style="text-align:center;color:var(--color-text-tertiary);padding:20px;font-size:13px">Aucun rapport envoyé automatiquement</div>'}
+    </div>
+  </div>`;
+}
+
+window.sauvegarderRapportSched = function(){
+  saveRapportSched({
+    actif:       document.getElementById('rsch_actif')?.checked,
+    waNumero:    document.getElementById('rschWA')?.value.trim(),
+    waNumero2:   document.getElementById('rschWA2')?.value.trim(),
+    jourActif:   document.getElementById('rsch_jourActif')?.checked,
+    heureJour:   document.getElementById('rsch_heureJour')?.value,
+    semActif:    document.getElementById('rsch_semActif')?.checked,
+    heureSem:    document.getElementById('rsch_heureSem')?.value,
+    moisActif:   document.getElementById('rsch_moisActif')?.checked,
+    heureMois:   document.getElementById('rsch_heureMois')?.value,
+  });
+  toast('✅ Planification sauvegardée');
+  demarrerRapportAuto();
+};
+
+window.testerRapportMaintenant = async function(){
+  const sched = getRapportSched();
+  const num   = sched.waNumero || prompt('Numéro WhatsApp pour le test :');
+  if(!num){ toast('Numéro requis','err'); return; }
+  const data  = await collectRapportData('jour');
+  const texte = genRapportTexte(data,'whatsapp');
+  envoyerWhatsApp(texte, num);
+  addAlertHist({type:'rapport_test',numero:num,extrait:'Test rapport journalier'});
+  toast('✅ Test WhatsApp ouvert — validez l\'envoi');
+};
 
 window.previewRapport = async function(type){
   const cfg = getRapportConfig();
