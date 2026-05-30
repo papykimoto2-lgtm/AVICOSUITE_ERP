@@ -3710,6 +3710,7 @@ async function renderLotView(ca){
       </div>
       <div class="tab-nav" id="lotTabNav">
         <button class="tab-btn ${activeLotTab==='overview'?'on':''}" data-tab="overview" onclick="switchLotTab('overview')">📊 Vue d'ensemble</button>
+        <button class="tab-btn ${activeLotTab==='pesees'?'on':''}" data-tab="pesees" onclick="switchLotTab('pesees')">⚖️ Pesées & Courbes</button>
         <button class="tab-btn ${activeLotTab==='semaine'?'on':''}" data-tab="semaine" onclick="switchLotTab('semaine')">📅 Suivi semaine</button>
         <button class="tab-btn ${activeLotTab==='saisie'?'on':''}" data-tab="saisie" onclick="switchLotTab('saisie')">✏️ Saisie du jour</button>
         <button class="tab-btn ${activeLotTab==='prophy'?'on':''}" data-tab="prophy" onclick="switchLotTab('prophy')">💊 Prophylaxie${retard>0?` <span style="background:var(--red);color:#fff;border-radius:10px;padding:0 5px;font-size:9px">${retard}</span>`:''}</button>
@@ -3734,8 +3735,9 @@ window.switchLotTab=async(t)=>{activeLotTab=t;const nav=document.getElementById(
 async function renderLotTab(){
   const el=document.getElementById('lotTabContent');if(!el) return;
   const lot=window._lot,kpi=window._kpi;if(!lot||!kpi) return;
-  if(activeLotTab==='overview') await renderLotOverview(lot,kpi,el);
-  else if(activeLotTab==='semaine') await renderLotSemaine(lot,kpi,el);
+  if(activeLotTab==='overview')   await renderLotOverview(lot,kpi,el);
+  else if(activeLotTab==='pesees')    await renderLotPesees(lot,kpi,el);
+  else if(activeLotTab==='semaine')   await renderLotSemaine(lot,kpi,el);
   else if(activeLotTab==='saisie') await renderLotSaisie(lot,kpi,el);
   else if(activeLotTab==='prophy') await renderLotProphy(lot,kpi,el);
   else if(activeLotTab==='nutrition') await renderLotNutrition(lot,el);
@@ -3744,6 +3746,350 @@ async function renderLotTab(){
   else if(activeLotTab==='reforme') await renderLotReforme(lot,kpi,el);
   else if(activeLotTab==='renta') await renderLotRenta(lot,kpi,el);
 }
+
+// ══════════ PESÉES & COURBES DE POIDS — LOTS ÉLEVAGE ══════════
+
+// Courbes standards de poids vif par race et type (g) — jour J
+const NORMES_POIDS_LOT = {
+  'Ross 308':    { type:'broiler', jours:[0,7,14,21,28,35,42,49,56], poids:[42,180,450,900,1500,2100,2700,3200,3700] },
+  'Cobb 500':    { type:'broiler', jours:[0,7,14,21,28,35,42,49,56], poids:[42,185,460,920,1550,2150,2750,3250,3800] },
+  'Arbor Acres': { type:'broiler', jours:[0,7,14,21,28,35,42,49,56], poids:[42,175,440,880,1480,2050,2600,3100,3600] },
+  'Hubbard':     { type:'broiler', jours:[0,7,14,21,28,35,42,49,56], poids:[42,170,430,860,1450,2000,2550,3050,3500] },
+  'ISA Brown':   { type:'layer',   jours:[0,14,28,42,56,70,84,98,112,126], poids:[38,110,280,540,850,1150,1400,1550,1680,1720] },
+  'Lohmann Brown':{ type:'layer',  jours:[0,14,28,42,56,70,84,98,112,126], poids:[38,105,270,520,830,1130,1380,1530,1660,1700] },
+  'Hy-Line':     { type:'layer',   jours:[0,14,28,42,56,70,84,98,112,126], poids:[38,108,275,530,840,1140,1390,1545,1670,1710] },
+  'Autre':       { type:'both',    jours:[0,7,14,21,28,35,42,49,56], poids:[42,170,420,850,1400,1950,2500,2950,3350] },
+};
+
+// Normes IC journalier cumulé (Ross 308)
+const NORMES_IC = { 7:1.1, 14:1.35, 21:1.55, 28:1.72, 35:1.88, 42:2.0, 49:2.12, 56:2.22 };
+
+// Normes GMQ par âge (g/jour) — Ross 308
+const NORMES_GMQ = { 7:20, 14:39, 21:64, 28:86, 35:86, 42:86, 49:71, 56:71 };
+
+async function renderLotPesees(lot, kpi, el){
+  const today = new Date().toISOString().slice(0,10);
+  const age = getAge(lot.startDate);
+  const growths = kpi.growths || [];
+  const feeds = await getByIdx(S.FEEDING,'flockId',lot.id);
+  const race = lot.breed || lot.race || 'Autre';
+  const normeRace = NORMES_POIDS_LOT[race] || NORMES_POIDS_LOT['Autre'];
+
+  // Trier les pesées par date croissante
+  const pesees = [...growths].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+
+  // ── Calcul GMQ entre chaque pesée ──────────────────────
+  const peseesMapped = pesees.map((p,i)=>{
+    const ageJ = Math.floor((new Date(p.date)-new Date(lot.startDate))/(1000*3600*24));
+    const prev = i>0 ? pesees[i-1] : null;
+    const prevAge = prev ? Math.floor((new Date(prev.date)-new Date(lot.startDate))/(1000*3600*24)) : 0;
+    const deltaJ = ageJ - prevAge;
+    const deltaPoids = prev ? (p.avgWeight||p.poids_moyen||0)-(prev.avgWeight||prev.poids_moyen||0) : (p.avgWeight||p.poids_moyen||0);
+    const gmq = deltaJ>0 ? (deltaPoids/deltaJ) : null;
+    // Norme poids pour cet âge
+    const idx = normeRace.jours.findIndex(j=>j>=ageJ);
+    const normePoids = idx>=0 ? normeRace.poids[idx] : null;
+    const ecart = normePoids && p.avgWeight ? ((p.avgWeight-normePoids)/normePoids*100) : null;
+    return { ...p, ageJ, gmq, normePoids, ecart };
+  });
+
+  // ── Calcul IC cumulé ────────────────────────────────────
+  const totalFeedKg = feeds.reduce((s,f)=>s+(f.quantityKg||0),0);
+  const dernierePesee = peseesMapped.length ? peseesMapped[peseesMapped.length-1] : null;
+  const poidsTotal = dernierePesee ? (dernierePesee.avgWeight||0)*(kpi.vivants||0)/1000 : 0; // kg masse vive
+  const ICcumul = poidsTotal>0 ? (totalFeedKg/poidsTotal).toFixed(2) : null;
+  const ICcumulNum = parseFloat(ICcumul);
+
+  // IC par période (entre deux pesées consécutives)
+  const icPeriodes = peseesMapped.slice(1).map((p,i)=>{
+    const prev = peseesMapped[i];
+    const feedPeriode = feeds.filter(f=>f.date>=prev.date&&f.date<=p.date).reduce((s,f)=>s+(f.quantityKg||0),0);
+    const gainKg = ((p.avgWeight||0)-(prev.avgWeight||0))*(kpi.vivants||0)/1000;
+    const ic = gainKg>0 ? (feedPeriode/gainKg).toFixed(2) : null;
+    return { date:p.date, ageJ:p.ageJ, ic };
+  });
+
+  // ── GMQ moyen 7 derniers jours ──────────────────────────
+  const gmqActuel = peseesMapped.length>=2 ? peseesMapped[peseesMapped.length-1].gmq : null;
+
+  // ── Norme IC pour l'âge actuel ──────────────────────────
+  const normeICAge = Object.entries(NORMES_IC).reduce((prev,[j,v])=>{
+    return parseInt(j)<=age ? v : prev;
+  }, null);
+
+  // ── Alerte IC ───────────────────────────────────────────
+  const icAlerte = ICcumulNum && normeICAge ? (ICcumulNum > normeICAge*1.1) : false;
+
+  // ── Données pour la courbe Chart.js ─────────────────────
+  const allJours = [...new Set([...normeRace.jours, ...peseesMapped.map(p=>p.ageJ)])].sort((a,b)=>a-b);
+  const chartData = JSON.stringify({
+    jours: allJours,
+    poidsReel: allJours.map(j=>{
+      const p = peseesMapped.find(p=>p.ageJ===j);
+      return p ? (p.avgWeight||p.poids_moyen||0) : null;
+    }),
+    poidsNorme: allJours.map(j=>{
+      const idx = normeRace.jours.findIndex(n=>n>=j);
+      return idx>=0 ? normeRace.poids[idx] : null;
+    }),
+    gmqs: allJours.map(j=>{
+      const p = peseesMapped.find(p=>p.ageJ===j);
+      return p ? (p.gmq ? parseFloat(p.gmq.toFixed(1)) : null) : null;
+    }),
+  });
+
+  // ── Lignes tableau ──────────────────────────────────────
+  const rowsPesees = peseesMapped.map((p,i)=>{
+    const poids = parseFloat(p.avgWeight||p.poids_moyen||0);
+    const ecartCol = p.ecart===null?'var(--color-text-tertiary)':Math.abs(p.ecart)<=5?'#15803d':Math.abs(p.ecart)<=10?'#d97706':'#dc2626';
+    const ecartBg  = p.ecart===null?'transparent':Math.abs(p.ecart)<=5?'#dcfce7':Math.abs(p.ecart)<=10?'#fef9c3':'#fee2e2';
+    const gmqCol   = p.gmq===null?'var(--color-text-tertiary)':p.gmq>=80?'#15803d':p.gmq>=60?'#d97706':'#dc2626';
+    const poidsTxt = poids>=1000 ? (poids/1000).toFixed(3)+' kg' : poids+'g';
+    return `<tr>
+      <td style="color:var(--color-text-tertiary);white-space:nowrap">${p.date||'—'}</td>
+      <td style="text-align:center;font-weight:600">J${p.ageJ}</td>
+      <td style="text-align:center;font-weight:700;color:#7c3aed;font-size:15px">${poidsTxt}</td>
+      <td style="text-align:center;font-size:12px;color:var(--color-text-tertiary)">${p.normePoids?p.normePoids+'g':'—'}</td>
+      <td style="text-align:center">
+        ${p.ecart!==null?`<span style="background:${ecartBg};color:${ecartCol};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${p.ecart>=0?'+':''}${p.ecart.toFixed(1)}%</span>`:'—'}
+      </td>
+      <td style="text-align:center;color:${gmqCol};font-weight:600">${p.gmq!==null?p.gmq.toFixed(0)+' g/j':'—'}</td>
+      <td style="font-size:11px;color:var(--color-text-tertiary)">${esc(p.notes||'')}</td>
+      <td><button class="btn-del" onclick="delPeseeLot(${p.id},${lot.id})"><i class="fas fa-trash"></i></button></td>
+    </tr>`;
+  }).reverse().join(''); // Inverser pour afficher les plus récentes en premier
+
+  el.innerHTML = `
+  <!-- Alertes -->
+  ${icAlerte ? `<div style="background:#fef2f2;border:.5px solid #fca5a5;border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:12px;font-size:13px">
+    <strong style="color:#991b1b">⚠️ IC dégradé</strong> — ${ICcumul} vs norme ${normeICAge} pour J${age}
+    <div style="font-size:12px;color:#7f1d1d;margin-top:3px">Revoir le programme alimentaire ou vérifier les pertes d'aliment.</div>
+  </div>` : ''}
+
+  <!-- KPIs -->
+  <div class="kpi-grid" style="margin-bottom:14px">
+    <div class="kpi" style="border-top:3px solid #7c3aed">
+      <div class="kpi-lbl">Poids moyen actuel</div>
+      <div class="kpi-val" style="color:#7c3aed">${dernierePesee?(parseFloat(dernierePesee.avgWeight||0)>=1000?((dernierePesee.avgWeight||0)/1000).toFixed(3)+' kg':(dernierePesee.avgWeight||0)+'g'):'—'}</div>
+      <div class="kpi-sub">${dernierePesee?'J'+dernierePesee.ageJ+' — '+dernierePesee.date:'Aucune pesée'}</div>
+    </div>
+    <div class="kpi" style="border-top:3px solid ${gmqActuel===null?'#888':gmqActuel>=80?'#15803d':gmqActuel>=60?'#d97706':'#dc2626'}">
+      <div class="kpi-lbl">GMQ actuel</div>
+      <div class="kpi-val" style="color:${gmqActuel===null?'var(--color-text-tertiary)':gmqActuel>=80?'#15803d':gmqActuel>=60?'#d97706':'#dc2626'}">${gmqActuel!==null?gmqActuel.toFixed(0)+' g/j':'—'}</div>
+      <div class="kpi-sub">réf. Ross 308 : ${NORMES_GMQ[Math.min(56,Math.round(age/7)*7)]||'—'} g/j</div>
+    </div>
+    <div class="kpi" style="border-top:3px solid ${ICcumulNum?(icAlerte?'#dc2626':ICcumulNum<=1.9?'#15803d':'#d97706'):'#888'}">
+      <div class="kpi-lbl">IC cumulé</div>
+      <div class="kpi-val" style="color:${ICcumulNum?(icAlerte?'#dc2626':ICcumulNum<=1.9?'#15803d':'#d97706'):'var(--color-text-tertiary)'}">${ICcumul||'—'}</div>
+      <div class="kpi-sub">norme J${age} : ${normeICAge||'—'} · kg aliment/kg poids</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-lbl">Aliment total distribué</div>
+      <div class="kpi-val">${Math.round(totalFeedKg)} kg</div>
+      <div class="kpi-sub">${feeds.length} distributions enregistrées</div>
+    </div>
+  </div>
+
+  <!-- Formulaire saisie -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd" style="background:linear-gradient(135deg,#7c3aed,#0891b2);color:#fff;border-radius:var(--r) var(--r) 0 0">
+      <span>⚖️ Nouvelle pesée — ${esc(lot.nom)}</span>
+      <span style="font-size:11px;opacity:.8">Peser minimum 10% de l'effectif (${Math.ceil((kpi.vivants||0)*0.1)} sujets)</span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+        <div class="fg"><label>Date de pesée *</label>
+          <input type="date" id="plDate" value="${today}"></div>
+        <div class="fg"><label>Poids moyen (g) *</label>
+          <input type="number" id="plPoids" min="1" step="1" placeholder="Ex: 1500" oninput="calcGMQpreview()"></div>
+        <div class="fg"><label>Nb sujets pesés</label>
+          <input type="number" id="plNbSuj" min="1" placeholder="${Math.ceil((kpi.vivants||0)*0.1)}"></div>
+        <div class="fg"><label>Poids min (g)</label>
+          <input type="number" id="plMin" min="1" step="1" placeholder="Min"></div>
+        <div class="fg"><label>Poids max (g)</label>
+          <input type="number" id="plMax" min="1" step="1" placeholder="Max"></div>
+        <div class="fg"><label>Homogénéité %</label>
+          <input type="number" id="plHom" min="0" max="100" step="1" placeholder="Ex: 85"></div>
+      </div>
+      <div id="gmqPreview" style="margin-top:10px;font-size:12px;color:var(--color-text-secondary);background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:8px 12px;display:none"></div>
+      <div class="fg" style="margin-top:8px"><label>Notes / Observations</label>
+        <input type="text" id="plNotes" placeholder="Conditions pesée, remarques sanitaires..."></div>
+      <button class="btn btn-p" style="margin-top:10px" onclick="savePeseeLot(${lot.id},'${lot.startDate}','${race}')">
+        <i class="fas fa-save"></i> Enregistrer la pesée
+      </button>
+    </div>
+  </div>
+
+  <!-- Courbe de poids Chart.js -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">
+      <span>📈 Courbe de poids — ${esc(race)} — ${esc(lot.nom)}</span>
+      <span style="font-size:11px;color:var(--color-text-tertiary)">Réel vs norme de race · GMQ en barres</span>
+    </div>
+    <div class="card-bd" style="padding:12px">
+      ${pesees.length ? `<canvas id="chartPoidLot" height="220"></canvas>` : `
+        <div style="text-align:center;color:var(--color-text-tertiary);padding:40px;font-size:13px">
+          <i class="fas fa-weight" style="font-size:32px;display:block;margin-bottom:10px;opacity:.3"></i>
+          Saisissez la première pesée pour voir la courbe
+        </div>`}
+    </div>
+  </div>
+
+  <!-- IC par période -->
+  ${icPeriodes.length ? `<div class="card" style="margin-bottom:14px">
+    <div class="card-hd"><span>📊 Indice de consommation par période</span></div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr><th>Jusqu'au</th><th style="text-align:center">Age</th><th style="text-align:center">IC période</th><th style="text-align:center">Norme</th><th style="text-align:center">Statut</th></tr></thead>
+        <tbody>${icPeriodes.map(p=>{
+          const icV = parseFloat(p.ic||0);
+          const norme = NORMES_IC[Math.min(56,Math.round(p.ageJ/7)*7)]||null;
+          const ok = norme ? icV<=norme*1.05 : true;
+          return `<tr>
+            <td style="color:var(--color-text-tertiary)">${p.date}</td>
+            <td style="text-align:center">J${p.ageJ}</td>
+            <td style="text-align:center;font-weight:700;color:${ok?'#15803d':'#dc2626'}">${p.ic||'—'}</td>
+            <td style="text-align:center;color:var(--color-text-tertiary)">${norme||'—'}</td>
+            <td style="text-align:center">${p.ic?(ok?'<span style="color:#15803d">✅</span>':'<span style="color:#dc2626">⚠️</span>'):'—'}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+  </div>` : ''}
+
+  <!-- Tableau historique pesées -->
+  <div class="card">
+    <div class="card-hd">
+      <span>📋 Historique des pesées</span>
+      <span style="font-size:11px;color:var(--color-text-tertiary)">${pesees.length} pesée(s)</span>
+    </div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th>Date</th><th style="text-align:center">Âge</th>
+          <th style="text-align:center">Poids moyen</th>
+          <th style="text-align:center">Norme race</th>
+          <th style="text-align:center">Écart</th>
+          <th style="text-align:center">GMQ</th>
+          <th>Notes</th><th></th>
+        </tr></thead>
+        <tbody>${rowsPesees || '<tr><td colspan="8" style="text-align:center;color:var(--color-text-tertiary);padding:24px">Aucune pesée enregistrée</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+  // ── Calcul prévisualisation GMQ ─────────────────────
+  const _startDate='${lot.startDate}';
+  const _lastPesee=${JSON.stringify(dernierePesee)};
+  const _normeGMQ=${JSON.stringify(NORMES_GMQ)};
+
+  function calcGMQpreview(){
+    const date=document.getElementById('plDate')?.value;
+    const poids=parseFloat(document.getElementById('plPoids')?.value||0);
+    const el=document.getElementById('gmqPreview');
+    if(!date||!poids||!_lastPesee||!el){ if(el) el.style.display='none'; return; }
+    const ageJ=Math.floor((new Date(date)-new Date(_startDate))/(1000*3600*24));
+    const prevAge=_lastPesee.ageJ||0;
+    const prevPoids=parseFloat(_lastPesee.avgWeight||_lastPesee.poids_moyen||0);
+    const deltaJ=ageJ-prevAge;
+    const gmq=deltaJ>0?(poids-prevPoids)/deltaJ:null;
+    const normeAge=Math.min(56,Math.round(ageJ/7)*7);
+    const normeGmq=_normeGMQ[normeAge]||null;
+    let html='<strong>Prévisualisation :</strong> ';
+    html+='Âge J'+ageJ+' · ';
+    if(gmq!==null){
+      const col=gmq>=80?'#15803d':gmq>=60?'#d97706':'#dc2626';
+      html+='GMQ = <strong style="color:'+col+'">'+gmq.toFixed(0)+' g/j</strong>';
+      if(normeGmq) html+=' (norme Ross 308 : '+normeGmq+' g/j)';
+    }
+    // Écart vs norme
+    const normesArr=${JSON.stringify(normeRace)};
+    const idx=normesArr.jours.findIndex(j=>j>=ageJ);
+    if(idx>=0){
+      const np=normesArr.poids[idx];
+      const e=((poids-np)/np*100).toFixed(1);
+      const col=Math.abs(parseFloat(e))<=5?'#15803d':Math.abs(parseFloat(e))<=10?'#d97706':'#dc2626';
+      html+=' · Écart norme : <strong style="color:'+col+'">'+(parseFloat(e)>=0?'+':'')+e+'%</strong> (norme '+np+'g)';
+    }
+    el.innerHTML=html; el.style.display='block';
+  }
+
+  // ── Chart.js courbe poids + GMQ ─────────────────────
+  const _chartData=${chartData};
+  const dark=window.matchMedia('(prefers-color-scheme:dark)').matches;
+  const gridC=dark?'rgba(255,255,255,.08)':'rgba(0,0,0,.07)';
+  const textC=dark?'#9ca3af':'#6b7280';
+
+  const canvas=document.getElementById('chartPoidLot');
+  if(canvas && _chartData.poidsReel.some(v=>v!==null)){
+    new Chart(canvas,{
+      type:'bar',
+      data:{
+        labels:_chartData.jours.map(j=>'J'+j),
+        datasets:[
+          {
+            type:'line', label:'Poids réel (g)',
+            data:_chartData.poidsReel,
+            borderColor:'#7c3aed', backgroundColor:'rgba(124,58,237,.12)',
+            borderWidth:2.5, pointRadius:5, pointBackgroundColor:'#7c3aed',
+            tension:.3, fill:true, yAxisID:'y', spanGaps:true
+          },{
+            type:'line', label:'Norme ${race} (g)',
+            data:_chartData.poidsNorme,
+            borderColor:'#0891b2', borderWidth:1.5, borderDash:[5,4],
+            pointRadius:0, fill:false, yAxisID:'y', spanGaps:true
+          },{
+            type:'bar', label:'GMQ (g/j)',
+            data:_chartData.gmqs,
+            backgroundColor:'rgba(22,163,74,.5)', borderRadius:3,
+            yAxisID:'y2'
+          }
+        ]
+      },
+      options:{
+        responsive:true,
+        plugins:{legend:{labels:{font:{size:11},color:textC}}},
+        scales:{
+          y:{position:'left',ticks:{font:{size:10},color:textC,callback:function(v){return v>=1000?(v/1000).toFixed(1)+'kg':v+'g';}},grid:{color:gridC},beginAtZero:false},
+          y2:{position:'right',ticks:{font:{size:10},color:'rgba(22,163,74,.8)',callback:function(v){return v+'g/j';}},grid:{display:false},beginAtZero:true},
+          x:{ticks:{font:{size:10},color:textC},grid:{color:gridC}}
+        }
+      }
+    });
+  }
+  <\/script>`;
+}
+
+window.savePeseeLot = async function(lotId, startDate, race){
+  const date  = document.getElementById('plDate')?.value;
+  const poids = parseFloat(document.getElementById('plPoids')?.value||0);
+  const nb    = parseInt(document.getElementById('plNbSuj')?.value||0);
+  const min   = parseFloat(document.getElementById('plMin')?.value||0);
+  const max   = parseFloat(document.getElementById('plMax')?.value||0);
+  const hom   = parseFloat(document.getElementById('plHom')?.value||0);
+  const notes = document.getElementById('plNotes')?.value.trim();
+  if(!date)  { toast('Date requise','err'); return; }
+  if(!poids) { toast('Poids moyen requis','err'); return; }
+  await addRec(S.GROWTH_PROD,{
+    flockId:lotId, date, avgWeight:poids,
+    nbSujets:nb||null, poidsMin:min||null, poidsMax:max||null,
+    homogeneite:hom||null, notes:notes||'',
+    mortality:0, operatorId:currentUser?.id||1,
+    ts:Date.now()
+  });
+  toast('✅ Pesée enregistrée — GMQ et IC recalculés');
+  activeLotTab='pesees';
+  await render();
+};
+
+window.delPeseeLot = async function(id, lotId){
+  if(!confirm('Supprimer cette pesée ?')) return;
+  await delRec(S.GROWTH_PROD, id);
+  toast('Supprimé');
+  activeLotTab='pesees';
+  await render();
+};
 
 async function computeKPIs(lot){
   const eggs=await getByIdx(S.EGG_PROD,'flockId',lot.id);
