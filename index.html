@@ -4191,42 +4191,234 @@ async function computeKPIs(lot){
 async function renderLotOverview(lot,kpi,el){
   if(chartInst){chartInst.destroy();chartInst=null;}
   if(scoreInst){scoreInst.destroy();scoreInst=null;}
-  const data=lot.type==='layer'?kpi.eggs.slice(-30):kpi.growths.slice(-35);
-  el.innerHTML=`
-    <div style="display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start;flex-wrap:wrap;margin-bottom:14px">
-      <div class="card" style="flex:1;margin-bottom:0">
-        <div class="card-hd"><span>${lot.type==='layer'?'📈 Courbe de ponte':'📈 Courbe de croissance'}</span>
-          <div style="display:flex;gap:4px">
-            <button class="ctab on" id="chTabP" onclick="switchChart('primary',event)">Ponte/Poids</button>
-            <button class="ctab" id="chTabM" onclick="switchChart('mort',event)">Mortalité</button>
-            <button class="ctab" id="chTabF" onclick="switchChart('feed',event)">Aliment</button>
+
+  const age      = getAge(lot.startDate);
+  const ph       = getPhase(lot.type, age);
+  const today    = new Date().toISOString().slice(0,10);
+  const isLayer  = lot.type==='layer';
+  const isBroil  = lot.type==='broiler';
+
+  // ── Données 30 derniers jours ────────────────────────
+  const primary = isLayer ? kpi.eggs.slice(-30)  : kpi.growths.slice(-35);
+  const feeds7  = kpi.feeds.slice(-7);
+  const feeds30 = kpi.feeds.slice(-30);
+
+  // ── Charges détaillées ───────────────────────────────
+  const charges = await getAll(S.CHARGES);
+  const chargesLot = charges.filter(c=>(c.flockId||c.lot_id||c.lotId)===lot.id);
+  const coutAliment30 = feeds30.reduce((s,f)=>s+(parseFloat(f.quantityKg||0)*185),0);
+  const autresCharges = chargesLot.reduce((s,c)=>s+parseFloat(c.montant||c.cout||0),0);
+  const coutPinit = (lot.costPerChick||lot.cout_poussin||0)*(lot.initialStock||0);
+  const totalChargesCalcul = coutPinit + (kpi.totalFeedKg*185) + autresCharges;
+
+  // ── Recettes détaillées ──────────────────────────────
+  const allSales = await getAll(S.SALES);
+  const salesLot = allSales.filter(s=>(s.flockId||s.lot_id)===lot.id);
+  const recetteVentes = salesLot.reduce((s,v)=>s+parseFloat(v.total||0),0);
+  const recetteReforme = (kpi.reformes||[]).reduce((s,r)=>s+parseFloat(r.recetteTotale||0),0);
+  const recetteVivant = (kpi.ventesVivantes||[]).reduce((s,v)=>s+parseFloat(v.recetteTotale||0),0);
+  const totalRecettes = recetteVentes + recetteReforme + recetteVivant;
+  const marge = totalRecettes - totalChargesCalcul;
+  const margePct = totalChargesCalcul>0 ? (marge/totalChargesCalcul*100) : null;
+
+  // ── Revenu / poussin ou / kg ─────────────────────────
+  const revPoussin = kpi.vivants>0 ? (totalRecettes/kpi.vivants) : null;
+  const prixRevientUnit = kpi.vivants>0 ? (totalChargesCalcul/kpi.vivants) : null;
+
+  // ── Évolution derniers 30j pour mini-sparkline SVG ──
+  function sparkline(data, color){
+    if(!data||data.length<2) return '<span style="color:var(--color-text-tertiary);font-size:11px">—</span>';
+    const max=Math.max(...data,1), min=Math.min(...data,0);
+    const h=30, w=80, range=max-min||1;
+    const pts=data.map((v,i)=>{
+      const x=i/(data.length-1)*w;
+      const y=h-(v-min)/range*h;
+      return x+','+y;
+    }).join(' ');
+    const last=data[data.length-1], prev=data[data.length-2];
+    const trend=last>=prev?'▲':'▼';
+    const tCol=last>=prev?'#15803d':'#dc2626';
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:inline-block;vertical-align:middle"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>&nbsp;<span style="font-size:10px;color:${tCol}">${trend}</span>`;
+  }
+
+  const ponteData = isLayer ? kpi.eggs.slice(-14).map(e=>kpi.vivants>0?+(e.eggCount/kpi.vivants*100).toFixed(1):0) : [];
+  const mortData  = kpi.mortRecords.slice(-14).map(m=>m.nbMorts||0);
+  const feedData  = kpi.feeds.slice(-14).map(f=>parseFloat(f.quantityKg||0));
+  const poidsData = kpi.growths.slice(-8).map(g=>g.avgWeight||0);
+
+  // ── Score couleur ────────────────────────────────────
+  const sCol = kpi.score>=80?'#15803d':kpi.score>=60?'#d97706':'#dc2626';
+  const sBg  = kpi.score>=80?'#dcfce7':kpi.score>=60?'#fef9c3':'#fee2e2';
+
+  // ── IC cumulé pour broiler ───────────────────────────
+  const poidsActuel = kpi.poidsActuel||0;
+  const masseViveKg = poidsActuel*(kpi.vivants)/1000;
+  const ICcumul = masseViveKg>0 ? (kpi.totalFeedKg/masseViveKg).toFixed(2) : null;
+
+  el.innerHTML = `
+
+  <!-- ═══ SECTION 1 : EN-TÊTE + SCORE + ALERTES ═══ -->
+  <div style="display:grid;grid-template-columns:1fr auto;gap:12px;margin-bottom:14px;align-items:stretch">
+
+    <!-- Identité et KPIs -->
+    <div class="card" style="margin-bottom:0">
+      <div class="card-bd" style="padding:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="font-size:28px">${isLayer?'🥚':'🍗'}</span>
+          <div>
+            <div style="font-size:16px;font-weight:500;color:var(--color-text-primary)">${esc(lot.nom)}</div>
+            <div style="font-size:12px;color:var(--color-text-secondary)">${esc(lot.breed||lot.race||'—')} · ${esc(lot.line||lot.ligne||'—')} · Démarré le ${lot.startDate}</div>
+          </div>
+          <span style="margin-left:auto;background:${ph.cls==='s-done'?'#dcfce7':ph.cls==='s-pend'?'#fef9c3':'#fee2e2'};color:${ph.cls==='s-done'?'#15803d':ph.cls==='s-pend'?'#854d0e':'#991b1b'};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:500">${ph.label}</span>
+        </div>
+
+        <!-- KPIs principaux -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">EFFECTIF VIVANT</div>
+            <div style="font-size:18px;font-weight:500;color:var(--color-text-primary)">${kpi.vivants.toLocaleString('fr-FR')}</div>
+            <div style="font-size:10px;color:var(--color-text-tertiary)">/ ${(lot.initialStock||0).toLocaleString('fr-FR')} initial</div>
+          </div>
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">ÂGE ACTUEL</div>
+            <div style="font-size:18px;font-weight:500;color:#7c3aed">J${age}</div>
+            <div style="font-size:10px;color:var(--color-text-tertiary)">${ph.label}</div>
+          </div>
+          ${isLayer ? `
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">TAUX PONTE J-7</div>
+            <div style="font-size:18px;font-weight:500;color:${kpi.tauxPonte7!=null?(kpi.tauxPonte7>=85?'#15803d':kpi.tauxPonte7>=75?'#d97706':'#dc2626'):'var(--color-text-tertiary)'}">${kpi.tauxPonte7!=null?kpi.tauxPonte7.toFixed(1)+'%':'—'}</div>
+            <div style="font-size:10px">${sparkline(ponteData,'#7c3aed')}</div>
+          </div>
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">ŒUFS CUMULÉS</div>
+            <div style="font-size:18px;font-weight:500;color:#0891b2">${kpi.totalEggs.toLocaleString('fr-FR')}</div>
+            <div style="font-size:10px;color:var(--color-text-tertiary)">${kpi.alimentParOeuf?kpi.alimentParOeuf.toFixed(0)+'g/œuf':''}</div>
+          </div>` : `
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">POIDS MOYEN</div>
+            <div style="font-size:18px;font-weight:500;color:#7c3aed">${poidsActuel>=1000?(poidsActuel/1000).toFixed(2)+'kg':poidsActuel+'g'}</div>
+            <div style="font-size:10px">${sparkline(poidsData,'#7c3aed')}</div>
+          </div>
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">IC CUMULÉ</div>
+            <div style="font-size:18px;font-weight:500;color:${ICcumul?(parseFloat(ICcumul)<=1.9?'#15803d':parseFloat(ICcumul)<=2.2?'#d97706':'#dc2626'):'var(--color-text-tertiary)'}">${ICcumul||'—'}</div>
+            <div style="font-size:10px;color:var(--color-text-tertiary)">kg aliment/kg vif</div>
+          </div>`}
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">MORTALITÉ CUM.</div>
+            <div style="font-size:18px;font-weight:500;color:${kpi.mortPct>5?'#dc2626':kpi.mortPct>2?'#d97706':'#15803d'}">${kpi.mortPct.toFixed(1)}%</div>
+            <div style="font-size:10px">${sparkline(mortData,'#E24B4A')}</div>
+          </div>
+          <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 10px">
+            <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:2px">ALIMENT TOTAL</div>
+            <div style="font-size:18px;font-weight:500;color:#d97706">${Math.round(kpi.totalFeedKg).toLocaleString('fr-FR')}<span style="font-size:11px">kg</span></div>
+            <div style="font-size:10px">${sparkline(feedData,'#EF9F27')}</div>
           </div>
         </div>
-        <div class="card-bd" style="position:relative;height:220px"><canvas id="mainChart"></canvas></div>
       </div>
-      <div class="card" style="min-width:160px;margin-bottom:0">
-        <div class="card-hd">🏆 Performance</div>
-        <div class="card-bd" style="display:flex;flex-direction:column;align-items:center;padding:14px 10px">
+    </div>
+
+    <!-- Score + Alertes -->
+    <div style="display:flex;flex-direction:column;gap:10px;min-width:160px">
+      <div class="card" style="margin-bottom:0;flex:1">
+        <div class="card-hd" style="font-size:12px">🏆 Score</div>
+        <div class="card-bd" style="display:flex;flex-direction:column;align-items:center;padding:10px">
           <canvas id="scoreChart" width="110" height="110"></canvas>
-          <div style="font-size:11px;color:var(--text3);margin-top:8px">Score global</div>
-          <div style="margin-top:12px;width:100%;font-size:12px">
-            ${['Ponte/IC','Aliment','Mortalité','Vaccins'].map((l,i)=>{
-              const vals=[lot.type==='layer'?kpi.tauxPonte7?.toFixed(1)+'%':kpi.IC?.toFixed(2)||'—',kpi.alimentParOeuf?kpi.alimentParOeuf.toFixed(0)+'g':kpi.IC?kpi.IC.toFixed(2):'—',kpi.mortPct.toFixed(1)+'%',kpi.vaccEnRetard.length===0?'OK':kpi.vaccEnRetard.length+' retard'];
-              const oks=[lot.type==='layer'?kpi.tauxPonte7>=85:kpi.IC&&kpi.IC<=1.9,kpi.alimentParOeuf?kpi.alimentParOeuf<130:kpi.IC&&kpi.IC<=1.9,kpi.mortPct<3,kpi.vaccEnRetard.length===0];
-              return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text2)">${l}</span><span style="font-weight:700;color:${oks[i]?'#059669':'var(--red)'}">✓ ${vals[i]}</span></div>`;
-            }).join('')}
+          <div style="margin-top:10px;width:100%;font-size:11px">
+            ${[
+              isLayer ? ['Taux ponte', kpi.tauxPonte7!=null?kpi.tauxPonte7.toFixed(1)+'%':'—', kpi.tauxPonte7>=85] : ['IC', ICcumul||'—', ICcumul&&parseFloat(ICcumul)<=1.9],
+              ['Mortalité', kpi.mortPct.toFixed(1)+'%', kpi.mortPct<3],
+              ['Vaccins', kpi.vaccEnRetard.length===0?'✓':'⚠️ '+kpi.vaccEnRetard.length, kpi.vaccEnRetard.length===0],
+              ['Aliment', kpi.totalFeedKg>0?'OK':'—', kpi.totalFeedKg>0],
+            ].map(([l,v,ok])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:.5px solid var(--color-border-tertiary)">
+              <span style="color:var(--color-text-secondary)">${l}</span>
+              <span style="font-weight:500;color:${ok?'#15803d':'#dc2626'}">${v}</span>
+            </div>`).join('')}
           </div>
         </div>
       </div>
     </div>
-    <div class="card">
+  </div>
+
+  <!-- ═══ SECTION 2 : ALERTES ═══ -->
+  ${kpi.alertes.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+    ${kpi.alertes.map(a=>`<div style="background:${a.type==='red'?'#fee2e2':a.type==='amber'?'#fef9c3':a.type==='blue'?'#e0f2fe':'#dcfce7'};color:${a.type==='red'?'#991b1b':a.type==='amber'?'#854d0e':a.type==='blue'?'#0c4a6e':'#14532d'};border-radius:20px;padding:4px 12px;font-size:12px;font-weight:500">
+      ${a.type==='red'?'🔴':a.type==='amber'?'⚠️':a.type==='blue'?'💡':'✅'} ${esc(a.msg)}
+    </div>`).join('')}
+  </div>` : ''}
+
+  <!-- ═══ SECTION 3 : COURBES ═══ -->
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:14px">
+    <div class="card" style="margin-bottom:0">
       <div class="card-hd">
-        <span>📅 7 derniers jours</span>
-        <button class="btn btn-sm btn-gh" onclick="switchLotTab('semaine')"><i class="fas fa-calendar-week"></i> Vue semaine complète</button>
+        <span>${isLayer?'📈 Taux de ponte 30j':'📈 Poids moyen + Mortalité 30j'}</span>
+        <div style="display:flex;gap:4px">
+          <button class="ctab on" id="chTabP" onclick="switchChart('primary',event)">${isLayer?'Ponte':'Poids'}</button>
+          <button class="ctab" id="chTabM" onclick="switchChart('mort',event)">Mortalité</button>
+          <button class="ctab" id="chTabF" onclick="switchChart('feed',event)">Aliment</button>
+        </div>
       </div>
-      <div class="card-bd tbl-wrap">${render7Table(lot,kpi)}</div>
+      <div class="card-bd" style="position:relative;height:200px"><canvas id="mainChart"></canvas></div>
     </div>
-  `;
+
+    <!-- Bilan financier rapide -->
+    <div class="card" style="margin-bottom:0">
+      <div class="card-hd" style="font-size:12px">💰 Bilan financier</div>
+      <div class="card-bd" style="padding:12px;font-size:12px">
+        <div style="text-align:center;margin-bottom:10px">
+          <div style="font-size:22px;font-weight:500;color:${marge>=0?'#15803d':'#dc2626'}">${marge>=0?'+':''}${Math.round(marge).toLocaleString('fr-FR')}</div>
+          <div style="font-size:10px;color:var(--color-text-tertiary)">FCFA ${marge>=0?'bénéfice':'déficit'} ${margePct!=null?'('+margePct.toFixed(1)+'%)'  :''}</div>
+        </div>
+        ${[
+          ['Achat poussins', Math.round(coutPinit), '#dc2626', false],
+          ['Alimentation', Math.round(kpi.totalFeedKg*185), '#d97706', false],
+          ['Autres charges', Math.round(autresCharges), '#d97706', false],
+          ['Ventes produits', Math.round(recetteVentes), '#15803d', true],
+          ['Réforme/Vivant', Math.round(recetteReforme+recetteVivant), '#0891b2', true],
+        ].map(([l,v,col,is_rec])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:.5px solid var(--color-border-tertiary)">
+          <span style="color:var(--color-text-secondary)">${l}</span>
+          <span style="color:${col};font-weight:500">${is_rec?'+':'−'}${v.toLocaleString('fr-FR')} F</span>
+        </div>`).join('')}
+        <div style="margin-top:8px;padding-top:6px;border-top:.5px solid var(--color-border-tertiary)">
+          ${prixRevientUnit?`<div style="color:var(--color-text-secondary);font-size:11px">Coût/sujet : <strong>${Math.round(prixRevientUnit).toLocaleString('fr-FR')} F</strong></div>`:''}
+          ${revPoussin?`<div style="color:var(--color-text-secondary);font-size:11px">Recette/sujet : <strong>${Math.round(revPoussin).toLocaleString('fr-FR')} F</strong></div>`:''}
+        </div>
+        <button class="btn btn-sm" style="width:100%;margin-top:8px;font-size:11px" onclick="switchLotTab('renta')">
+          <i class="fas fa-chart-pie"></i> Analyse complète →
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SECTION 4 : 7 DERNIERS JOURS ═══ -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">
+      <span>📅 7 derniers jours</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm btn-p" onclick="switchLotTab('saisie')"><i class="fas fa-plus"></i> Saisir</button>
+        <button class="btn btn-sm btn-gh" onclick="switchLotTab('semaine')"><i class="fas fa-calendar-week"></i> Voir tout</button>
+      </div>
+    </div>
+    <div class="card-bd tbl-wrap">${render7Table(lot,kpi)}</div>
+  </div>
+
+  <!-- ═══ SECTION 5 : ACTIONS RAPIDES ═══ -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+    ${[
+      ['✏️', 'Saisie du jour', 'saisie'],
+      ['⚖️', 'Pesées & GMQ', 'pesees'],
+      ['💊', 'Prophylaxie', 'prophy'],
+      ['🥗', 'Programme nutritionnel', 'nutrition'],
+      ['📋', 'Historique', 'history'],
+      ['💰', 'Rentabilité', 'renta'],
+    ].map(([ico,lbl,tab])=>`
+      <button onclick="switchLotTab('${tab}')" style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px;font-size:12px;color:var(--color-text-primary);cursor:pointer;text-align:center;transition:background .15s" onmouseover="this.style.background='var(--color-background-info)'" onmouseout="this.style.background='var(--color-background-secondary)'">
+        <div style="font-size:20px;margin-bottom:4px">${ico}</div>
+        <div>${lbl}</div>
+      </button>`).join('')}
+  </div>`;
+
   buildMainChart(lot,kpi,'primary');
   buildScoreChart(kpi);
 }
