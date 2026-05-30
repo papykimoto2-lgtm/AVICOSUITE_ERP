@@ -1725,6 +1725,7 @@ const STORE_TABLE = {
   // Reproduction & Couvoir
   'repro_lots':        'repro_lots',
   'repro_collecte':    'repro_collecte',
+  'alim_repro':        'alim_repro',
   'couvoir_incubation':'couvoir_incubation',
   'couvoir_mirage':    'couvoir_mirage',
   'couvoir_eclosion':  'couvoir_eclosion',
@@ -2047,6 +2048,7 @@ const S={
   /* ── REPRODUCTION & COUVOIR ── */
   REPRO_LOTS:'repro_lots',           // Lots de géniteurs (reproducteurs)
   REPRO_COLLECTE:'repro_collecte',   // Collecte des œufs à couver
+  ALIM_REPRO:'alim_repro',           // Alimentation des géniteurs
   COUVOIR_INCUB:'couvoir_incubation',// Mises en incubation (batchs)
   COUVOIR_MIRAGE:'couvoir_mirage',   // Résultats de mirage (J7/J14/J18)
   COUVOIR_ECLOSION:'couvoir_eclosion'// Résultats d'éclosion
@@ -14191,7 +14193,7 @@ async function renderReproCouvoir(ca){
     ${[
       ['dashboard','📊 Tableau de bord'],['geniteurs','🐓 Géniteurs'],
       ['collecte','🥚 Collecte'],['incubation','🏭 Incubation'],
-      ['eclosion','🐣 Éclosion']
+      ['eclosion','🐣 Éclosion'],['alimrepro','🌾 Alimentation']
     ].map(([id,lbl])=>`<button class="tab-btn ${rcTab===id?'active':''}" onclick="switchRCTab('${id}')"
       style="${rcTab===id?'color:#7c3aed;border-bottom-color:#7c3aed':''}">${lbl}</button>`).join('')}
   </div>
@@ -14224,6 +14226,7 @@ async function renderRCTab(tab,reproLots,collectes,incubations,mirages,eclosions
   if(tab==='collecte')   return renderRCCollecte(collectes,reproLots);
   if(tab==='incubation') return renderRCIncubation(incubations,mirages,eclosions,reproLots,collectes);
   if(tab==='eclosion')   return renderRCEclosion(eclosions,incubations,reproLots);
+  if(tab==='alimrepro')  return await renderRCAlimRepro(reproLots);
   return '';
 }
 
@@ -14372,19 +14375,22 @@ window.openGeniteurModal = async function(id=null){
 };
 window.saveGeniteur = async function(){
   const id = document.getElementById('gId')?.value;
+  const dateIntro = document.getElementById('gDateIntro')?.value;
   const data = {
-    nom:document.getElementById('gNom')?.value.trim(),
-    espece:document.getElementById('gEspece')?.value,
-    nbMales:parseInt(document.getElementById('gMales')?.value)||0,
-    nbFemelles:parseInt(document.getElementById('gFemelles')?.value)||0,
-    ratio:parseFloat(document.getElementById('gRatio')?.value)||10,
-    dateIntroduction:document.getElementById('gDateIntro')?.value,
-    dateReforme:document.getElementById('gDateReforme')?.value||null,
-    statut:document.getElementById('gStatut')?.value||'actif',
-    souche:document.getElementById('gSouche')?.value.trim(),
-    notes:document.getElementById('gNotes')?.value.trim(),
+    nom:              document.getElementById('gNom')?.value.trim(),
+    espece:           document.getElementById('gEspece')?.value,
+    nbMales:          parseInt(document.getElementById('gMales')?.value)||0,
+    nbFemelles:       parseInt(document.getElementById('gFemelles')?.value)||0,
+    ratio:            parseFloat(document.getElementById('gRatio')?.value)||10,
+    dateIntroduction: dateIntro,
+    date_entree:      dateIntro, // requis NOT NULL dans Supabase
+    dateReforme:      document.getElementById('gDateReforme')?.value||null,
+    statut:           document.getElementById('gStatut')?.value||'actif',
+    souche:           document.getElementById('gSouche')?.value.trim(),
+    notes:            document.getElementById('gNotes')?.value.trim(),
   };
   if(!data.nom){toast('Nom du lot requis','err');return;}
+  if(!data.date_entree){toast('Date introduction requise','err');return;}
   if(id) await updRec(S.REPRO_LOTS,parseInt(id),data);
   else await addRec(S.REPRO_LOTS,data);
   document.getElementById('ovGeniteur')?.remove();
@@ -14397,6 +14403,177 @@ window.delGeniteur = async function(id){
   await delRec(S.REPRO_LOTS,id);
   toast('Supprimé');
   rcTab='geniteurs'; await renderReproCouvoir(document.getElementById('contentArea'));
+};
+
+// ══════════ ALIMENTATION GÉNITEURS ══════════
+async function renderRCAlimRepro(reproLots){
+  const alims = await getAll(S.ALIM_REPRO);
+  const today = new Date().toISOString().slice(0,10);
+
+  const lotOpts = reproLots.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('');
+
+  // KPIs
+  const alims7 = alims.filter(a=>{
+    const d=new Date(); d.setDate(d.getDate()-7);
+    return (a.date||'')>=d.toISOString().slice(0,10);
+  });
+  const totKg7 = alims7.reduce((s,a)=>s+parseFloat(a.quantite_kg||a.quantiteKg||0),0);
+  const totEau7 = alims7.reduce((s,a)=>s+parseFloat(a.eau_litres||a.waterLiters||0),0);
+
+  // Grouper par phase
+  const prePonte = alims.filter(a=>(a.phase||a.phase_)==='pre_ponte').slice(-20).reverse();
+  const ponte    = alims.filter(a=>(a.phase||a.phase_)!=='pre_ponte').slice(-20).reverse();
+
+  const rowsAlim = (list,phase) => list.length ? list.map(a=>{
+    const lot = reproLots.find(l=>l.id===(a.repro_lot_id||a.reproLotId));
+    const qte = parseFloat(a.quantite_kg||a.quantiteKg||0);
+    const sujets = parseInt(a.nb_sujets||a.nbSujets||0);
+    const gpj = sujets>0 ? ((qte*1000)/sujets).toFixed(0) : '—';
+    return `<tr>
+      <td style="color:var(--text3);white-space:nowrap">${a.date||'—'}</td>
+      <td><strong>${esc(lot?.nom||'—')}</strong></td>
+      <td style="color:#7c3aed;font-size:11px">${esc(a.type_aliment||a.typeAliment||'—')}</td>
+      <td style="font-weight:700;color:var(--g2)">${qte.toFixed(2)} kg</td>
+      <td style="text-align:center">${sujets||'—'}</td>
+      <td style="text-align:center;font-weight:600;color:#0369a1">${gpj} g/s/j</td>
+      <td style="color:#0891b2">${parseFloat(a.eau_litres||a.waterLiters||0).toFixed(0)} L</td>
+      <td style="font-size:11px;color:var(--text3)">${esc(a.observations||'')}</td>
+      <td>
+        <button class="btn-del" onclick="delAlimRepro(${a.id})"><i class="fas fa-trash"></i></button>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Aucun enregistrement</td></tr>`;
+
+  return `
+  <!-- KPIs -->
+  <div class="kpi-grid" style="margin-bottom:16px">
+    <div class="kpi kpi-g"><div class="kpi-lbl">Aliment 7 jours</div><div class="kpi-val">${totKg7.toFixed(1)} kg</div></div>
+    <div class="kpi kpi-b"><div class="kpi-lbl">Eau 7 jours</div><div class="kpi-val">${totEau7.toFixed(0)} L</div></div>
+    <div class="kpi kpi-a"><div class="kpi-lbl">Lots géniteurs</div><div class="kpi-val">${reproLots.length}</div></div>
+  </div>
+
+  <!-- Formulaire saisie -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-hd" style="background:linear-gradient(135deg,#7c3aed,#a78bfa);color:#fff;border-radius:var(--r) var(--r) 0 0">
+      <span>🌾 Nouvelle saisie alimentation géniteurs</span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
+        <div class="fg"><label>Date *</label>
+          <input type="date" id="arDate" value="${today}"></div>
+        <div class="fg"><label>Lot géniteur *</label>
+          <select id="arLot"><option value="">— Choisir —</option>${lotOpts}</select></div>
+        <div class="fg"><label>Phase *</label>
+          <select id="arPhase">
+            <option value="pre_ponte">🌱 Pré-ponte (croissance/préparation)</option>
+            <option value="ponte" selected>🥚 Ponte (production)</option>
+          </select></div>
+        <div class="fg"><label>Type d'aliment</label>
+          <input type="text" id="arType" placeholder="Ex: Repro Ponte, Démarrage..." value="Aliment Repro Ponte"></div>
+        <div class="fg"><label>Quantité distribuée (kg)</label>
+          <input type="number" id="arQte" step="0.5" min="0" placeholder="0.0"></div>
+        <div class="fg"><label>Nb sujets</label>
+          <input type="number" id="arSujets" min="0" placeholder="100"></div>
+        <div class="fg"><label>Eau consommée (L)</label>
+          <input type="number" id="arEau" step="1" min="0" placeholder="0"></div>
+        <div class="fg" style="grid-column:span 2"><label>Observations</label>
+          <input type="text" id="arObs" placeholder="Appétit, refus, anormalité..."></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn btn-p" onclick="saveAlimRepro()"><i class="fas fa-save"></i> Enregistrer</button>
+        <div id="arGpjCalc" style="display:flex;align-items:center;font-size:13px;color:#7c3aed;font-weight:600"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tableau PRÉ-PONTE -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-hd" style="background:#f0fdf4">
+      <span>🌱 Pré-ponte — Alimentation avant la ponte</span>
+      <span style="font-size:11px;color:var(--text3)">${prePonte.length} enregistrement(s)</span>
+    </div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date</th><th>Lot</th><th>Aliment</th><th>Quantité</th>
+          <th>Sujets</th><th>G/s/j</th><th>Eau</th><th>Observations</th><th></th>
+        </tr></thead>
+        <tbody>${rowsAlim(prePonte,'pre_ponte')}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tableau PONTE -->
+  <div class="card">
+    <div class="card-hd" style="background:#faf5ff">
+      <span>🥚 Ponte — Alimentation pendant la production</span>
+      <span style="font-size:11px;color:var(--text3)">${ponte.length} enregistrement(s)</span>
+    </div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date</th><th>Lot</th><th>Aliment</th><th>Quantité</th>
+          <th>Sujets</th><th>G/s/j</th><th>Eau</th><th>Observations</th><th></th>
+        </tr></thead>
+        <tbody>${rowsAlim(ponte,'ponte')}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+  // Calcul automatique g/sujet/jour
+  function calcGpj(){
+    const qte=parseFloat(document.getElementById('arQte')?.value)||0;
+    const suj=parseInt(document.getElementById('arSujets')?.value)||0;
+    const el=document.getElementById('arGpjCalc');
+    if(el && qte>0 && suj>0){
+      el.innerHTML='<i class="fas fa-calculator"></i>&nbsp;'+(qte*1000/suj).toFixed(1)+' g/sujet/jour';
+    } else if(el) el.innerHTML='';
+  }
+  setTimeout(()=>{
+    document.getElementById('arQte')?.addEventListener('input',calcGpj);
+    document.getElementById('arSujets')?.addEventListener('input',calcGpj);
+  },100);
+  <\/script>`;
+}
+
+window.saveAlimRepro = async function(){
+  const date  = document.getElementById('arDate')?.value;
+  const lotId = document.getElementById('arLot')?.value;
+  const phase = document.getElementById('arPhase')?.value;
+  const qte   = parseFloat(document.getElementById('arQte')?.value)||0;
+  const suj   = parseInt(document.getElementById('arSujets')?.value)||0;
+  const eau   = parseFloat(document.getElementById('arEau')?.value)||0;
+  const type  = document.getElementById('arType')?.value.trim();
+  const obs   = document.getElementById('arObs')?.value.trim();
+
+  if(!date||!lotId){ toast('Date et lot géniteur requis','err'); return; }
+  if(qte<=0){ toast('Quantité d\'aliment requise','err'); return; }
+
+  const data = {
+    repro_lot_id: parseInt(lotId),
+    date, phase,
+    type_aliment: type||'Aliment Repro',
+    quantite_kg:  qte,
+    nb_sujets:    suj,
+    eau_litres:   eau,
+    observations: obs,
+    ts:           Date.now()
+  };
+  await addRec(S.ALIM_REPRO, data);
+  toast('✅ Alimentation enregistrée');
+  rcTab='alimrepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('alimrepro');
+};
+
+window.delAlimRepro = async function(id){
+  if(!confirm('Supprimer cet enregistrement ?')) return;
+  await delRec(S.ALIM_REPRO, id);
+  toast('Supprimé');
+  rcTab='alimrepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('alimrepro');
 };
 
 // ══════════ COLLECTE ŒUFS ══════════
@@ -14898,4 +15075,3 @@ window.addEventListener('resize', ()=>{ if(!isMobile()) mobCloseAll(); });
 
 </body>
 </html>
-
