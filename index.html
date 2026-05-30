@@ -1726,6 +1726,11 @@ const STORE_TABLE = {
   'repro_lots':        'repro_lots',
   'repro_collecte':    'repro_collecte',
   'alim_repro':        'alim_repro',
+  'mort_repro':        'mort_repro',
+  'pesee_repro':       'pesee_repro',
+  'sante_repro':       'sante_repro',
+  'stock_oeufs_couver':'stock_oeufs_couver',
+  'reforme_geniteurs': 'reforme_geniteurs',
   'couvoir_incubation':'couvoir_incubation',
   'couvoir_mirage':    'couvoir_mirage',
   'couvoir_eclosion':  'couvoir_eclosion',
@@ -2049,6 +2054,11 @@ const S={
   REPRO_LOTS:'repro_lots',           // Lots de géniteurs (reproducteurs)
   REPRO_COLLECTE:'repro_collecte',   // Collecte des œufs à couver
   ALIM_REPRO:'alim_repro',           // Alimentation des géniteurs
+  MORT_REPRO:'mort_repro',           // Mortalités des géniteurs
+  PESEE_REPRO:'pesee_repro',         // Pesées hebdomadaires géniteurs
+  SANTE_REPRO:'sante_repro',         // Santé & vaccination géniteurs
+  STOCK_OEUFS:'stock_oeufs_couver',  // Stock œufs à couver
+  REFORME_GENIT:'reforme_geniteurs', // Réforme & remplacement géniteurs
   COUVOIR_INCUB:'couvoir_incubation',// Mises en incubation (batchs)
   COUVOIR_MIRAGE:'couvoir_mirage',   // Résultats de mirage (J7/J14/J18)
   COUVOIR_ECLOSION:'couvoir_eclosion'// Résultats d'éclosion
@@ -14128,10 +14138,12 @@ function calcKpiIncub(incub, mirages, eclosions){
 
 // ── Rendu principal ──
 async function renderReproCouvoir(ca){
-  const [reproLots, collectes, incubations, mirages, eclosions, flocks]
+  const [reproLots, collectes, incubations, mirages, eclosions, flocks, mortRepro, pesees, sante, stockOeufs, reformeGenit]
     = await Promise.all([
       getAll(S.REPRO_LOTS), getAll(S.REPRO_COLLECTE), getAll(S.COUVOIR_INCUB),
-      getAll(S.COUVOIR_MIRAGE), getAll(S.COUVOIR_ECLOSION), getAll(S.FLOCKS)
+      getAll(S.COUVOIR_MIRAGE), getAll(S.COUVOIR_ECLOSION), getAll(S.FLOCKS),
+      getAll(S.MORT_REPRO), getAll(S.PESEE_REPRO), getAll(S.SANTE_REPRO),
+      getAll(S.STOCK_OEUFS), getAll(S.REFORME_GENIT)
     ]);
 
   // KPIs globaux
@@ -14193,107 +14205,375 @@ async function renderReproCouvoir(ca){
     ${[
       ['dashboard','📊 Tableau de bord'],['geniteurs','🐓 Géniteurs'],
       ['collecte','🥚 Collecte'],['incubation','🏭 Incubation'],
-      ['eclosion','🐣 Éclosion'],['alimrepro','🌾 Alimentation']
+      ['eclosion','🐣 Éclosion'],['alimrepro','🌾 Alimentation'],
+      ['mortrepro','💀 Mortalités'],['peseerepro','⚖️ Pesées'],['santerepro','💉 Santé'],
+      ['stockoeufs','🥚 Stock œufs'],['reformegenit','🔄 Réforme'],
+      ['bilanrepro','📊 Bilan & Coûts'],['synchroelev','🔗 Synchro élevage']
     ].map(([id,lbl])=>`<button class="tab-btn ${rcTab===id?'active':''}" onclick="switchRCTab('${id}')"
       style="${rcTab===id?'color:#7c3aed;border-bottom-color:#7c3aed':''}">${lbl}</button>`).join('')}
   </div>
 
   <div class="tab-content" id="rcTabContent" style="flex:1;overflow-y:auto">
-    ${await renderRCTab(rcTab, reproLots, collectes, incubations, mirages, eclosions, flocks)}
+    ${await renderRCTab(rcTab,reproLots,collectes,incubations,mirages,eclosions,flocks,mortRepro,pesees,sante,stockOeufs,reformeGenit)}
   </div>`;
 }
 
 // ── Switcher onglets ──
 window.switchRCTab = async function(tab){
   rcTab = tab;
-  const [reproLots,collectes,incubations,mirages,eclosions,flocks] = await Promise.all([
+  const [reproLots,collectes,incubations,mirages,eclosions,flocks,mortRepro,pesees,sante,stockOeufs,reformeGenit] = await Promise.all([
     getAll(S.REPRO_LOTS),getAll(S.REPRO_COLLECTE),getAll(S.COUVOIR_INCUB),
-    getAll(S.COUVOIR_MIRAGE),getAll(S.COUVOIR_ECLOSION),getAll(S.FLOCKS)
+    getAll(S.COUVOIR_MIRAGE),getAll(S.COUVOIR_ECLOSION),getAll(S.FLOCKS),
+    getAll(S.MORT_REPRO),getAll(S.PESEE_REPRO),getAll(S.SANTE_REPRO),
+    getAll(S.STOCK_OEUFS),getAll(S.REFORME_GENIT)
   ]);
   document.querySelectorAll('.tab-btn').forEach(b=>{
-    const active = b.onclick?.toString().includes(`'${tab}'`);
+    const active = b.onclick?.toString().includes("'"+tab+"'");
     b.style.color = active ? '#7c3aed' : '';
     b.style.borderBottomColor = active ? '#7c3aed' : '';
     b.classList.toggle('active', active);
   });
   const cont = document.getElementById('rcTabContent');
-  if(cont) cont.innerHTML = await renderRCTab(tab,reproLots,collectes,incubations,mirages,eclosions,flocks);
+  if(cont) cont.innerHTML = await renderRCTab(tab,reproLots,collectes,incubations,mirages,eclosions,flocks,mortRepro,pesees,sante,stockOeufs,reformeGenit);
 };
 
-async function renderRCTab(tab,reproLots,collectes,incubations,mirages,eclosions,flocks){
-  if(tab==='dashboard')  return renderRCDashboard(reproLots,collectes,incubations,mirages,eclosions);
-  if(tab==='geniteurs')  return renderRCGeniteurs(reproLots,flocks);
-  if(tab==='collecte')   return renderRCCollecte(collectes,reproLots);
-  if(tab==='incubation') return renderRCIncubation(incubations,mirages,eclosions,reproLots,collectes);
-  if(tab==='eclosion')   return renderRCEclosion(eclosions,incubations,reproLots);
-  if(tab==='alimrepro')  return await renderRCAlimRepro(reproLots);
+async function renderRCTab(tab,reproLots,collectes,incubations,mirages,eclosions,flocks,mortRepro=[],pesees=[],sante=[],stockOeufs=[],reformeGenit=[]){
+  if(tab==='dashboard')   return renderRCDashboard(reproLots,collectes,incubations,mirages,eclosions,mortRepro);
+  if(tab==='geniteurs')   return renderRCGeniteurs(reproLots,flocks);
+  if(tab==='collecte')    return renderRCCollecte(collectes,reproLots);
+  if(tab==='incubation')  return renderRCIncubation(incubations,mirages,eclosions,reproLots,collectes);
+  if(tab==='eclosion')    return renderRCEclosion(eclosions,incubations,reproLots);
+  if(tab==='alimrepro')   return await renderRCAlimRepro(reproLots);
+  if(tab==='mortrepro')   return await renderRCMortRepro(reproLots,mortRepro);
+  if(tab==='peseerepro')  return await renderRCPesees(reproLots,pesees);
+  if(tab==='santerepro')  return await renderRCSante(reproLots,sante);
+  if(tab==='stockoeufs')   return await renderRCStockOeufs(reproLots,collectes,stockOeufs,incubations);
+  if(tab==='reformegenit')  return await renderRCReformeGenit(reproLots,reformeGenit);
+  if(tab==='bilanrepro')    return await renderRCBilan(reproLots,collectes,incubations,mirages,eclosions,mortRepro,sante,pesees);
+  if(tab==='synchroelev')   return await renderRCSynchro(reproLots,incubations,eclosions,flocks);
   return '';
 }
 
 // ══════════ DASHBOARD ══════════
-function renderRCDashboard(reproLots,collectes,incubations,mirages,eclosions){
-  const kpis = incubations.filter(i=>i.statut==='terminé').map(i=>calcKpiIncub(i,mirages,eclosions));
+async function renderRCDashboard(reproLots, collectes, incubations, mirages, eclosions, mortRepro=[]){
+  const today = new Date().toISOString().slice(0,10);
 
-  const avgFert  = kpis.filter(k=>k.tauxFertilite!=null);
-  const avgNais  = kpis.filter(k=>k.tauxNaissance!=null);
-  const avgEclos = kpis.filter(k=>k.tauxEclosabilite!=null);
-  const avgQual  = kpis.filter(k=>k.qualite1er!=null);
+  // ── Helpers ────────────────────────────────────────────
+  function pct(n,d){ return d>0 ? (n/d*100) : null; }
+  function fmt(v,dec=1){ return v!=null ? v.toFixed(dec)+'%' : '—'; }
+  function color(v, s1=85, s2=70){
+    if(v==null) return 'var(--color-text-tertiary)';
+    return v>=s1 ? '#15803d' : v>=s2 ? '#d97706' : '#dc2626';
+  }
+  function badge(v, s1=85, s2=70){
+    if(v==null) return 'b-gr';
+    return v>=s1 ? 'b-g' : v>=s2 ? 'b-a' : 'b-r';
+  }
 
-  const mFert  = avgFert.length  ? (avgFert.reduce((a,k)=>a+k.tauxFertilite,0)/avgFert.length).toFixed(1)   : '—';
-  const mNais  = avgNais.length  ? (avgNais.reduce((a,k)=>a+k.tauxNaissance,0)/avgNais.length).toFixed(1)   : '—';
-  const mEclos = avgEclos.length ? (avgEclos.reduce((a,k)=>a+k.tauxEclosabilite,0)/avgEclos.length).toFixed(1) : '—';
-  const mQual  = avgQual.length  ? (avgQual.reduce((a,k)=>a+k.qualite1er,0)/avgQual.length).toFixed(1)      : '—';
+  // ── Taux de ponte par semaine (collectes) ─────────────
+  // Grouper par semaine (lundi)
+  function weekKey(dateStr){
+    const d = new Date(dateStr);
+    const day = d.getDay()||7;
+    d.setDate(d.getDate()-day+1);
+    return d.toISOString().slice(0,10);
+  }
 
-  // Collecte 30 derniers jours
+  const collectesByWeek = {};
+  collectes.forEach(c=>{
+    if(!c.date) return;
+    const wk = weekKey(c.date);
+    if(!collectesByWeek[wk]) collectesByWeek[wk]={oeufs:0,jours:0};
+    collectesByWeek[wk].oeufs += parseInt(c.nb_oeufs_collectes||c.nbOeufsCollectes||0);
+    collectesByWeek[wk].jours++;
+  });
+
+  // Effectif femelles actuel par lot (initial - mortes)
+  const totalFemActuel = reproLots.reduce((s,lot)=>{
+    const mortFem = (mortRepro||[]).filter(m=>(m.repro_lot_id||m.reproLotId)==lot.id)
+                    .reduce((a,m)=>a+parseInt(m.nb_femelles||m.nbFemelles||0),0);
+    return s + Math.max(0, parseInt(lot.nb_femelles||lot.nbFemelles||0) - mortFem);
+  },0);
+
+  const weeksData = Object.entries(collectesByWeek)
+    .sort(([a],[b])=>a.localeCompare(b)).slice(-12);
+
+  const tauxPonteParSem = weeksData.map(([wk,d])=>{
+    const oeufsParJour = d.jours>0 ? d.oeufs/d.jours : 0;
+    const tp = totalFemActuel>0 ? (oeufsParJour/totalFemActuel*100) : null;
+    return { wk, oeufs:d.oeufs, tp };
+  });
+
+  // Taux ponte moyen sur 4 dernières semaines
+  const tp4sem = tauxPonteParSem.slice(-4).filter(x=>x.tp!=null);
+  const tauxPonteMoy = tp4sem.length ? tp4sem.reduce((s,x)=>s+x.tp,0)/tp4sem.length : null;
+
+  // ── KPIs incubation ───────────────────────────────────
+  const kpis = incubations.filter(i=>i.statut==='terminé'||i.statut==='termine')
+    .map(i=>calcKpiIncub(i,mirages,eclosions));
+
+  const kFert  = kpis.filter(k=>k.tauxFertilite!=null);
+  const kNais  = kpis.filter(k=>k.tauxNaissance!=null);
+  const kEclos = kpis.filter(k=>k.tauxEclosabilite!=null);
+  const kQual  = kpis.filter(k=>k.qualite1er!=null);
+
+  const mFert  = kFert.length  ? kFert.reduce((a,k)=>a+k.tauxFertilite,0)/kFert.length   : null;
+  const mNais  = kNais.length  ? kNais.reduce((a,k)=>a+k.tauxNaissance,0)/kNais.length   : null;
+  const mEclos = kEclos.length ? kEclos.reduce((a,k)=>a+k.tauxEclosabilite,0)/kEclos.length : null;
+  const mQual  = kQual.length  ? kQual.reduce((a,k)=>a+k.qualite1er,0)/kQual.length       : null;
+
+  // ── KPIs mortalité ────────────────────────────────────
+  const totInitFem  = reproLots.reduce((s,l)=>s+parseInt(l.nb_femelles||l.nbFemelles||0),0);
+  const totMortsFem = (mortRepro||[]).reduce((s,m)=>s+parseInt(m.nb_femelles||m.nbFemelles||0),0);
+  const tauxMortFem = pct(totMortsFem, totInitFem);
+
+  // ── Collecte 30j ─────────────────────────────────────
   const d30 = new Date(); d30.setDate(d30.getDate()-30);
-  const d30str = d30.toISOString().slice(0,10);
-  const collecteRecente = collectes.filter(c=>c.date>=d30str);
-  const totalCollecte30 = collecteRecente.reduce((a,c)=>a+(c.nbOeufsCollectes||0),0);
+  const collecte30 = collectes.filter(c=>(c.date||'')>=d30.toISOString().slice(0,10));
+  const totalOeufs30 = collecte30.reduce((s,c)=>s+parseInt(c.nb_oeufs_collectes||c.nbOeufsCollectes||0),0);
+  const totalPoussins = kpis.reduce((s,k)=>s+(k.poussinsNes||0),0);
 
-  // Tableau batchs récentes
-  const batchRows = incubations.slice(-10).reverse().map(i=>{
-    const k = calcKpiIncub(i,mirages,eclosions);
-    const duree = INCUB_DUREE[i.espece]||21;
-    const dateEclos = new Date(new Date(i.dateMise).getTime()+duree*86400000).toISOString().slice(0,10);
-    const statutColor = i.statut==='terminé'?'var(--g2)':i.statut==='en cours'?'#d97706':'var(--text3)';
-    const jRest = i.statut==='en cours' ? Math.ceil((new Date(dateEclos)-new Date())/86400000) : null;
-    return `<tr>
-      <td style="font-weight:700">${esc(i.lot||'—')}</td>
-      <td style="font-size:11px">${esc(i.espece||'—')}</td>
-      <td style="text-align:center">${i.dateMise||'—'}</td>
-      <td style="text-align:center;font-weight:700;color:#7c3aed">${i.nbOeufsMis||0}</td>
-      <td style="text-align:center;color:${k.tauxFertilite!=null?(k.tauxFertilite>=85?'var(--g2)':'#d97706'):'var(--text3)'}">${k.tauxFertilite!=null?k.tauxFertilite.toFixed(1)+'%':'—'}</td>
-      <td style="text-align:center;color:${k.tauxNaissance!=null?(k.tauxNaissance>=75?'var(--g2)':k.tauxNaissance>=60?'#d97706':'var(--red)'):'var(--text3)'}">${k.tauxNaissance!=null?k.tauxNaissance.toFixed(1)+'%':'—'}</td>
-      <td style="text-align:center;font-weight:700;color:var(--g2)">${k.poussinsNes!=null?k.poussinsNes.toLocaleString('fr-FR'):'—'}</td>
-      <td style="text-align:center">
-        <span style="background:${statutColor}22;color:${statutColor};font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px">
-          ${i.statut==='en cours'?`🏭 J${duree-Math.max(0,jRest)}/${duree} (${jRest}j restants)`:i.statut==='terminé'?'✅ Terminé':'📋 Planifié'}
-        </span>
-      </td>
-    </tr>`;
-  }).join('');
+  // ── Perfs par lot géniteur ────────────────────────────
+  const perfsParLot = reproLots.map(lot=>{
+    const cLot = collectes.filter(c=>(c.repro_lot_id||c.reproLotId)==lot.id);
+    const iLot = incubations.filter(i=>(i.repro_lot_id||i.reproLotId)==lot.id);
+    const kLot = iLot.filter(i=>i.statut==='terminé'||i.statut==='termine')
+                    .map(i=>calcKpiIncub(i,mirages,eclosions));
+    const oeufs = cLot.reduce((s,c)=>s+parseInt(c.nb_oeufs_collectes||c.nbOeufsCollectes||0),0);
+    const fert = kLot.filter(k=>k.tauxFertilite!=null);
+    const nais = kLot.filter(k=>k.tauxNaissance!=null);
+    const mortFem = (mortRepro||[]).filter(m=>(m.repro_lot_id||m.reproLotId)==lot.id)
+                    .reduce((s,m)=>s+parseInt(m.nb_femelles||m.nbFemelles||0),0);
+    const femActuel = Math.max(0,parseInt(lot.nb_femelles||lot.nbFemelles||0)-mortFem);
+    const tp = femActuel>0 && cLot.length>0
+      ? (oeufs/cLot.length/femActuel*100) : null;
+    return {
+      lot, oeufs, femActuel,
+      tauxPonte: tp,
+      tauxFert: fert.length ? fert.reduce((a,k)=>a+k.tauxFertilite,0)/fert.length : null,
+      tauxNais: nais.length ? nais.reduce((a,k)=>a+k.tauxNaissance,0)/nais.length : null,
+      poussins: kLot.reduce((s,k)=>s+(k.poussinsNes||0),0),
+    };
+  });
+
+  // ── Évolution fertilité par incubation (courbe) ───────
+  const fertCurve = [...incubations]
+    .filter(i=>i.statut==='terminé'||i.statut==='termine')
+    .sort((a,b)=>(a.date_mise_en_incubation||a.dateMise||'').localeCompare(b.date_mise_en_incubation||b.dateMise||''))
+    .slice(-10)
+    .map(i=>({
+      label: i.lot_ref||i.lot||i.id,
+      ...calcKpiIncub(i,mirages,eclosions)
+    }));
+
+  // ── HTML ──────────────────────────────────────────────
+  const rowsLots = perfsParLot.map(p=>`<tr>
+    <td><strong>${esc(p.lot.nom)}</strong><div style="font-size:10px;color:var(--color-text-tertiary)">${esc(p.lot.espece||'')}</div></td>
+    <td style="text-align:center">♀ ${p.femActuel}</td>
+    <td style="text-align:center;font-weight:700;color:${color(p.tauxPonte,70,55)}">${fmt(p.tauxPonte)}</td>
+    <td style="text-align:center;font-weight:700;color:${color(p.tauxFert)}">${fmt(p.tauxFert)}</td>
+    <td style="text-align:center;font-weight:700;color:${color(p.tauxNais,75,60)}">${fmt(p.tauxNais,75,60)}</td>
+    <td style="text-align:center;font-weight:700;color:#7c3aed">${p.poussins.toLocaleString('fr-FR')}</td>
+    <td style="text-align:center">${p.oeufs.toLocaleString('fr-FR')}</td>
+  </tr>`).join('');
 
   return `
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
-    <div class="kpi" style="border-top:3px solid #7c3aed"><div class="kpi-lbl">Taux de fertilité moy.</div><div class="kpi-val" style="color:${parseFloat(mFert)>=85?'var(--g2)':parseFloat(mFert)>=70?'#d97706':'#c1121f'}">${mFert}%</div><div class="kpi-sub">Référence : ≥85%</div></div>
-    <div class="kpi" style="border-top:3px solid #7c3aed"><div class="kpi-lbl">Taux naissance moy.</div><div class="kpi-val" style="color:${parseFloat(mNais)>=75?'var(--g2)':parseFloat(mNais)>=60?'#d97706':'#c1121f'}">${mNais}%</div><div class="kpi-sub">Référence : ≥75%</div></div>
-    <div class="kpi" style="border-top:3px solid #7c3aed"><div class="kpi-lbl">Éclosabilité moy.</div><div class="kpi-val" style="color:${parseFloat(mEclos)>=85?'var(--g2)':parseFloat(mEclos)>=70?'#d97706':'#c1121f'}">${mEclos}%</div><div class="kpi-sub">Référence : ≥85%</div></div>
-    <div class="kpi" style="border-top:3px solid #7c3aed"><div class="kpi-lbl">Qualité 1er choix</div><div class="kpi-val" style="color:${parseFloat(mQual)>=90?'var(--g2)':parseFloat(mQual)>=75?'#d97706':'#c1121f'}">${mQual}%</div><div class="kpi-sub">Référence : ≥90%</div></div>
-    <div class="kpi"><div class="kpi-lbl">Collecte (30j)</div><div class="kpi-val" style="color:#7c3aed">${totalCollecte30.toLocaleString('fr-FR')}</div><div class="kpi-sub">œufs à couver</div></div>
-    <div class="kpi"><div class="kpi-lbl">Batchs terminées</div><div class="kpi-val">${incubations.filter(i=>i.statut==='terminé').length}</div><div class="kpi-sub">/ ${incubations.length} total</div></div>
+  <!-- ═══ KPIs GLOBAUX ═══ -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px">
+
+    <div class="kpi" style="border-top:3px solid #7c3aed">
+      <div class="kpi-lbl">Taux de ponte</div>
+      <div class="kpi-val" style="color:${color(tauxPonteMoy,70,55)}">${fmt(tauxPonteMoy)}</div>
+      <div class="kpi-sub">moy. 4 sem. · réf ≥70%</div>
+    </div>
+
+    <div class="kpi" style="border-top:3px solid #0891b2">
+      <div class="kpi-lbl">Fertilité moy.</div>
+      <div class="kpi-val" style="color:${color(mFert)}">${fmt(mFert)}</div>
+      <div class="kpi-sub">référence ≥85%</div>
+    </div>
+
+    <div class="kpi" style="border-top:3px solid #16a34a">
+      <div class="kpi-lbl">Taux naissance</div>
+      <div class="kpi-val" style="color:${color(mNais,75,60)}">${fmt(mNais)}</div>
+      <div class="kpi-sub">référence ≥75%</div>
+    </div>
+
+    <div class="kpi" style="border-top:3px solid #d97706">
+      <div class="kpi-lbl">Éclosabilité</div>
+      <div class="kpi-val" style="color:${color(mEclos)}">${fmt(mEclos)}</div>
+      <div class="kpi-sub">référence ≥85%</div>
+    </div>
+
+    <div class="kpi" style="border-top:3px solid #be185d">
+      <div class="kpi-lbl">Qualité 1er choix</div>
+      <div class="kpi-val" style="color:${color(mQual,90,75)}">${fmt(mQual)}</div>
+      <div class="kpi-sub">référence ≥90%</div>
+    </div>
+
+    <div class="kpi" style="border-top:3px solid #6b21a8">
+      <div class="kpi-lbl">Poussins produits</div>
+      <div class="kpi-val" style="color:#7c3aed">${totalPoussins.toLocaleString('fr-FR')}</div>
+      <div class="kpi-sub">total cumulé</div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi-lbl">Œufs collectés (30j)</div>
+      <div class="kpi-val">${totalOeufs30.toLocaleString('fr-FR')}</div>
+      <div class="kpi-sub">à couver</div>
+    </div>
+
+    <div class="kpi" style="border-top:3px solid ${tauxMortFem!=null&&tauxMortFem>8?'#dc2626':'#888780'}">
+      <div class="kpi-lbl">Mort. femelles</div>
+      <div class="kpi-val" style="color:${color(tauxMortFem!=null?100-tauxMortFem:null,95,90)}">${fmt(tauxMortFem)}</div>
+      <div class="kpi-sub">${tauxMortFem!=null&&tauxMortFem>8?'⚠️ Élevé':'✅ Normal'}</div>
+    </div>
   </div>
 
-  <div class="card">
-    <div class="card-hd">📋 Historique des mises en incubation
-      <button class="btn btn-p btn-sm" onclick="openIncubModal(null)"><i class="fas fa-plus"></i> Nouvelle incubation</button>
+  <!-- ═══ COURBES ═══ -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+
+    <!-- Courbe taux de ponte hebdomadaire -->
+    <div class="card">
+      <div class="card-hd" style="font-size:13px">📈 Taux de ponte — 12 dernières semaines</div>
+      <div class="card-bd" style="padding:8px">
+        <canvas id="chartPonte" height="180"></canvas>
+        ${tauxPonteParSem.length===0?'<div style="text-align:center;color:var(--color-text-tertiary);padding:20px;font-size:13px">Données insuffisantes</div>':''}
+      </div>
     </div>
+
+    <!-- Courbe fertilité / naissance par incubation -->
+    <div class="card">
+      <div class="card-hd" style="font-size:13px">📊 Fertilité & Naissance — par batch</div>
+      <div class="card-bd" style="padding:8px">
+        <canvas id="chartFertNais" height="180"></canvas>
+        ${fertCurve.length===0?'<div style="text-align:center;color:var(--color-text-tertiary);padding:20px;font-size:13px">Aucune incubation terminée</div>':''}
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PERFORMANCES PAR LOT GÉNITEUR ═══ -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">🐓 Performances par lot géniteur</div>
     <div class="card-bd tbl-wrap">
       <table class="tbl" style="font-size:12px">
-        <thead><tr><th>Référence</th><th>Espèce</th><th>Date mise</th><th style="text-align:center">Œufs mis</th><th style="text-align:center">Fertilité</th><th style="text-align:center">Taux naissance</th><th style="text-align:center">Poussins nés</th><th style="text-align:center">Statut</th></tr></thead>
-        <tbody>${batchRows||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:20px">Aucune incubation enregistrée</td></tr>'}</tbody>
+        <thead><tr>
+          <th>Lot</th>
+          <th style="text-align:center">♀ Actuel</th>
+          <th style="text-align:center">Taux ponte</th>
+          <th style="text-align:center">Fertilité</th>
+          <th style="text-align:center">Naissance</th>
+          <th style="text-align:center">Poussins</th>
+          <th style="text-align:center">Œufs collectés</th>
+        </tr></thead>
+        <tbody>${rowsLots||'<tr><td colspan="7" style="text-align:center;color:var(--color-text-tertiary);padding:20px">Aucun lot géniteur</td></tr>'}</tbody>
       </table>
     </div>
-  </div>`;
+  </div>
+
+  <!-- ═══ COMPARAISON VS NORMES ═══ -->
+  <div class="card">
+    <div class="card-hd">🎯 Comparaison vs normes de référence</div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${[
+          ['Taux de ponte', tauxPonteMoy, 70, 55, '≥70% optimal'],
+          ['Fertilité', mFert, 85, 70, '≥85% optimal'],
+          ['Taux de naissance', mNais, 75, 60, '≥75% optimal'],
+          ['Éclosabilité', mEclos, 85, 70, '≥85% optimal'],
+          ['Qualité 1er choix', mQual, 90, 75, '≥90% optimal'],
+          ['Mortalité femelles', tauxMortFem!=null?100-tauxMortFem:null, 95, 90, '≤5% optimal'],
+        ].map(([label,val,s1,s2,ref])=>{
+          const pct = val!=null ? Math.min(100,val) : 0;
+          const bg = val==null?'#9ca3af':val>=s1?'#16a34a':val>=s2?'#d97706':'#dc2626';
+          return `<div style="padding:8px 0;border-bottom:.5px solid var(--color-border-tertiary)">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+              <span style="color:var(--color-text-secondary)">${label}</span>
+              <span style="font-weight:500;color:${bg}">${fmt(val)} <span style="font-size:10px;color:var(--color-text-tertiary)">${ref}</span></span>
+            </div>
+            <div style="height:6px;border-radius:3px;background:var(--color-border-tertiary);overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${bg};border-radius:3px;transition:width .5s"></div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+    const gridC = dark?'rgba(255,255,255,.08)':'rgba(0,0,0,.07)';
+    const textC = dark?'#9ca3af':'#6b7280';
+    const baseOpts = {
+      responsive:true,
+      plugins:{legend:{labels:{font:{size:11},color:textC}}},
+      scales:{
+        x:{ticks:{font:{size:10},color:textC},grid:{color:gridC}},
+        y:{ticks:{font:{size:10},color:textC},grid:{color:gridC},beginAtZero:true}
+      }
+    };
+
+    // ── Courbe taux de ponte ──
+    const pData = ${JSON.stringify(tauxPonteParSem)};
+    if(pData.length && document.getElementById('chartPonte')){
+      new Chart(document.getElementById('chartPonte'),{
+        type:'line',
+        data:{
+          labels: pData.map(d=>d.wk.slice(5)),
+          datasets:[{
+            label:'Taux de ponte (%)',
+            data: pData.map(d=>d.tp!=null?parseFloat(d.tp.toFixed(1)):null),
+            borderColor:'#7c3aed',backgroundColor:'rgba(124,58,237,.12)',
+            borderWidth:2,pointRadius:4,pointBackgroundColor:'#7c3aed',
+            tension:.3,fill:true,spanGaps:true
+          },{
+            label:'Objectif 70%',
+            data: pData.map(()=>70),
+            borderColor:'#16a34a',borderWidth:1,borderDash:[5,5],
+            pointRadius:0,fill:false
+          }]
+        },
+        options:{...baseOpts,
+          scales:{...baseOpts.scales,
+            y:{...baseOpts.scales.y,max:100,
+              ticks:{...baseOpts.scales.y.ticks,callback:v=>v+'%'}}
+          }
+        }
+      });
+    }
+
+    // ── Courbe fertilité / naissance ──
+    const fData = ${JSON.stringify(fertCurve)};
+    if(fData.length && document.getElementById('chartFertNais')){
+      new Chart(document.getElementById('chartFertNais'),{
+        type:'bar',
+        data:{
+          labels: fData.map(d=>String(d.label||'').slice(0,8)),
+          datasets:[{
+            label:'Fertilité (%)',
+            data: fData.map(d=>d.tauxFertilite!=null?parseFloat(d.tauxFertilite.toFixed(1)):null),
+            backgroundColor:'rgba(8,145,178,.7)',borderRadius:4,
+          },{
+            label:'Taux naissance (%)',
+            data: fData.map(d=>d.tauxNaissance!=null?parseFloat(d.tauxNaissance.toFixed(1)):null),
+            backgroundColor:'rgba(22,163,74,.7)',borderRadius:4,
+          },{
+            label:'Éclosabilité (%)',
+            data: fData.map(d=>d.tauxEclosabilite!=null?parseFloat(d.tauxEclosabilite.toFixed(1)):null),
+            backgroundColor:'rgba(217,119,6,.7)',borderRadius:4,
+          }]
+        },
+        options:{...baseOpts,
+          scales:{...baseOpts.scales,
+            y:{...baseOpts.scales.y,max:100,
+              ticks:{...baseOpts.scales.y.ticks,callback:v=>v+'%'}}
+          }
+        }
+      });
+    }
+  })();
+  <\/script>`;
 }
 
 // ══════════ GÉNITEURS ══════════
@@ -14403,6 +14683,1725 @@ window.delGeniteur = async function(id){
   await delRec(S.REPRO_LOTS,id);
   toast('Supprimé');
   rcTab='geniteurs'; await renderReproCouvoir(document.getElementById('contentArea'));
+};
+
+// ══════════ BILAN MENSUEL & COÛT DE PRODUCTION ══════════
+async function renderRCBilan(reproLots,collectes,incubations,mirages,eclosions,mortRepro=[],sante=[],pesees=[]){
+  const today = new Date().toISOString().slice(0,10);
+  const moisActuel = today.slice(0,7);
+
+  // ── Helper ──────────────────────────────────────────
+  function moisLabel(ym){ const [y,m]=ym.split('-'); return ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(m)-1]+' '+y; }
+  function fmt(n,d=0){ return parseFloat(n||0).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+
+  // ── Générer les 12 derniers mois ──────────────────
+  const mois12 = [];
+  for(let i=11;i>=0;i--){
+    const d=new Date(); d.setMonth(d.getMonth()-i); d.setDate(1);
+    mois12.push(d.toISOString().slice(0,7));
+  }
+
+  // ── KPIs globaux ─────────────────────────────────
+  const kpisAll = incubations
+    .filter(i=>i.statut==='terminé'||i.statut==='termine')
+    .map(i=>({...calcKpiIncub(i,mirages,eclosions), date:i.date_mise_en_incubation||i.dateMise||''}));
+
+  const totalPoussins = kpisAll.reduce((s,k)=>s+(k.poussinsNes||0),0);
+  const totalMis = incubations.reduce((s,i)=>s+parseInt(i.nb_oeufs_mis||i.nbOeufsMis||0),0);
+  const totalCollecte = collectes.reduce((s,c)=>s+parseInt(c.nb_oeufs_collectes||c.nbOeufsCollectes||0),0);
+
+  // Poussins ce mois
+  const poussinsMois = kpisAll
+    .filter(k=>k.date&&k.date.slice(0,7)===moisActuel)
+    .reduce((s,k)=>s+(k.poussinsNes||0),0);
+
+  // Poussins par semaine (8 dernières semaines)
+  function weekStart(dateStr){
+    const d=new Date(dateStr); const day=d.getDay()||7;
+    d.setDate(d.getDate()-day+1); return d.toISOString().slice(0,10);
+  }
+  const parSem={};
+  kpisAll.forEach(k=>{
+    if(!k.date||!k.poussinsNes) return;
+    const wk=weekStart(k.date); parSem[wk]=(parSem[wk]||0)+k.poussinsNes;
+  });
+  const sem8=Object.entries(parSem).sort(([a],[b])=>a.localeCompare(b)).slice(-8);
+
+  // ── Coût de production par poussin par lot ────────
+  async function coutParPoussin(lot){
+    // Coût poussin initial
+    const initMales = parseInt(lot.nb_males||lot.nbMales||0);
+    const initFem   = parseInt(lot.nb_femelles||lot.nbFemelles||0);
+    const coutPoussinAchat = (initMales+initFem)*(parseFloat(lot.cout_poussin||lot.costPerChick||0));
+    // Charges alimentation (approximé depuis alim_repro si dispo, sinon 0)
+    const charges = 0; // à enrichir si charges_lot lié à repro_lot
+    // Recettes réforme
+    const recReforme = 0;
+    // Poussins produits par ce lot
+    const incubsLot = incubations.filter(i=>(i.repro_lot_id||i.reproLotId)==lot.id&&(i.statut==='terminé'||i.statut==='termine'));
+    const poussinsLot = incubsLot.map(i=>calcKpiIncub(i,mirages,eclosions)).reduce((s,k)=>s+(k.poussinsNes||0),0);
+    const totalInvesti = coutPoussinAchat + charges - recReforme;
+    const cout1Poussin = poussinsLot>0 ? totalInvesti/poussinsLot : null;
+    return {poussinsLot, totalInvesti, cout1Poussin, coutPoussinAchat};
+  }
+
+  const coutsLots = await Promise.all(reproLots.map(async lot=>{
+    const c = await coutParPoussin(lot);
+    return {...c, lot};
+  }));
+
+  // ── Bilan mensuel 12 mois ─────────────────────────
+  const bilanMois = mois12.map(ym=>{
+    const kM = kpisAll.filter(k=>k.date&&k.date.slice(0,7)===ym);
+    const collM = collectes.filter(c=>(c.date||'').slice(0,7)===ym);
+    return {
+      ym,
+      poussins:  kM.reduce((s,k)=>s+(k.poussinsNes||0),0),
+      oeufsIncub:kM.reduce((s,k)=>s+(k.nbMis||0),0),
+      oeufsCollecte: collM.reduce((s,c)=>s+parseInt(c.nb_oeufs_collectes||c.nbOeufsCollectes||0),0),
+      tauxNais:  kM.length ? (kM.reduce((s,k)=>s+(k.tauxNaissance||0),0)/kM.length).toFixed(1) : null,
+    };
+  });
+
+  // Lignes tableau bilan
+  const rowsBilan = bilanMois.map(b=>{
+    const isActuel = b.ym===moisActuel;
+    return '<tr style="'+(isActuel?'background:var(--color-background-info)':'')+'">'+
+      '<td style="font-weight:'+(isActuel?'500':'400')+';color:var(--color-text-'+(isActuel?'info':'secondary')+')">'+moisLabel(b.ym)+(isActuel?' ←':'')+'</td>'+
+      '<td style="text-align:center">'+fmt(b.oeufsCollecte)+'</td>'+
+      '<td style="text-align:center">'+fmt(b.oeufsIncub)+'</td>'+
+      '<td style="text-align:center;font-weight:600;color:#7c3aed">'+fmt(b.poussins)+'</td>'+
+      '<td style="text-align:center;color:'+(b.tauxNais!=null?(parseFloat(b.tauxNais)>=75?'#15803d':parseFloat(b.tauxNais)>=60?'#d97706':'#dc2626'):'var(--color-text-tertiary)')+'">'+( b.tauxNais!=null?b.tauxNais+'%':'—')+'</td>'+
+    '</tr>';
+  }).join('');
+
+  // Lignes coûts lots
+  const rowsCout = coutsLots.map(c=>
+    '<tr>'+
+    '<td><strong>'+esc(c.lot.nom)+'</strong></td>'+
+    '<td style="text-align:center;font-weight:700;color:#7c3aed">'+fmt(c.poussinsLot)+'</td>'+
+    '<td style="text-align:center">'+fmt(c.coutPoussinAchat)+' F</td>'+
+    '<td style="text-align:center;font-weight:700;color:'+(c.cout1Poussin!=null?'#15803d':'var(--color-text-tertiary)')+'">'+
+      (c.cout1Poussin!=null?fmt(c.cout1Poussin,0)+' F/poussin':'—')+
+    '</td>'+
+    '</tr>'
+  ).join('');
+
+  // Sparkline barres semaines (SVG)
+  const maxSem = Math.max(1,...sem8.map(([,v])=>v));
+  const barW=50, barGap=8, barH=80;
+  const svgBars = sem8.map(([wk,v],i)=>{
+    const h=Math.round((v/maxSem)*barH);
+    const x=i*(barW+barGap);
+    return '<rect x="'+x+'" y="'+(barH-h)+'" width="'+barW+'" height="'+h+'" rx="4" fill="#7c3aed" opacity="0.8"/>'+
+           '<text x="'+(x+barW/2)+'" y="'+(barH+14)+'" text-anchor="middle" font-size="10" fill="var(--color-text-tertiary)">'+wk.slice(5)+'</text>'+
+           '<text x="'+(x+barW/2)+'" y="'+(barH-h-4)+'" text-anchor="middle" font-size="10" fill="#7c3aed" font-weight="500">'+v+'</text>';
+  }).join('');
+  const svgW = sem8.length*(barW+barGap);
+  const sparkline = sem8.length ? '<svg width="100%" viewBox="0 0 '+svgW+' '+(barH+24)+'" style="margin-top:8px">'+svgBars+'</svg>' : '<div style="color:var(--color-text-tertiary);font-size:13px;padding:20px;text-align:center">Aucune donnée</div>';
+
+  // Export PDF handler (print)
+  return (
+  // KPIs
+  '<div class="kpi-grid" style="margin-bottom:14px">'+
+    '<div class="kpi kpi-b"><div class="kpi-lbl">Poussins ce mois</div><div class="kpi-val" style="color:#7c3aed">'+fmt(poussinsMois)+'</div><div class="kpi-sub">'+moisLabel(moisActuel)+'</div></div>'+
+    '<div class="kpi kpi-g"><div class="kpi-lbl">Total poussins produits</div><div class="kpi-val">'+fmt(totalPoussins)+'</div><div class="kpi-sub">cumulé</div></div>'+
+    '<div class="kpi kpi-a"><div class="kpi-lbl">Œufs collectés</div><div class="kpi-val">'+fmt(totalCollecte)+'</div><div class="kpi-sub">total cumulé</div></div>'+
+    '<div class="kpi"><div class="kpi-lbl">Taux global mise en incubation</div><div class="kpi-val">'+( totalCollecte>0?(totalMis/totalCollecte*100).toFixed(1)+'%':'—')+'</div><div class="kpi-sub">collectes → incubation</div></div>'+
+  '</div>'+
+
+  // Sparkline production par semaine
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd"><span>📈 Production poussins — 8 dernières semaines</span>'+
+      '<button class="btn btn-sm btn-gh" onclick="exportBilanPDF()"><i class="fas fa-file-pdf"></i> Export PDF</button>'+
+    '</div>'+
+    '<div class="card-bd" style="padding:12px">'+sparkline+'</div>'+
+  '</div>'+
+
+  // Bilan mensuel 12 mois
+  '<div class="card" style="margin-bottom:14px" id="bilanPDF">'+
+    '<div class="card-hd"><span>📅 Bilan mensuel — 12 derniers mois</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr><th>Mois</th><th style="text-align:center">Œufs collectés</th><th style="text-align:center">Mis en incubation</th><th style="text-align:center">Poussins produits</th><th style="text-align:center">Taux naissance</th></tr></thead>'+
+        '<tbody>'+rowsBilan+'</tbody>'+
+        '<tfoot><tr style="font-weight:600;background:var(--color-background-secondary)">'+
+          '<td>TOTAL</td>'+
+          '<td style="text-align:center">'+fmt(bilanMois.reduce((s,b)=>s+b.oeufsCollecte,0))+'</td>'+
+          '<td style="text-align:center">'+fmt(bilanMois.reduce((s,b)=>s+b.oeufsIncub,0))+'</td>'+
+          '<td style="text-align:center;color:#7c3aed">'+fmt(bilanMois.reduce((s,b)=>s+b.poussins,0))+'</td>'+
+          '<td style="text-align:center">—</td>'+
+        '</tr></tfoot>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  // Coût par poussin
+  '<div class="card">'+
+    '<div class="card-hd"><span>💰 Coût de production par poussin</span><span style="font-size:11px;color:var(--color-text-tertiary)">Basé sur l\'investissement géniteurs</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr><th>Lot géniteur</th><th style="text-align:center">Poussins produits</th><th style="text-align:center">Investissement géniteurs</th><th style="text-align:center">Coût / poussin</th></tr></thead>'+
+        '<tbody>'+(rowsCout||'<tr><td colspan="4" style="text-align:center;color:var(--color-text-tertiary);padding:20px">Aucun lot géniteur</td></tr>')+'</tbody>'+
+      '</table>'+
+      '<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:8px;padding:0 4px">'+
+        '* Le coût par poussin intègre : achat géniteurs. Pour un coût complet, ajoutez alimentation, vaccination, main-d\'œuvre dans les charges du lot.'+
+      '</div>'+
+    '</div>'+
+  '</div>'+
+
+  '<script>'+
+  'window.exportBilanPDF=function(){'+
+    'const titre="Bilan Repro — '+moisLabel(moisActuel)+'";'+
+    'const w=window.open("","_blank","width=900,height=700");'+
+    'const tbl=document.getElementById("bilanPDF")?.innerHTML||"";'+
+    'w.document.write("<html><head><title>"+titre+"</title>"+'+
+      '"<style>body{font-family:sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:13px}'+
+      'th,td{border:1px solid #ddd;padding:6px 10px}th{background:#f3e8ff;color:#4c1d95}'+
+      'tfoot tr{background:#f9fafb;font-weight:bold}</style></head><body>"+'+
+      '"<h2>'+moisLabel(moisActuel)+' — Bilan Reproduction</h2>"+tbl+"</body></html>");'+
+    'w.document.close();'+
+    'setTimeout(()=>{w.print();},400);'+
+  '};'+
+  '<\/script>'
+  );
+}
+
+// ══════════ SYNCHRONISATION ÉLEVAGE ══════════
+async function renderRCSynchro(reproLots, incubations, eclosions, flocks){
+  const today = new Date().toISOString().slice(0,10);
+
+  // Trouver les éclosions non encore synchronisées (pas de lot élevage lié)
+  const eclosionsAvecLot = eclosions.filter(e=>e.lot_dest_id||e.lotDestId);
+  const eclosionsSanslot = eclosions.filter(e=>!e.lot_dest_id&&!e.lotDestId&&(e.nb_eclos||e.nb1erChoix||0)>0);
+
+  // Tableau traçabilité complète : géniteur → incubation → éclosion → lot élevage
+  const lignesTracab = incubations.map(incub=>{
+    const reprLot = reproLots.find(l=>l.id===(incub.repro_lot_id||incub.reproLotId));
+    const eclosIncub = eclosions.filter(e=>(e.incub_id||e.incubId)===incub.id);
+    const totalPoussins = eclosIncub.reduce((s,e)=>s+parseInt(e.nb_eclos||e.nbEclos||0),0);
+    const lotsLies = eclosIncub.map(e=>flocks.find(f=>f.id===(e.lot_dest_id||e.lotDestId))).filter(Boolean);
+    return {incub, reprLot, eclosIncub, totalPoussins, lotsLies};
+  }).filter(l=>l.totalPoussins>0||l.eclosIncub.length>0);
+
+  // Rows tableau traçabilité
+  const rowsTracab = lignesTracab.map(l=>{
+    const statut = l.lotsLies.length>0?
+      '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✅ Synchronisé</span>':
+      '<span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">⏳ Non lié</span>';
+    return '<tr>'+
+      '<td style="font-size:11px;color:var(--color-text-tertiary)">'+esc(l.incub.date_mise_en_incubation||l.incub.dateMise||'—')+'</td>'+
+      '<td><strong>'+esc(l.reprLot?.nom||'—')+'</strong><div style="font-size:10px;color:var(--color-text-tertiary)">'+esc(l.reprLot?.espece||'')+'</div></td>'+
+      '<td style="text-align:center;font-size:11px">'+esc(l.incub.lot_ref||l.incub.lot||'—')+'</td>'+
+      '<td style="text-align:center;font-weight:700;color:#7c3aed">'+l.totalPoussins+'</td>'+
+      '<td style="text-align:center">'+statut+'</td>'+
+      '<td>'+( l.lotsLies.length>0?
+        l.lotsLies.map(f=>'<span style="font-size:11px;color:#0891b2">→ '+esc(f.nom||f.nom)+'</span>').join('<br>') :
+        (l.totalPoussins>0?'<button class="btn btn-sm btn-p" style="font-size:11px" onclick="creerLotElevage('+l.incub.id+','+l.totalPoussins+')"><i class="fas fa-plus"></i> Créer lot élevage</button>':'—')
+      )+'</td>'+
+    '</tr>';
+  }).join('');
+
+  return (
+  // Alertes
+  (eclosionsSanslot.length ?
+  '<div style="background:#fef9c3;border:.5px solid #fbbf24;border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:12px;font-size:13px">'+
+    '<strong style="color:#78350f">⚠️ '+eclosionsSanslot.length+' éclosion(s) sans lot d\'élevage lié</strong>'+
+    '<div style="font-size:12px;color:#92400e;margin-top:4px">Ces poussins ne sont pas tracés dans le module Élevage. Créez les lots correspondants ci-dessous.</div>'+
+  '</div>' : '')+
+
+  // KPIs
+  '<div class="kpi-grid" style="margin-bottom:14px">'+
+    '<div class="kpi kpi-g"><div class="kpi-lbl">Éclosions synchronisées</div><div class="kpi-val" style="color:#15803d">'+eclosionsAvecLot.length+'</div><div class="kpi-sub">liées à un lot élevage</div></div>'+
+    '<div class="kpi kpi-a"><div class="kpi-lbl">Non synchronisées</div><div class="kpi-val" style="color:'+(eclosionsSanslot.length?'#d97706':'#15803d')+'">'+eclosionsSanslot.length+'</div><div class="kpi-sub">à créer dans élevage</div></div>'+
+    '<div class="kpi kpi-b"><div class="kpi-lbl">Lots élevage tracés</div><div class="kpi-val">'+flocks.filter(f=>f.couvoir_incub_id||f.couvoirIncubId).length+'</div><div class="kpi-sub">issus de couvoir</div></div>'+
+  '</div>'+
+
+  // Création rapide lot élevage
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd" style="background:linear-gradient(135deg,#0891b2,#7c3aed);color:#fff;border-radius:var(--r) var(--r) 0 0">'+
+      '<span>🔗 Créer un lot d\'élevage depuis une éclosion</span>'+
+      '<span style="font-size:11px;opacity:.8">Synchronisation automatique</span>'+
+    '</div>'+
+    '<div class="card-bd">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px">'+
+        '<div class="fg"><label>Éclosion source *</label>'+
+          '<select id="synEclos">'+
+            '<option value="">— Choisir une éclosion —</option>'+
+            eclosions.filter(e=>parseInt(e.nb_eclos||e.nbEclos||0)>0).map(e=>{
+              const incub = incubations.find(i=>i.id===(e.incub_id||e.incubId));
+              const reprLot = reproLots.find(l=>l.id===(incub?.repro_lot_id||incub?.reproLotId));
+              const already = e.lot_dest_id||e.lotDestId;
+              return '<option value="'+e.id+'" '+(already?'disabled':'')+'>'+
+                esc((e.date_eclosion||e.dateEclosion||'?')+' — '+( reprLot?.nom||incub?.lot_ref||'?')+' — '+(e.nb_eclos||e.nbEclos||0)+' poussins'+(already?' ✅ lié':''))+
+              '</option>';
+            }).join('')+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Nom du lot élevage *</label><input type="text" id="synNomLot" placeholder="Ex: Poulets Chair — Juin 2026"></div>'+
+        '<div class="fg"><label>Type de lot *</label>'+
+          '<select id="synType">'+
+            '<option value="broiler">Poulet de chair</option>'+
+            '<option value="layer">Pondeuse commerciale</option>'+
+            '<option value="reproducteur">Reproducteur</option>'+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Date d\'entrée</label><input type="date" id="synDateEntree" value="'+today+'"></div>'+
+        '<div class="fg"><label>Bâtiment / Ligne</label><input type="text" id="synBat" placeholder="Bât. A — Ligne 1"></div>'+
+        '<div class="fg"><label>Coût/poussin (FCFA)</label><input type="number" id="synCout" min="0" step="50" placeholder="0"></div>'+
+      '</div>'+
+      '<button class="btn btn-p" style="margin-top:10px" onclick="creerLotDepuisEclosion()">'+
+        '<i class="fas fa-link"></i> Créer le lot et synchroniser'+
+      '</button>'+
+    '</div>'+
+  '</div>'+
+
+  // Tableau traçabilité
+  '<div class="card">'+
+    '<div class="card-hd"><span>🔍 Traçabilité complète : Géniteur → Incubation → Lot élevage</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:11px">'+
+        '<thead><tr>'+
+          '<th>Date incub.</th><th>Lot géniteur</th><th>Batch</th>'+
+          '<th style="text-align:center">Poussins</th><th style="text-align:center">Statut</th><th>Lot élevage lié</th>'+
+        '</tr></thead>'+
+        '<tbody>'+(rowsTracab||'<tr><td colspan="6" style="text-align:center;color:var(--color-text-tertiary);padding:24px">Aucune incubation avec éclosion enregistrée</td></tr>')+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  '<script>'+
+  // Pré-remplir nom du lot quand on sélectionne une éclosion
+  'document.addEventListener("change",function(ev){'+
+    'if(ev.target.id!=="synEclos") return;'+
+    'const sel=ev.target;'+
+    'const txt=(sel.options[sel.selectedIndex]?.text||"").split("—")[1]?.trim()||"";'+
+    'const elN=document.getElementById("synNomLot");'+
+    'if(elN&&txt) elN.value=txt+" — Lot "+(new Date()).toLocaleDateString("fr-FR",{month:"short",year:"numeric"});'+
+  '});'+
+  'window.creerLotElevage=function(incubId,nbPoussins){'+
+    'const elS=document.getElementById("synEclos");'+
+    'if(elS){ Array.from(elS.options).forEach(o=>{ o.selected=false; }); }'+
+    'const elN=document.getElementById("synNomLot");'+
+    'if(elN) elN.value="Lot Couvoir — "+new Date().toLocaleDateString("fr-FR",{month:"short",year:"numeric"});'+
+    'document.getElementById("synEclos")?.scrollIntoView({behavior:"smooth",block:"center"});'+
+    'toast("Sélectionnez l\'éclosion et complétez le formulaire ci-dessus");'+
+  '};'+
+  '<\/script>'
+  );
+}
+
+window.creerLotDepuisEclosion = async function(){
+  const eclosId   = document.getElementById('synEclos')?.value;
+  const nomLot    = document.getElementById('synNomLot')?.value.trim();
+  const typeLot   = document.getElementById('synType')?.value;
+  const dateE     = document.getElementById('synDateEntree')?.value;
+  const bat       = document.getElementById('synBat')?.value.trim();
+  const cout      = parseFloat(document.getElementById('synCout')?.value||0);
+
+  if(!eclosId)  { toast('Sélectionner une éclosion source','err'); return; }
+  if(!nomLot)   { toast('Nom du lot requis','err'); return; }
+  if(!dateE)    { toast('Date d\'entrée requise','err'); return; }
+
+  // Récupérer les infos de l'éclosion
+  const eclosions = await getAll(S.COUVOIR_ECLOSION);
+  const eclos = eclosions.find(e=>e.id==eclosId);
+  if(!eclos){ toast('Éclosion introuvable','err'); return; }
+  const nbPoussins = parseInt(eclos.nb_eclos||eclos.nbEclos||0);
+
+  // Créer le lot d'élevage
+  const newLotId = await addRec(S.FLOCKS,{
+    nom: nomLot,
+    type: typeLot,
+    startDate: dateE,
+    date_entree: dateE,
+    initialStock: nbPoussins,
+    effectif_init: nbPoussins,
+    costPerChick: cout||0,
+    cout_poussin: cout||0,
+    line: bat||'',
+    ligne: bat||'',
+    couvoir_incub_id: eclos.incub_id||eclos.incubId||null,
+    source_couvoir: true,
+    notes: 'Issu du couvoir — Éclosion #'+eclosId,
+    statut: 'actif'
+  });
+
+  // Lier l'éclosion au nouveau lot
+  await updRec(S.COUVOIR_ECLOSION, parseInt(eclosId), {
+    ...eclos, lot_dest_id: newLotId, lotDestId: newLotId
+  });
+
+  toast('✅ Lot "'+nomLot+'" créé avec '+nbPoussins+' poussins — Synchronisé !');
+  rcTab='synchroelev';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('synchroelev');
+};
+
+// ══════════ STOCK ŒUFS À COUVER ══════════
+async function renderRCStockOeufs(reproLots, collectes, stockOeufs, incubations){
+  const today = new Date().toISOString().slice(0,10);
+  const lotOpts = reproLots.map(l=>'<option value="'+l.id+'">'+esc(l.nom)+'</option>').join('');
+  const incubOpts = incubations.map(i=>'<option value="'+i.id+'">'+esc(i.lot_ref||i.lot||'Batch #'+i.id)+'</option>').join('');
+
+  // Calcul stock disponible par lot (collectes - déjà mis en incubation)
+  function stockDisponible(lotId){
+    const totalCollecte = collectes
+      .filter(c=>(c.repro_lot_id||c.reproLotId)==lotId)
+      .reduce((s,c)=>s+parseInt(c.nb_oeufs_collectes||c.nbOeufsCollectes||0),0);
+    const totalStockSorti = stockOeufs
+      .filter(s=>(s.repro_lot_id||s.reproLotId)==lotId && s.statut==='mis_incubation')
+      .reduce((s,o)=>s+parseInt(o.nb_oeufs||o.nbOeufs||0),0);
+    const totalEnStock = stockOeufs
+      .filter(s=>(s.repro_lot_id||s.reproLotId)==lotId && s.statut!=='mis_incubation')
+      .reduce((s,o)=>s+parseInt(o.nb_oeufs||o.nbOeufs||0),0);
+    return {totalCollecte, totalEnStock, totalStockSorti};
+  }
+
+  // Alertes : œufs en stock depuis trop longtemps (>7j)
+  const alertesAge = stockOeufs.filter(s=>{
+    if(s.statut==='mis_incubation') return false;
+    const age = Math.floor((new Date()-new Date(s.date_collecte||s.date))/(1000*3600*24));
+    return age>7;
+  });
+
+  // Total global en stock
+  const totalStockGlobal = stockOeufs
+    .filter(s=>s.statut!=='mis_incubation')
+    .reduce((s,o)=>s+parseInt(o.nb_oeufs||o.nbOeufs||0),0);
+
+  // Taux fertilité moyen des collectes récentes
+  const collecte7j = collectes.filter(c=>{
+    const d=new Date(); d.setDate(d.getDate()-7);
+    return (c.date||'')>=d.toISOString().slice(0,10);
+  });
+  const tauxFertMoy = collecte7j.length
+    ? (collecte7j.reduce((s,c)=>s+parseFloat(c.taux_fert_estime||c.tauxFertEstime||0),0)/collecte7j.length).toFixed(1)
+    : null;
+
+  // Tableau stock actuel
+  const rowsStock = stockOeufs
+    .filter(s=>s.statut!=='mis_incubation')
+    .sort((a,b)=>(a.date_collecte||a.date||'').localeCompare(b.date_collecte||b.date||''))
+    .map(s=>{
+      const lot = reproLots.find(l=>l.id===(s.repro_lot_id||s.reproLotId));
+      const dateC = s.date_collecte||s.date||'—';
+      const age = Math.floor((new Date()-new Date(dateC))/(1000*3600*24));
+      const ageCol = age>7?'#dc2626':age>4?'#d97706':'#15803d';
+      const qte = parseInt(s.nb_oeufs||s.nbOeufs||0);
+      return '<tr>'+
+        '<td style="color:var(--color-text-tertiary);white-space:nowrap">'+dateC+'</td>'+
+        '<td><strong>'+esc(lot?.nom||'—')+'</strong></td>'+
+        '<td style="text-align:center;font-weight:700;color:#7c3aed">'+qte+'</td>'+
+        '<td style="text-align:center"><span style="background:'+ageCol+'22;color:'+ageCol+';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">'+age+' j</span></td>'+
+        '<td style="font-size:11px">'+esc(s.calibre||'—')+'</td>'+
+        '<td style="font-size:11px;color:var(--color-text-tertiary)">'+esc(s.conditions||'Ambiance')+'</td>'+
+        '<td style="font-size:11px;color:var(--color-text-tertiary)">'+
+          (s.nb_sales||s.nbSales?'🔴 Sales:'+s.nb_sales+' ':'')+
+          (s.nb_deformes||s.nbDeformes?'🟡 Déformés:'+s.nb_deformes+' ':'')+
+          (s.nb_feles||s.nbFeles?'🟠 Fêlés:'+s.nb_feles:'')+'</td>'+
+        '<td>'+
+          '<button class="btn btn-sm btn-p btn-sm" style="font-size:10px" onclick="marquerIncubation('+s.id+')"><i class="fas fa-egg"></i> Incuber</button> '+
+          '<button class="btn-del" onclick="delStockOeuf('+s.id+')"><i class="fas fa-trash"></i></button>'+
+        '</td>'+
+      '</tr>';
+    }).join('');
+
+  // Traçabilité par lot
+  const rowsLots = reproLots.map(lot=>{
+    const st = stockDisponible(lot.id);
+    const pctUtilise = st.totalCollecte>0?Math.round(st.totalStockSorti/st.totalCollecte*100):0;
+    return '<tr>'+
+      '<td><strong>'+esc(lot.nom)+'</strong></td>'+
+      '<td style="text-align:center;font-weight:700;color:#7c3aed">'+st.totalCollecte+'</td>'+
+      '<td style="text-align:center;font-weight:700;color:#15803d">'+st.totalEnStock+'</td>'+
+      '<td style="text-align:center;color:var(--color-text-tertiary)">'+st.totalStockSorti+'</td>'+
+      '<td style="text-align:center">'+
+        '<div style="width:100%;background:var(--color-border-tertiary);border-radius:3px;height:6px;overflow:hidden">'+
+          '<div style="width:'+pctUtilise+'%;height:100%;background:#7c3aed;border-radius:3px"></div>'+
+        '</div>'+
+        '<span style="font-size:10px;color:var(--color-text-tertiary)">'+pctUtilise+'% mis en incubation</span>'+
+      '</td>'+
+    '</tr>';
+  }).join('');
+
+  return (
+  // Alertes âge
+  (alertesAge.length ?
+  '<div style="background:#fef2f2;border:.5px solid #fca5a5;border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:12px;font-size:13px">'+
+    '<strong style="color:#991b1b">⚠️ '+alertesAge.length+' lot(s) d\'œufs vieillissant (&gt;7 jours)</strong>'+
+    '<div style="margin-top:4px;font-size:12px;color:#7f1d1d">Mettre en incubation rapidement ou éliminer — la fertilité diminue après 7 jours de stockage.</div>'+
+  '</div>' : '')+
+
+  // KPIs
+  '<div class="kpi-grid" style="margin-bottom:14px">'+
+    '<div class="kpi kpi-b"><div class="kpi-lbl">Stock disponible</div><div class="kpi-val" style="color:#7c3aed">'+totalStockGlobal+'</div><div class="kpi-sub">œufs à couver</div></div>'+
+    '<div class="kpi kpi-g"><div class="kpi-lbl">Fertilité estimée (7j)</div><div class="kpi-val">'+( tauxFertMoy!=null?tauxFertMoy+'%':'—')+'</div><div class="kpi-sub">moy. collectes récentes</div></div>'+
+    '<div class="kpi kpi-a"><div class="kpi-lbl">Alertes âge</div><div class="kpi-val" style="color:'+(alertesAge.length?'#dc2626':'#15803d')+'">'+alertesAge.length+'</div><div class="kpi-sub">&gt;7 jours de stockage</div></div>'+
+  '</div>'+
+
+  // Formulaire
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd" style="background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;border-radius:var(--r) var(--r) 0 0">'+
+      '<span>🥚 Entrée d\'œufs en stock</span>'+
+      '<span style="font-size:11px;opacity:.8">Sélection qualité avant stockage</span>'+
+    '</div>'+
+    '<div class="card-bd">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">'+
+        '<div class="fg"><label>Date collecte *</label><input type="date" id="soDate" value="'+today+'"></div>'+
+        '<div class="fg"><label>Lot géniteur *</label><select id="soLot"><option value="">— Choisir —</option>'+lotOpts+'</select></div>'+
+        '<div class="fg"><label>Nb œufs mis en stock *</label><input type="number" id="soNb" min="0" placeholder="0" oninput="calcSONet()"></div>'+
+        '<div class="fg"><label>dont sales</label><input type="number" id="soSales" min="0" value="0" oninput="calcSONet()"></div>'+
+        '<div class="fg"><label>dont déformés</label><input type="number" id="soDeformes" min="0" value="0" oninput="calcSONet()"></div>'+
+        '<div class="fg"><label>dont fêlés</label><input type="number" id="soFeles" min="0" value="0" oninput="calcSONet()"></div>'+
+        '<div class="fg"><label>Calibre moyen</label>'+
+          '<select id="soCalibre">'+
+            ['Petit (<52g)','Moyen (52-63g)','Gros (63-73g)','Très gros (>73g)','Mixte']
+            .map(c=>'<option value="'+c+'">'+c+'</option>').join('')+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Conditions stockage</label>'+
+          '<select id="soConditions">'+
+            ['Ambiance (20-22°C)','Frais (15-18°C)','Réfrigéré (10-12°C)']
+            .map(c=>'<option value="'+c+'">'+c+'</option>').join('')+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Nb net couvables</label><input type="text" id="soNet" readonly style="font-weight:700;color:#7c3aed;background:var(--color-background-secondary)" value="—"></div>'+
+        '<div class="fg"><label>% Qualité</label><input type="text" id="soPctQual" readonly style="font-size:12px;background:var(--color-background-secondary)" value="—"></div>'+
+      '</div>'+
+      '<div class="fg" style="margin-top:8px"><label>Observations</label><input type="text" id="soObs" placeholder="Aspect coquille, odeur, remarques..."></div>'+
+      '<button class="btn btn-p" style="margin-top:10px" onclick="saveStockOeuf()"><i class="fas fa-plus"></i> Enregistrer en stock</button>'+
+    '</div>'+
+  '</div>'+
+
+  // Stock actuel
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd"><span>📦 Œufs en stock — Prêts à incuber</span><span style="font-size:11px;color:var(--color-text-tertiary)">'+totalStockGlobal+' œufs disponibles</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr><th>Date collecte</th><th>Lot</th><th style="text-align:center">Qté</th><th style="text-align:center">Age</th><th>Calibre</th><th>Conditions</th><th>Qualité</th><th></th></tr></thead>'+
+        '<tbody>'+(rowsStock||'<tr><td colspan="8" style="text-align:center;color:var(--color-text-tertiary);padding:24px">Aucun œuf en stock</td></tr>')+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  // Traçabilité
+  '<div class="card">'+
+    '<div class="card-hd"><span>🔍 Traçabilité Collecte → Incubation par lot</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr><th>Lot géniteur</th><th style="text-align:center">Total collecté</th><th style="text-align:center">En stock</th><th style="text-align:center">Mis en incubation</th><th>Taux utilisation</th></tr></thead>'+
+        '<tbody>'+rowsLots+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  '<script>'+
+  'function calcSONet(){'+
+    'const nb=parseInt(document.getElementById("soNb")?.value||0);'+
+    'const s=parseInt(document.getElementById("soSales")?.value||0);'+
+    'const d=parseInt(document.getElementById("soDeformes")?.value||0);'+
+    'const f=parseInt(document.getElementById("soFeles")?.value||0);'+
+    'const net=Math.max(0,nb-s-d-f);'+
+    'const elN=document.getElementById("soNet"); if(elN) elN.value=net+" œufs";'+
+    'const elP=document.getElementById("soPctQual"); if(elP) elP.value=nb>0?((net/nb)*100).toFixed(0)+"%":"—";'+
+  '}'+
+  '<\/script>'
+  );
+}
+
+window.saveStockOeuf = async function(){
+  const date  = document.getElementById('soDate')?.value;
+  const lotId = document.getElementById('soLot')?.value;
+  const nb    = parseInt(document.getElementById('soNb')?.value||0);
+  const sales = parseInt(document.getElementById('soSales')?.value||0);
+  const def   = parseInt(document.getElementById('soDeformes')?.value||0);
+  const fel   = parseInt(document.getElementById('soFeles')?.value||0);
+  const calib = document.getElementById('soCalibre')?.value;
+  const cond  = document.getElementById('soConditions')?.value;
+  const obs   = document.getElementById('soObs')?.value.trim();
+  if(!date||!lotId){ toast('Date et lot requis','err'); return; }
+  if(!nb)           { toast('Nombre d\'œufs requis','err'); return; }
+  await addRec(S.STOCK_OEUFS,{
+    repro_lot_id:parseInt(lotId), date_collecte:date,
+    nb_oeufs:nb, nb_sales:sales, nb_deformes:def, nb_feles:fel,
+    nb_net:Math.max(0,nb-sales-def-fel),
+    calibre:calib, conditions:cond, observations:obs,
+    statut:'disponible', ts:Date.now()
+  });
+  toast('✅ Enregistré en stock');
+  rcTab='stockoeufs';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('stockoeufs');
+};
+
+window.marquerIncubation = async function(id){
+  if(!confirm('Marquer ces œufs comme mis en incubation ?')) return;
+  await updRec(S.STOCK_OEUFS, id, {statut:'mis_incubation', date_incubation:new Date().toISOString().slice(0,10)});
+  toast('✅ Marqué comme mis en incubation');
+  rcTab='stockoeufs';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('stockoeufs');
+};
+
+window.delStockOeuf = async function(id){
+  if(!confirm('Supprimer cet enregistrement ?')) return;
+  await delRec(S.STOCK_OEUFS, id);
+  toast('Supprimé');
+  rcTab='stockoeufs';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('stockoeufs');
+};
+
+// ══════════ RÉFORME & REMPLACEMENT GÉNITEURS ══════════
+async function renderRCReformeGenit(reproLots, reformes){
+  const today = new Date().toISOString().slice(0,10);
+  const lotOpts = reproLots.map(l=>'<option value="'+l.id+'">'+esc(l.nom)+'</option>').join('');
+
+  // KPIs
+  const totAnimaux = reformes.reduce((s,r)=>s+parseInt(r.nb_males||0)+parseInt(r.nb_femelles||0),0);
+  const totRecette = reformes.reduce((s,r)=>s+parseFloat(r.montant||0),0);
+  const totRemplace= reformes.reduce((s,r)=>s+parseInt(r.nb_remplacement||0),0);
+
+  // Effectifs actuels (après réformes)
+  function effectifsApresReforme(lot){
+    const refLot = reformes.filter(r=>(r.repro_lot_id||r.reproLotId)==lot.id);
+    const mortMales   = refLot.reduce((s,r)=>s+parseInt(r.nb_males||0),0);
+    const mortFemelles= refLot.reduce((s,r)=>s+parseInt(r.nb_femelles||0),0);
+    const initM = parseInt(lot.nb_males||lot.nbMales||0);
+    const initF = parseInt(lot.nb_femelles||lot.nbFemelles||0);
+    const remplM= refLot.reduce((s,r)=>s+parseInt(r.nb_remplacement_males||0),0);
+    const remplF= refLot.reduce((s,r)=>s+parseInt(r.nb_remplacement_femelles||0),0);
+    return {
+      malesActuels:   Math.max(0, initM - mortMales + remplM),
+      femellesActuels:Math.max(0, initF - mortFemelles + remplF),
+      totalReformes:  mortMales+mortFemelles,
+      totalRemplaces: remplM+remplF
+    };
+  }
+
+  // Motifs
+  const motifsCount = {};
+  reformes.forEach(r=>{ const m=r.motif||'Non précisé'; motifsCount[m]=(motifsCount[m]||0)+1; });
+  const topMotifs = Object.entries(motifsCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
+
+  // Tableau historique
+  const rows = [...reformes].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,40).map(r=>{
+    const lot = reproLots.find(l=>l.id===(r.repro_lot_id||r.reproLotId));
+    const tot = parseInt(r.nb_males||0)+parseInt(r.nb_femelles||0);
+    const typeCol = r.type_reforme==='Partielle'?'#d97706':r.type_reforme==='Vente'?'#0891b2':'#dc2626';
+    const typeBg  = r.type_reforme==='Partielle'?'#fef9c3':r.type_reforme==='Vente'?'#e0f7fa':'#fee2e2';
+    return '<tr>'+
+      '<td style="color:var(--color-text-tertiary);white-space:nowrap">'+esc(r.date||'—')+'</td>'+
+      '<td><strong>'+esc(lot?.nom||'—')+'</strong></td>'+
+      '<td><span style="background:'+typeBg+';color:'+typeCol+';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">'+esc(r.type_reforme||'—')+'</span></td>'+
+      '<td style="text-align:center;color:#185FA5">'+( parseInt(r.nb_males||0)>0?'♂'+r.nb_males:'—')+'</td>'+
+      '<td style="text-align:center;color:#D4537E">'+( parseInt(r.nb_femelles||0)>0?'♀'+r.nb_femelles:'—')+'</td>'+
+      '<td style="text-align:center;font-weight:700">'+tot+'</td>'+
+      '<td style="font-size:11px;color:var(--color-text-tertiary)">'+esc(r.motif||'—')+'</td>'+
+      '<td style="text-align:center;font-size:11px;color:#15803d">'+( r.nb_remplacement||0>0?'+'+r.nb_remplacement+' rempl.':'—')+'</td>'+
+      '<td style="text-align:center;font-size:12px;font-weight:600">'+( parseFloat(r.montant||0)>0?parseFloat(r.montant).toLocaleString('fr-FR')+' F':'—')+'</td>'+
+      '<td><button class="btn-del" onclick="delReformeGenit('+r.id+')"><i class="fas fa-trash"></i></button></td>'+
+    '</tr>';
+  }).join('');
+
+  // Tableau effectifs par lot
+  const rowsEff = reproLots.map(lot=>{
+    const e = effectifsApresReforme(lot);
+    const initM = parseInt(lot.nb_males||lot.nbMales||0);
+    const initF = parseInt(lot.nb_femelles||lot.nbFemelles||0);
+    const ratioActuel = e.malesActuels>0 ? (e.femellesActuels/e.malesActuels).toFixed(1) : '—';
+    return '<tr>'+
+      '<td><strong>'+esc(lot.nom)+'</strong></td>'+
+      '<td style="text-align:center;color:#185FA5"><span style="font-weight:700">♂ '+e.malesActuels+'</span><span style="font-size:10px;color:var(--color-text-tertiary)"> /'+initM+'</span></td>'+
+      '<td style="text-align:center;color:#D4537E"><span style="font-weight:700">♀ '+e.femellesActuels+'</span><span style="font-size:10px;color:var(--color-text-tertiary)"> /'+initF+'</span></td>'+
+      '<td style="text-align:center;font-weight:600">'+ratioActuel+' ♀/♂</td>'+
+      '<td style="text-align:center;color:#dc2626">'+e.totalReformes+'</td>'+
+      '<td style="text-align:center;color:#15803d">'+e.totalRemplaces+'</td>'+
+    '</tr>';
+  }).join('');
+
+  return (
+  // KPIs
+  '<div class="kpi-grid" style="margin-bottom:14px">'+
+    '<div class="kpi kpi-r"><div class="kpi-lbl">Sujets réformés</div><div class="kpi-val">'+totAnimaux+'</div><div class="kpi-sub">total cumulé</div></div>'+
+    '<div class="kpi kpi-g"><div class="kpi-lbl">Sujets remplacés</div><div class="kpi-val" style="color:#15803d">'+totRemplace+'</div><div class="kpi-sub">nouveaux géniteurs</div></div>'+
+    '<div class="kpi kpi-b"><div class="kpi-lbl">Recettes réforme</div><div class="kpi-val" style="color:#0891b2">'+totRecette.toLocaleString('fr-FR')+'</div><div class="kpi-sub">FCFA</div></div>'+
+    '<div class="kpi"><div class="kpi-lbl">Motifs principaux</div><div style="margin-top:4px">'+topMotifs.map(([m,n])=>'<span style="background:#f3e8ff;color:#6b21a8;padding:2px 8px;border-radius:10px;font-size:11px;margin-right:4px">'+esc(m)+' ('+n+')</span>').join('')+'</div></div>'+
+  '</div>'+
+
+  // Formulaire
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd" style="background:linear-gradient(135deg,#dc2626,#7c3aed);color:#fff;border-radius:var(--r) var(--r) 0 0">'+
+      '<span>🔄 Enregistrer une réforme / remplacement</span>'+
+    '</div>'+
+    '<div class="card-bd">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px">'+
+        '<div class="fg"><label>Date *</label><input type="date" id="rgDate" value="'+today+'"></div>'+
+        '<div class="fg"><label>Lot géniteur *</label><select id="rgLot"><option value="">— Choisir —</option>'+lotOpts+'</select></div>'+
+        '<div class="fg"><label>Type *</label>'+
+          '<select id="rgType">'+
+            '<option value="Partielle">⚠️ Réforme partielle</option>'+
+            '<option value="Vente">💰 Vente géniteurs</option>'+
+            '<option value="Totale">🔴 Réforme totale</option>'+
+            '<option value="Remplacement">🔄 Remplacement</option>'+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Motif *</label>'+
+          '<select id="rgMotif">'+
+            ['Faibles performances','Mauvais ratio m/f','Blessure / Handicap','Maladie chronique',
+             'Fin de cycle productif','Surpoids / sous-poids','Cannibalisme','Opportunité commerciale','Autre']
+            .map(m=>'<option value="'+m+'">'+m+'</option>').join('')+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>♂ Mâles réformés</label><input type="number" id="rgMales" min="0" value="0"></div>'+
+        '<div class="fg"><label>♀ Femelles réformées</label><input type="number" id="rgFemelles" min="0" value="0"></div>'+
+        '<div class="fg"><label>♂ Remplacés</label><input type="number" id="rgRemplM" min="0" value="0"></div>'+
+        '<div class="fg"><label>♀ Remplacées</label><input type="number" id="rgRemplF" min="0" value="0"></div>'+
+        '<div class="fg"><label>Acheteur / Destination</label><input type="text" id="rgAcheteur" placeholder="Nom, marché..."></div>'+
+        '<div class="fg"><label>Montant vente (FCFA)</label><input type="number" id="rgMontant" min="0" step="500" placeholder="0"></div>'+
+      '</div>'+
+      '<div class="fg" style="margin-top:8px"><label>Observations</label><input type="text" id="rgObs" placeholder="Raison détaillée, état des animaux..."></div>'+
+      '<button class="btn btn-p" style="margin-top:10px" onclick="saveReformeGenit()"><i class="fas fa-save"></i> Enregistrer</button>'+
+    '</div>'+
+  '</div>'+
+
+  // Effectifs actuels
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd"><span>🐓 Effectifs après réformes & remplacements</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr><th>Lot</th><th style="text-align:center">♂ Actuel</th><th style="text-align:center">♀ Actuel</th><th style="text-align:center">Ratio</th><th style="text-align:center">Réformés</th><th style="text-align:center">Remplacés</th></tr></thead>'+
+        '<tbody>'+rowsEff+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  // Historique
+  '<div class="card">'+
+    '<div class="card-hd"><span>📋 Historique réformes & ventes</span><span style="font-size:11px;color:var(--color-text-tertiary)">'+reformes.length+' opération(s)</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:11px">'+
+        '<thead><tr><th>Date</th><th>Lot</th><th>Type</th><th style="text-align:center">♂</th><th style="text-align:center">♀</th><th style="text-align:center">Total</th><th>Motif</th><th style="text-align:center">Rempl.</th><th style="text-align:center">Montant</th><th></th></tr></thead>'+
+        '<tbody>'+(rows||'<tr><td colspan="10" style="text-align:center;color:var(--color-text-tertiary);padding:24px">Aucune réforme enregistrée</td></tr>')+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'
+  );
+}
+
+window.saveReformeGenit = async function(){
+  const date    = document.getElementById('rgDate')?.value;
+  const lotId   = document.getElementById('rgLot')?.value;
+  const type    = document.getElementById('rgType')?.value;
+  const motif   = document.getElementById('rgMotif')?.value;
+  const nbM     = parseInt(document.getElementById('rgMales')?.value||0);
+  const nbF     = parseInt(document.getElementById('rgFemelles')?.value||0);
+  const remplM  = parseInt(document.getElementById('rgRemplM')?.value||0);
+  const remplF  = parseInt(document.getElementById('rgRemplF')?.value||0);
+  const acheteur= document.getElementById('rgAcheteur')?.value.trim();
+  const montant = parseFloat(document.getElementById('rgMontant')?.value||0);
+  const obs     = document.getElementById('rgObs')?.value.trim();
+  if(!date||!lotId){ toast('Date et lot requis','err'); return; }
+  if(!nbM&&!nbF)    { toast('Saisir au moins 1 animal réformé','err'); return; }
+  await addRec(S.REFORME_GENIT,{
+    repro_lot_id:parseInt(lotId), date,
+    type_reforme:type, motif, nb_males:nbM, nb_femelles:nbF,
+    nb_remplacement:remplM+remplF,
+    nb_remplacement_males:remplM, nb_remplacement_femelles:remplF,
+    acheteur:acheteur||null, montant:montant||null,
+    nb_total:nbM+nbF, observations:obs||'', ts:Date.now()
+  });
+  toast('✅ Réforme enregistrée');
+  rcTab='reformegenit';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('reformegenit');
+};
+
+window.delReformeGenit = async function(id){
+  if(!confirm('Supprimer cet enregistrement ?')) return;
+  await delRec(S.REFORME_GENIT, id);
+  toast('Supprimé');
+  rcTab='reformegenit';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('reformegenit');
+};
+
+// ══════════ SANTÉ & VACCINATION GÉNITEURS ══════════
+
+// Protocoles vaccinaux standards reproducteurs
+const PROTOCOLES_VACCIN = [
+  {semaine:1,  acte:'Vaccination', produit:'Newcastle + Bronchite infectieuse (HB1+H120)', voie:'Oculaire/Nasale', obligatoire:true},
+  {semaine:2,  acte:'Vaccination', produit:'Gumboro (IBD)', voie:'Eau de boisson', obligatoire:true},
+  {semaine:4,  acte:'Vaccination', produit:'Newcastle (Clone 30)', voie:'Eau de boisson', obligatoire:true},
+  {semaine:6,  acte:'Vaccination', produit:'Bronchite infectieuse (H52)', voie:'Eau de boisson', obligatoire:true},
+  {semaine:8,  acte:'Vaccination', produit:'Marek (HVT+SB1)', voie:'Sous-cutanée', obligatoire:true},
+  {semaine:10, acte:'Vaccination', produit:'Newcastle + BI (Inactivé)', voie:'Injection IM', obligatoire:true},
+  {semaine:14, acte:'Traitement',  produit:'Déparasitage intestinal (Flubendazole)', voie:'Aliment', obligatoire:true},
+  {semaine:16, acte:'Vaccination', produit:'Egg Drop Syndrome (EDS76)', voie:'Injection SC', obligatoire:true},
+  {semaine:18, acte:'Vaccination', produit:'Newcastle + BI + EDS (Trivalent inactivé)', voie:'Injection IM', obligatoire:true},
+  {semaine:20, acte:'Traitement',  produit:'Déparasitage externe (Acaricide)', voie:'Pulvérisation', obligatoire:false},
+  {semaine:24, acte:'Vaccination', produit:'Newcastle Rappel (Inactivé)', voie:'Injection IM', obligatoire:false},
+  {semaine:40, acte:'Vaccination', produit:'Newcastle Rappel (Inactivé)', voie:'Injection IM', obligatoire:false},
+  {semaine:52, acte:'Contrôle',    produit:'Sérologie Newcastle + Mycoplasmes', voie:'Prise de sang', obligatoire:false},
+];
+
+async function renderRCSante(reproLots, sante){
+  const today = new Date().toISOString().slice(0,10);
+  const lotOpts = reproLots.map(l=>
+    '<option value="'+l.id+'">'+esc(l.nom)+'</option>'
+  ).join('');
+
+  // Calculer rappels à venir (14 jours) par lot
+  const rappels = [];
+  reproLots.forEach(lot=>{
+    const dateEntree = lot.date_entree||lot.dateIntroduction||lot.startDate||today;
+    PROTOCOLES_VACCIN.forEach(proto=>{
+      const datePrevue = new Date(dateEntree);
+      datePrevue.setDate(datePrevue.getDate() + proto.semaine*7);
+      const dpStr = datePrevue.toISOString().slice(0,10);
+      const jours = Math.ceil((datePrevue - new Date())/(1000*3600*24));
+      // Vérifier si déjà réalisé
+      const dejafait = sante.some(s=>
+        (s.repro_lot_id||s.reproLotId)==lot.id &&
+        s.produit===proto.produit &&
+        Math.abs(new Date(s.date_realisee||s.dateRealisee||s.date)-datePrevue)/(1000*3600*24)<14
+      );
+      if(!dejafait && jours<=14 && jours>=-3){
+        rappels.push({lot, proto, datePrevue:dpStr, jours});
+      }
+    });
+  });
+
+  // Statut sanitaire par lot
+  function statutSanitaire(lot){
+    const santeLot = sante.filter(s=>(s.repro_lot_id||s.reproLotId)==lot.id);
+    const oblig = PROTOCOLES_VACCIN.filter(p=>p.obligatoire).length;
+    const faits = PROTOCOLES_VACCIN.filter(p=>p.obligatoire && santeLot.some(s=>s.produit===p.produit)).length;
+    const pct = oblig>0 ? Math.round(faits/oblig*100) : 0;
+    return {faits, oblig, pct};
+  }
+
+  // Historique trié
+  const hist = [...sante].sort((a,b)=>(b.date_realisee||b.dateRealisee||b.date||'').localeCompare(a.date_realisee||a.dateRealisee||a.date||''));
+
+  // Rows historique
+  const rowsHist = hist.slice(0,50).map(s=>{
+    const lot = reproLots.find(l=>l.id===(s.repro_lot_id||s.reproLotId));
+    const date = s.date_realisee||s.dateRealisee||s.date||'—';
+    const typeCol = s.type_acte==='Vaccination'?'#7c3aed':s.type_acte==='Traitement'?'#0891b2':'#d97706';
+    const typeBg  = s.type_acte==='Vaccination'?'#f3e8ff':s.type_acte==='Traitement'?'#e0f7fa':'#fff8e1';
+    return '<tr>'+
+      '<td style="color:var(--color-text-tertiary);white-space:nowrap">'+date+'</td>'+
+      '<td><strong>'+esc(lot?.nom||'—')+'</strong></td>'+
+      '<td><span style="background:'+typeBg+';color:'+typeCol+';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">'+esc(s.type_acte||'—')+'</span></td>'+
+      '<td style="font-size:12px"><strong>'+esc(s.produit||'—')+'</strong></td>'+
+      '<td style="font-size:11px;color:var(--color-text-tertiary)">'+esc(s.voie_administration||s.voieAdmin||'—')+'</td>'+
+      '<td style="text-align:center;font-size:11px">'+esc(s.dose_ml||s.doseMl||'—')+'</td>'+
+      '<td style="text-align:center;font-size:11px">'+esc(s.nb_sujets||s.nbSujets||'—')+'</td>'+
+      '<td style="font-size:11px;color:var(--color-text-tertiary);max-width:140px">'+esc(s.observations||'')+'</td>'+
+      '<td><button class="btn-del" onclick="delSanteRepro('+s.id+')"><i class="fas fa-trash"></i></button></td>'+
+    '</tr>';
+  }).join('');
+
+  // Rows statut par lot
+  const rowsStatut = reproLots.map(lot=>{
+    const st = statutSanitaire(lot);
+    const col = st.pct>=80?'#15803d':st.pct>=50?'#d97706':'#dc2626';
+    const bg  = st.pct>=80?'#dcfce7':st.pct>=50?'#fef9c3':'#fee2e2';
+    const dernAct = sante.filter(s=>(s.repro_lot_id||s.reproLotId)==lot.id)
+      .sort((a,b)=>(b.date_realisee||b.date||'').localeCompare(a.date_realisee||a.date||''))[0];
+    return '<tr>'+
+      '<td><strong>'+esc(lot.nom)+'</strong></td>'+
+      '<td style="text-align:center">'+
+        '<div style="width:100%;background:var(--color-border-tertiary);border-radius:4px;height:8px;overflow:hidden">'+
+          '<div style="width:'+st.pct+'%;height:100%;background:'+col+';border-radius:4px"></div>'+
+        '</div>'+
+        '<div style="font-size:11px;font-weight:600;color:'+col+';margin-top:2px">'+st.faits+'/'+st.oblig+' actes ('+st.pct+'%)</div>'+
+      '</td>'+
+      '<td style="text-align:center;font-size:12px">'+( dernAct?(dernAct.date_realisee||dernAct.dateRealisee||dernAct.date):'—')+'</td>'+
+      '<td style="text-align:center">'+
+        '<span style="background:'+bg+';color:'+col+';padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600">'+
+          (st.pct>=80?'✅ Bon':st.pct>=50?'⚠️ Partiel':'🔴 Incomplet')+
+        '</span>'+
+      '</td>'+
+    '</tr>';
+  }).join('');
+
+  // Rappels à venir
+  const rappelsBadges = rappels.length ? rappels.map(r=>{
+    const urg = r.jours<=3?'#dc2626':r.jours<=7?'#d97706':'#0891b2';
+    const bg  = r.jours<=3?'#fee2e2':r.jours<=7?'#fef9c3':'#e0f7fa';
+    return '<div style="background:'+bg+';border:.5px solid '+urg+';border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px">'+
+      '<div style="color:'+urg+';font-weight:600">'+
+        (r.jours<0?'🔴 En retard de '+Math.abs(r.jours)+'j':r.jours===0?'🔴 Aujourd\'hui':r.jours<=3?'🔴 Dans '+r.jours+'j':'⚠️ Dans '+r.jours+'j')+
+        ' — '+esc(r.lot.nom)+
+      '</div>'+
+      '<div style="color:var(--color-text-secondary);margin-top:2px">'+
+        esc(r.proto.acte)+' : <strong>'+esc(r.proto.produit)+'</strong> ('+esc(r.proto.voie)+') — prévu le '+r.datePrevue+
+      '</div>'+
+    '</div>';
+  }).join('') : '<div style="color:var(--color-text-tertiary);font-size:13px;padding:8px 0">Aucun rappel dans les 14 prochains jours ✅</div>';
+
+  return (
+  // ── RAPPELS URGENTS ──
+  (rappels.length ?
+  '<div style="background:#fff8f0;border:.5px solid #fbbf24;border-radius:var(--border-radius-md);padding:12px 14px;margin-bottom:12px">'+
+    '<div style="font-weight:500;color:#92400e;margin-bottom:8px;font-size:13px">⏰ '+rappels.length+' rappel(s) dans les 14 prochains jours</div>'+
+    rappelsBadges+
+  '</div>' : '') +
+
+  // ── FORMULAIRE SAISIE ──
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd" style="background:linear-gradient(135deg,#7c3aed,#0891b2);color:#fff;border-radius:var(--r) var(--r) 0 0">'+
+      '<span>💉 Enregistrer un acte sanitaire</span>'+
+      '<span style="font-size:11px;opacity:.8">Vaccination · Traitement · Contrôle</span>'+
+    '</div>'+
+    '<div class="card-bd">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px">'+
+        '<div class="fg"><label>Date de l\'acte *</label><input type="date" id="srDate" value="'+today+'"></div>'+
+        '<div class="fg"><label>Lot géniteur *</label><select id="srLot"><option value="">— Choisir —</option>'+lotOpts+'</select></div>'+
+        '<div class="fg"><label>Type d\'acte *</label>'+
+          '<select id="srType" onchange="majProtocoleList()">'+
+            '<option value="Vaccination">💉 Vaccination</option>'+
+            '<option value="Traitement">💊 Traitement</option>'+
+            '<option value="Contrôle">🔬 Contrôle sérologique</option>'+
+            '<option value="Autre">📋 Autre</option>'+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Produit / Vaccin *</label>'+
+          '<select id="srProduitSel" onchange="majChampsProduit()">'+
+            '<option value="">— Choisir ou saisir ci-dessous —</option>'+
+            PROTOCOLES_VACCIN.map(p=>'<option value="'+p.produit+'|'+p.voie+'">'+p.produit+'</option>').join('')+
+            '<option value="AUTRE">Autre produit...</option>'+
+          '</select>'+
+          '<input type="text" id="srProduit" placeholder="Nom du produit" style="margin-top:4px">'+
+        '</div>'+
+        '<div class="fg"><label>Voie d\'administration</label>'+
+          '<select id="srVoie">'+
+            ['Eau de boisson','Oculaire/Nasale','Injection IM','Injection SC','Injection IV','Aliment','Pulvérisation','Prise de sang','Autre']
+            .map(v=>'<option value="'+v+'">'+v+'</option>').join('')+
+          '</select>'+
+        '</div>'+
+        '<div class="fg"><label>Dose (mL/sujet)</label><input type="text" id="srDose" placeholder="Ex: 0.5"></div>'+
+        '<div class="fg"><label>Nb sujets traités</label><input type="number" id="srNbSuj" min="0" placeholder="0"></div>'+
+        '<div class="fg"><label>Lot / N° vaccin</label><input type="text" id="srLotVacc" placeholder="N° lot fabricant"></div>'+
+        '<div class="fg"><label>Intervenant</label><input type="text" id="srInterv" placeholder="Vétérinaire, technicien..."></div>'+
+        '<div class="fg"><label>Coût (FCFA)</label><input type="number" id="srCout" min="0" step="100" placeholder="0"></div>'+
+      '</div>'+
+      '<div class="fg" style="margin-top:8px"><label>Observations / Réactions observées</label>'+
+        '<input type="text" id="srObs" placeholder="Appétit conservé, légère réaction locale...">'+
+      '</div>'+
+      '<button class="btn btn-p" style="margin-top:10px" onclick="saveSanteRepro()"><i class="fas fa-save"></i> Enregistrer l\'acte</button>'+
+    '</div>'+
+  '</div>'+
+
+  // ── PROTOCOLE DE RÉFÉRENCE ──
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd">'+
+      '<span>📋 Protocole sanitaire reproducteurs — Référence</span>'+
+      '<span style="font-size:11px;color:var(--color-text-tertiary)">Basé sur les recommandations ISA / Ross / Cobb</span>'+
+    '</div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr>'+
+          '<th style="text-align:center">Semaine</th>'+
+          '<th style="text-align:center">Type</th>'+
+          '<th>Produit / Acte</th>'+
+          '<th>Voie</th>'+
+          '<th style="text-align:center">Obligatoire</th>'+
+        '</tr></thead>'+
+        '<tbody>'+
+        PROTOCOLES_VACCIN.map(p=>{
+          const typeCol = p.acte==='Vaccination'?'#7c3aed':p.acte==='Traitement'?'#0891b2':'#d97706';
+          const typeBg  = p.acte==='Vaccination'?'#f3e8ff':p.acte==='Traitement'?'#e0f7fa':'#fff8e1';
+          return '<tr>'+
+            '<td style="text-align:center;font-weight:700;color:#7c3aed">S'+p.semaine+'</td>'+
+            '<td style="text-align:center"><span style="background:'+typeBg+';color:'+typeCol+';padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">'+p.acte+'</span></td>'+
+            '<td style="font-size:12px">'+esc(p.produit)+'</td>'+
+            '<td style="font-size:11px;color:var(--color-text-tertiary)">'+esc(p.voie)+'</td>'+
+            '<td style="text-align:center">'+(p.obligatoire?'<span style="color:#15803d;font-size:13px">●</span>':'<span style="color:var(--color-text-tertiary);font-size:13px">○</span>')+'</td>'+
+          '</tr>';
+        }).join('')+
+        '</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  // ── STATUT PAR LOT ──
+  '<div class="card" style="margin-bottom:14px">'+
+    '<div class="card-hd"><span>🐓 Statut sanitaire par lot</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:12px">'+
+        '<thead><tr><th>Lot</th><th>Couverture vaccinale</th><th style="text-align:center">Dernier acte</th><th style="text-align:center">Statut</th></tr></thead>'+
+        '<tbody>'+rowsStatut+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  // ── HISTORIQUE ──
+  '<div class="card">'+
+    '<div class="card-hd"><span>📋 Historique des actes sanitaires</span><span style="font-size:11px;color:var(--color-text-tertiary)">'+sante.length+' enregistrement(s)</span></div>'+
+    '<div class="card-bd tbl-wrap">'+
+      '<table class="tbl" style="font-size:11px">'+
+        '<thead><tr><th>Date</th><th>Lot</th><th>Type</th><th>Produit</th><th>Voie</th><th style="text-align:center">Dose</th><th style="text-align:center">Sujets</th><th>Observations</th><th></th></tr></thead>'+
+        '<tbody>'+(rowsHist||'<tr><td colspan="9" style="text-align:center;color:var(--color-text-tertiary);padding:24px">Aucun acte sanitaire enregistré</td></tr>')+'</tbody>'+
+      '</table>'+
+    '</div>'+
+  '</div>'+
+
+  // ── Script UI ──
+  '<script>'+
+  'function majProtocoleList(){'+
+    'const type=document.getElementById("srType")?.value;'+
+    'const sel=document.getElementById("srProduitSel");'+
+    'if(!sel) return;'+
+    'const protos='+JSON.stringify(PROTOCOLES_VACCIN)+';'+
+    'const filtered=protos.filter(p=>type==="Autre"||p.acte===type);'+
+    'sel.innerHTML=\'<option value="">— Choisir ou saisir ci-dessous —</option>\'+'+
+      'filtered.map(p=>\'<option value="\'+p.produit+\'|\'+p.voie+\'">\'+p.produit+\'</option>\').join("")+'+
+      '\'<option value="AUTRE">Autre produit...</option>\';'+
+  '}'+
+  'function majChampsProduit(){'+
+    'const v=document.getElementById("srProduitSel")?.value;'+
+    'if(!v||v==="AUTRE") return;'+
+    'const parts=v.split("|");'+
+    'const pEl=document.getElementById("srProduit");'+
+    'const vEl=document.getElementById("srVoie");'+
+    'if(pEl) pEl.value=parts[0]||"";'+
+    'if(vEl&&parts[1]){ Array.from(vEl.options).forEach(o=>{o.selected=o.value===parts[1];}); }'+
+  '}'+
+  '<\/script>'
+  );
+}
+
+window.saveSanteRepro = async function(){
+  const date   = document.getElementById('srDate')?.value;
+  const lotId  = document.getElementById('srLot')?.value;
+  const type   = document.getElementById('srType')?.value;
+  const produit= document.getElementById('srProduit')?.value.trim() ||
+                 (document.getElementById('srProduitSel')?.value.split('|')[0]||'');
+  const voie   = document.getElementById('srVoie')?.value;
+  const dose   = document.getElementById('srDose')?.value.trim();
+  const nbSuj  = parseInt(document.getElementById('srNbSuj')?.value||0);
+  const lotV   = document.getElementById('srLotVacc')?.value.trim();
+  const interv = document.getElementById('srInterv')?.value.trim();
+  const cout   = parseFloat(document.getElementById('srCout')?.value||0);
+  const obs    = document.getElementById('srObs')?.value.trim();
+
+  if(!date||!lotId){ toast('Date et lot requis','err'); return; }
+  if(!produit)      { toast('Produit / acte requis','err'); return; }
+
+  await addRec(S.SANTE_REPRO, {
+    repro_lot_id: parseInt(lotId),
+    date_realisee: date,
+    type_acte: type||'Vaccination',
+    produit, voie_administration: voie||'',
+    dose_ml: dose||null, nb_sujets: nbSuj||null,
+    lot_vaccin: lotV||null, intervenant: interv||'',
+    cout: cout||null, observations: obs||'',
+    ts: Date.now()
+  });
+  toast('✅ Acte sanitaire enregistré');
+  rcTab='santerepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('santerepro');
+};
+
+window.delSanteRepro = async function(id){
+  if(!confirm('Supprimer cet acte sanitaire ?')) return;
+  await delRec(S.SANTE_REPRO, id);
+  toast('Supprimé');
+  rcTab='santerepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('santerepro');
+};
+
+// ══════════ PESÉES & COURBE DE POIDS GÉNITEURS ══════════
+
+// Courbes de poids standards par race (g) — semaines 18 à 65
+const COURBES_POIDS = {
+  'ISA Brown': {
+    label:'ISA Brown', couleurM:'#185FA5', couleurF:'#D4537E',
+    semaines:[18,20,22,24,26,28,30,32,36,40,44,48,52,56,60,65],
+    males:   [1650,1780,1900,2000,2080,2150,2200,2240,2290,2330,2360,2380,2400,2410,2420,2430],
+    femelles:[1450,1560,1650,1720,1770,1800,1820,1840,1860,1870,1880,1885,1890,1890,1890,1890]
+  },
+  'Ross 308': {
+    label:'Ross 308', couleurM:'#185FA5', couleurF:'#D4537E',
+    semaines:[22,24,26,28,30,32,34,36,38,40,42,44,46,48,52,56,60,65],
+    males:   [2650,2900,3100,3270,3420,3540,3640,3720,3790,3840,3880,3910,3930,3950,3980,4000,4010,4020],
+    femelles:[2350,2550,2720,2870,2990,3090,3170,3240,3290,3330,3360,3380,3395,3410,3430,3445,3450,3455]
+  },
+  'Cobb 500': {
+    label:'Cobb 500', couleurM:'#185FA5', couleurF:'#D4537E',
+    semaines:[22,24,26,28,30,32,34,36,38,40,42,44,46,48,52,56,60,65],
+    males:   [2700,2950,3150,3330,3480,3610,3720,3810,3880,3940,3990,4030,4060,4080,4110,4130,4140,4150],
+    femelles:[2400,2600,2780,2930,3060,3170,3260,3340,3400,3450,3490,3520,3540,3560,3590,3610,3620,3625]
+  },
+  'Lohmann Brown': {
+    label:'Lohmann Brown', couleurM:'#185FA5', couleurF:'#D4537E',
+    semaines:[18,20,22,24,26,28,30,32,36,40,44,48,52,56,60,65],
+    males:   [1600,1720,1830,1920,1990,2040,2080,2110,2150,2180,2200,2215,2225,2230,2235,2240],
+    femelles:[1400,1510,1600,1670,1720,1750,1775,1790,1810,1825,1835,1840,1845,1848,1850,1852]
+  },
+  'Autre': {
+    label:'Personnalisé', couleurM:'#185FA5', couleurF:'#D4537E',
+    semaines:[18,20,22,24,26,28,30,32,36,40,44,48,52,60,65],
+    males:   [1600,1750,1900,2050,2150,2220,2280,2320,2370,2410,2440,2460,2475,2490,2500],
+    femelles:[1350,1480,1590,1680,1745,1790,1820,1845,1875,1895,1910,1920,1928,1935,1940]
+  }
+};
+
+async function renderRCPesees(reproLots, pesees){
+  const today = new Date().toISOString().slice(0,10);
+
+  const lotOpts = reproLots.map(l=>
+    `<option value="${l.id}">${esc(l.nom)} (${esc(l.espece||l.souche||'?')})</option>`
+  ).join('');
+
+  const raceOpts = Object.keys(COURBES_POIDS).map(r=>
+    `<option value="${r}">${r}</option>`
+  ).join('');
+
+  // Dernière pesée par lot
+  const dernierePesee = {};
+  pesees.forEach(p=>{
+    const lid = p.repro_lot_id||p.reproLotId;
+    if(!dernierePesee[lid] || (p.date||'')>(dernierePesee[lid].date||''))
+      dernierePesee[lid] = p;
+  });
+
+  // Alertes : écart vs norme > ±10%
+  const alertes = [];
+  reproLots.forEach(lot=>{
+    const dp = dernierePesee[lot.id];
+    if(!dp) return;
+    const race = lot.souche||lot.race||'Autre';
+    const courbe = COURBES_POIDS[race]||COURBES_POIDS['Autre'];
+    const sem = parseInt(dp.semaine_age||dp.semaineAge||0);
+    const idx = courbe.semaines.findIndex(s=>s>=sem);
+    if(idx<0) return;
+    const stdM = courbe.males[idx], stdF = courbe.femelles[idx];
+    const pdM = parseFloat(dp.poids_males||dp.poidsMales||0);
+    const pdF = parseFloat(dp.poids_femelles||dp.poidsFemelles||0);
+    if(pdM>0){
+      const ecart = ((pdM-stdM)/stdM*100);
+      if(Math.abs(ecart)>10) alertes.push({lot,sexe:'♂',poids:pdM,std:stdM,ecart,sem});
+    }
+    if(pdF>0){
+      const ecart = ((pdF-stdF)/stdF*100);
+      if(Math.abs(ecart)>10) alertes.push({lot,sexe:'♀',poids:pdF,std:stdF,ecart,sem});
+    }
+  });
+
+  // Tableau récapitulatif par lot
+  const rowsLots = reproLots.map(lot=>{
+    const dp = dernierePesee[lot.id];
+    const race = lot.souche||lot.race||'Autre';
+    const courbe = COURBES_POIDS[race]||COURBES_POIDS['Autre'];
+    const sem = dp ? parseInt(dp.semaine_age||dp.semaineAge||0) : null;
+    const idx = sem ? courbe.semaines.findIndex(s=>s>=sem) : -1;
+    const stdM = idx>=0 ? courbe.males[idx] : null;
+    const stdF = idx>=0 ? courbe.femelles[idx] : null;
+    const pdM  = dp ? parseFloat(dp.poids_males||dp.poidsMales||0) : null;
+    const pdF  = dp ? parseFloat(dp.poids_femelles||dp.poidsFemelles||0) : null;
+
+    function ecartBadge(pd, std){
+      if(!pd||!std) return '<span style="color:var(--color-text-tertiary)">—</span>';
+      const e = ((pd-std)/std*100);
+      const col = Math.abs(e)<=5?'#15803d':Math.abs(e)<=10?'#d97706':'#dc2626';
+      const sign = e>=0?'+':'';
+      return `<span style="font-size:10px;background:${col}22;color:${col};padding:1px 6px;border-radius:8px;font-weight:600">${sign}${e.toFixed(0)}%</span>`;
+    }
+
+    return `<tr>
+      <td><strong>${esc(lot.nom)}</strong><div style="font-size:10px;color:var(--color-text-tertiary)">${esc(race)}</div></td>
+      <td style="text-align:center;font-size:11px">${dp?'S'+sem:'—'}</td>
+      <td style="text-align:center">${dp?.date||'—'}</td>
+      <td style="text-align:center">
+        <span style="color:#185FA5;font-weight:700">${pdM?pdM+' g':'—'}</span>
+        <div style="font-size:10px;color:var(--color-text-tertiary)">${stdM?'std: '+stdM+'g':''}</div>
+        ${ecartBadge(pdM,stdM)}
+      </td>
+      <td style="text-align:center">
+        <span style="color:#D4537E;font-weight:700">${pdF?pdF+' g':'—'}</span>
+        <div style="font-size:10px;color:var(--color-text-tertiary)">${stdF?'std: '+stdF+'g':''}</div>
+        ${ecartBadge(pdF,stdF)}
+      </td>
+      <td style="text-align:center;font-size:11px">${dp?.observations||dp?.recommandation||'—'}</td>
+      <td>
+        <button class="btn btn-sm btn-gh" onclick="ouvrirChartPoids(${lot.id})"><i class="fas fa-chart-line"></i></button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Données pour le graphique global (premier lot ou lot sélectionné)
+  const firstLot = reproLots[0];
+  const peseesPremier = firstLot
+    ? pesees.filter(p=>(p.repro_lot_id||p.reproLotId)==firstLot.id)
+        .sort((a,b)=>(a.date||'').localeCompare(b.date||''))
+    : [];
+  const racePremier = firstLot ? (firstLot.souche||firstLot.race||'Autre') : 'Autre';
+  const courbeRef = COURBES_POIDS[racePremier]||COURBES_POIDS['Autre'];
+
+  return `
+  <!-- Alertes -->
+  ${alertes.length ? `<div style="background:#fef2f2;border:.5px solid #fca5a5;border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:12px;font-size:13px">
+    <strong style="color:#991b1b">⚠️ ${alertes.length} alerte(s) de poids</strong>
+    <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
+      ${alertes.map(a=>`<span style="background:#fff;border:.5px solid #fca5a5;border-radius:8px;padding:2px 10px;font-size:12px;color:#7f1d1d">
+        ${esc(a.lot.nom)} ${a.sexe} — ${a.poids}g (${a.ecart>0?'+':''}${a.ecart.toFixed(0)}% vs norme S${a.sem})
+      </span>`).join('')}
+    </div>
+  </div>` : ''}
+
+  <!-- Formulaire saisie -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd" style="background:linear-gradient(135deg,#7c3aed,#0891b2);color:#fff;border-radius:var(--r) var(--r) 0 0">
+      <span>⚖️ Nouvelle pesée hebdomadaire</span>
+      <span style="font-size:11px;opacity:.8">Peser 10% de l'effectif minimum</span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px">
+        <div class="fg"><label>Date de pesée *</label>
+          <input type="date" id="prDate" value="${today}"></div>
+        <div class="fg"><label>Lot géniteur *</label>
+          <select id="prLot" onchange="majAgeRef()">
+            <option value="">— Choisir —</option>${lotOpts}
+          </select></div>
+        <div class="fg"><label>Race / Souche</label>
+          <select id="prRace" onchange="majCourbeRef()">${raceOpts}</select></div>
+        <div class="fg"><label>Semaine d'âge (S…)</label>
+          <input type="number" id="prSem" min="1" max="80" placeholder="Ex: 24" oninput="majNormes()"></div>
+        <div class="fg"><label>♂ Poids moyen mâles (g)</label>
+          <input type="number" id="prPoidsMales" min="0" step="10" placeholder="0" oninput="majEcarts()"></div>
+        <div class="fg"><label>♀ Poids moyen femelles (g)</label>
+          <input type="number" id="prPoidsFem" min="0" step="10" placeholder="0" oninput="majEcarts()"></div>
+        <div class="fg"><label>Nb sujets pesés ♂</label>
+          <input type="number" id="prNbM" min="0" placeholder="0"></div>
+        <div class="fg"><label>Nb sujets pesés ♀</label>
+          <input type="number" id="prNbF" min="0" placeholder="0"></div>
+      </div>
+      <!-- Affichage normes et écarts -->
+      <div id="prNormes" style="margin-top:10px;display:none;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 14px;font-size:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>♂ Norme : <strong id="normM">—</strong> g — Écart : <strong id="ecartM" style="color:var(--color-text-tertiary)">—</strong></div>
+          <div>♀ Norme : <strong id="normF">—</strong> g — Écart : <strong id="ecartF" style="color:var(--color-text-tertiary)">—</strong></div>
+        </div>
+        <div id="recommande" style="margin-top:6px;font-style:italic;color:#7c3aed;font-size:12px"></div>
+      </div>
+      <div class="fg" style="margin-top:8px"><label>Observations / Plan d'action</label>
+        <input type="text" id="prObs" placeholder="Alimentation ajustée, conditions de pesée..."></div>
+      <button class="btn btn-p" style="margin-top:10px" onclick="savePeseeRepro()">
+        <i class="fas fa-save"></i> Enregistrer la pesée
+      </button>
+    </div>
+  </div>
+
+  <!-- Courbe de poids -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">
+      <span>📈 Courbe de poids — <span id="titreChart">${firstLot?esc(firstLot.nom):'Aucun lot'}</span></span>
+      <select id="selLotChart" onchange="ouvrirChartPoids(this.value)" style="font-size:12px;padding:2px 8px;border-radius:6px;border:.5px solid var(--color-border-tertiary);background:var(--color-background-primary);color:var(--color-text-primary)">
+        ${reproLots.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="card-bd" style="padding:12px">
+      <canvas id="chartPoidsGenit" height="220"></canvas>
+      ${peseesPremier.length===0?`<div style="text-align:center;color:var(--color-text-tertiary);padding:30px;font-size:13px">
+        <i class="fas fa-weight" style="font-size:28px;display:block;margin-bottom:8px;opacity:.3"></i>
+        Aucune pesée enregistrée — Saisissez la première pesée ci-dessus
+      </div>`:''}
+    </div>
+  </div>
+
+  <!-- Tableau récapitulatif lots -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">
+      <span>📋 Dernière pesée par lot</span>
+      <span style="font-size:11px;color:var(--color-text-tertiary)">${pesees.length} pesée(s) totale(s)</span>
+    </div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th>Lot</th><th style="text-align:center">Age</th><th style="text-align:center">Date</th>
+          <th style="text-align:center">♂ Poids</th><th style="text-align:center">♀ Poids</th>
+          <th>Observations</th><th style="text-align:center">Courbe</th>
+        </tr></thead>
+        <tbody>${rowsLots||'<tr><td colspan="7" style="text-align:center;color:var(--color-text-tertiary);padding:20px">Aucun lot géniteur</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Historique pesées -->
+  <div class="card">
+    <div class="card-hd">📋 Historique complet des pesées</div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th>Date</th><th>Lot</th><th style="text-align:center">Age</th>
+          <th style="text-align:center">♂ (g)</th><th style="text-align:center">♀ (g)</th>
+          <th style="text-align:center">Nb pesés</th><th>Observations</th><th></th>
+        </tr></thead>
+        <tbody>${
+          [...pesees].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,40).map(p=>{
+            const lot = reproLots.find(l=>l.id===(p.repro_lot_id||p.reproLotId));
+            return `<tr>
+              <td style="color:var(--color-text-tertiary);white-space:nowrap">${p.date||'—'}</td>
+              <td><strong>${esc(lot?.nom||'—')}</strong></td>
+              <td style="text-align:center;font-size:11px">S${p.semaine_age||p.semaineAge||'?'}</td>
+              <td style="text-align:center;color:#185FA5;font-weight:600">${p.poids_males||p.poidsMales||'—'} g</td>
+              <td style="text-align:center;color:#D4537E;font-weight:600">${p.poids_femelles||p.poidsFemelles||'—'} g</td>
+              <td style="text-align:center;font-size:11px;color:var(--color-text-tertiary)">
+                ♂${p.nb_sujets_males||p.nbSujetsMales||0} / ♀${p.nb_sujets_femelles||p.nbSujetsFemelles||0}
+              </td>
+              <td style="font-size:11px;color:var(--color-text-tertiary);max-width:150px">${esc(p.observations||'')}</td>
+              <td><button class="btn-del" onclick="delPeseeRepro(${p.id})"><i class="fas fa-trash"></i></button></td>
+            </tr>`;
+          }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--color-text-tertiary);padding:20px">Aucune pesée enregistrée</td></tr>'
+        }</tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+  const _COURBES = ${JSON.stringify(COURBES_POIDS)};
+  const _LOTS    = ${JSON.stringify(reproLots.map(l=>({id:l.id,nom:l.nom,souche:l.souche||l.race||'Autre',
+    date_entree:l.date_entree||l.dateIntroduction||l.startDate||l.date_entree})))};
+  const _PESEES  = ${JSON.stringify(pesees)};
+  let _chartPG = null;
+
+  // Mettre à jour l'âge suggéré selon le lot sélectionné
+  function majAgeRef(){
+    const lid = document.getElementById('prLot')?.value;
+    const lot = _LOTS.find(l=>l.id==lid);
+    if(lot?.souche){
+      const sel = document.getElementById('prRace');
+      if(sel && _COURBES[lot.souche]) sel.value = lot.souche;
+    }
+    if(lot?.date_entree){
+      const sem = Math.floor((new Date()-new Date(lot.date_entree))/604800000);
+      const el = document.getElementById('prSem');
+      if(el && sem>0) el.value = sem;
+    }
+    majNormes();
+  }
+
+  function majCourbeRef(){ majNormes(); }
+
+  function majNormes(){
+    const race = document.getElementById('prRace')?.value||'Autre';
+    const sem  = parseInt(document.getElementById('prSem')?.value||0);
+    const c    = _COURBES[race]||_COURBES['Autre'];
+    const idx  = c.semaines.findIndex(s=>s>=sem);
+    const nM   = idx>=0 ? c.males[idx]   : null;
+    const nF   = idx>=0 ? c.femelles[idx]: null;
+    const box  = document.getElementById('prNormes');
+    if(sem && idx>=0 && box){
+      box.style.display='block';
+      document.getElementById('normM').textContent = nM?nM+' g':'—';
+      document.getElementById('normF').textContent = nF?nF+' g':'—';
+      majEcarts(nM,nF);
+    } else if(box) box.style.display='none';
+  }
+
+  function majEcarts(nM,nF){
+    const race = document.getElementById('prRace')?.value||'Autre';
+    const sem  = parseInt(document.getElementById('prSem')?.value||0);
+    const c    = _COURBES[race]||_COURBES['Autre'];
+    const idx  = c.semaines.findIndex(s=>s>=sem);
+    nM = nM ?? (idx>=0?c.males[idx]:null);
+    nF = nF ?? (idx>=0?c.femelles[idx]:null);
+    const pM = parseFloat(document.getElementById('prPoidsMales')?.value||0);
+    const pF = parseFloat(document.getElementById('prPoidsFem')?.value||0);
+    const recs = [];
+
+    function showEcart(id, p, std){
+      const el = document.getElementById(id);
+      if(!el||!p||!std) return;
+      const e = ((p-std)/std*100);
+      const col = Math.abs(e)<=5?'#15803d':Math.abs(e)<=10?'#d97706':'#dc2626';
+      el.style.color = col;
+      el.textContent = (e>=0?'+':'')+e.toFixed(1)+'%';
+      if(e<-10) recs.push(id==='ecartM'?'♂ Augmenter la ration (poids insuffisant)':'♀ Augmenter la ration (poids insuffisant)');
+      if(e>10)  recs.push(id==='ecartM'?'♂ Réduire la ration (surpoids)':'♀ Réduire la ration (surpoids)');
+    }
+    showEcart('ecartM', pM, nM);
+    showEcart('ecartF', pF, nF);
+    const rec = document.getElementById('recommande');
+    if(rec) rec.textContent = recs.length ? '💡 Recommandation : '+recs.join(' · ') : '';
+  }
+
+  // Charger courbe pour un lot
+  window.ouvrirChartPoids = function(lotId){
+    const lot  = _LOTS.find(l=>l.id==lotId);
+    if(!lot) return;
+    const race = lot.souche||'Autre';
+    const c    = _COURBES[race]||_COURBES['Autre'];
+    const psLot= _PESEES.filter(p=>(p.repro_lot_id||p.reproLotId)==lotId)
+                  .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    const titre = document.getElementById('titreChart');
+    if(titre) titre.textContent = lot.nom;
+    const dark  = window.matchMedia('(prefers-color-scheme:dark)').matches;
+    const gridC = dark?'rgba(255,255,255,.08)':'rgba(0,0,0,.07)';
+    const textC = dark?'#9ca3af':'#6b7280';
+    const canvas= document.getElementById('chartPoidsGenit');
+    if(!canvas) return;
+    if(_chartPG){ _chartPG.destroy(); _chartPG=null; }
+
+    // Points réels
+    const semReel = psLot.map(p=>parseInt(p.semaine_age||p.semaineAge||0));
+    const allSem  = [...new Set([...c.semaines, ...semReel])].sort((a,b)=>a-b);
+
+    _chartPG = new Chart(canvas, {
+      type:'line',
+      data:{
+        labels: allSem.map(s=>'S'+s),
+        datasets:[
+          {
+            label:'♂ Poids réel (g)',
+            data: allSem.map(s=>{ const p=psLot.find(x=>parseInt(x.semaine_age||x.semaineAge)==s); return p?parseFloat(p.poids_males||p.poidsMales||0):null; }),
+            borderColor:'#185FA5', backgroundColor:'rgba(24,95,165,.15)',
+            borderWidth:2.5, pointRadius:5, pointBackgroundColor:'#185FA5',
+            tension:.3, fill:false, spanGaps:true
+          },{
+            label:'♀ Poids réel (g)',
+            data: allSem.map(s=>{ const p=psLot.find(x=>parseInt(x.semaine_age||x.semaineAge)==s); return p?parseFloat(p.poids_femelles||p.poidsFemelles||0):null; }),
+            borderColor:'#D4537E', backgroundColor:'rgba(212,83,126,.15)',
+            borderWidth:2.5, pointRadius:5, pointBackgroundColor:'#D4537E',
+            tension:.3, fill:false, spanGaps:true
+          },{
+            label:'♂ Norme '+race+' (g)',
+            data: allSem.map(s=>{ const idx=c.semaines.findIndex(x=>x>=s); return idx>=0?c.males[idx]:null; }),
+            borderColor:'#185FA5', borderWidth:1.5, borderDash:[5,4],
+            pointRadius:0, fill:false, tension:.3, spanGaps:true
+          },{
+            label:'♀ Norme '+race+' (g)',
+            data: allSem.map(s=>{ const idx=c.semaines.findIndex(x=>x>=s); return idx>=0?c.femelles[idx]:null; }),
+            borderColor:'#D4537E', borderWidth:1.5, borderDash:[5,4],
+            pointRadius:0, fill:false, tension:.3, spanGaps:true
+          }
+        ]
+      },
+      options:{
+        responsive:true,
+        plugins:{
+          legend:{labels:{font:{size:11},color:textC}},
+          tooltip:{callbacks:{label:function(ctx){ return ctx.dataset.label+': '+(ctx.raw||0).toLocaleString('fr-FR')+' g'; }}}
+        },
+        scales:{
+          x:{ticks:{font:{size:10},color:textC},grid:{color:gridC}},
+          y:{ticks:{font:{size:10},color:textC,callback:v=>v.toLocaleString('fr-FR')+' g'},
+             grid:{color:gridC},beginAtZero:false}
+        }
+      }
+    });
+  };
+
+  // Initialiser le graphique au chargement
+  setTimeout(()=>{
+    if(_LOTS.length) ouvrirChartPoids(_LOTS[0].id);
+    document.getElementById('selLotChart')?.addEventListener('change',e=>ouvrirChartPoids(e.target.value));
+  },200);
+  <\/script>`;
+}
+
+window.savePeseeRepro = async function(){
+  const date  = document.getElementById('prDate')?.value;
+  const lotId = document.getElementById('prLot')?.value;
+  const race  = document.getElementById('prRace')?.value;
+  const sem   = parseInt(document.getElementById('prSem')?.value||0);
+  const pdM   = parseFloat(document.getElementById('prPoidsMales')?.value||0);
+  const pdF   = parseFloat(document.getElementById('prPoidsFem')?.value||0);
+  const nbM   = parseInt(document.getElementById('prNbM')?.value||0);
+  const nbF   = parseInt(document.getElementById('prNbF')?.value||0);
+  const obs   = document.getElementById('prObs')?.value.trim();
+  const rec   = document.getElementById('recommande')?.textContent||'';
+
+  if(!date||!lotId){ toast('Date et lot requis','err'); return; }
+  if(!sem)          { toast('Semaine d\'âge requise','err'); return; }
+  if(!pdM&&!pdF)    { toast('Saisir au moins un poids','err'); return; }
+
+  await addRec(S.PESEE_REPRO, {
+    repro_lot_id: parseInt(lotId),
+    date, semaine_age: sem, race_reference: race,
+    poids_males: pdM||null, poids_femelles: pdF||null,
+    nb_sujets_males: nbM||null, nb_sujets_femelles: nbF||null,
+    observations: obs||'',
+    recommandation: rec.replace('💡 Recommandation : ',''),
+    ts: Date.now()
+  });
+  toast('✅ Pesée enregistrée');
+  rcTab='peseerepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('peseerepro');
+};
+
+window.delPeseeRepro = async function(id){
+  if(!confirm('Supprimer cette pesée ?')) return;
+  await delRec(S.PESEE_REPRO, id);
+  toast('Supprimé');
+  rcTab='peseerepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('peseerepro');
+};
+
+// ══════════ MORTALITÉS GÉNITEURS ══════════
+async function renderRCMortRepro(reproLots, morts){
+  const today = new Date().toISOString().slice(0,10);
+  const lotOpts = reproLots.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('');
+
+  // Calcul effectifs actuels par lot (effectif initial - morts cumulés)
+  function effectifsLot(lot){
+    const mortLot = morts.filter(m=>(m.repro_lot_id||m.reproLotId)==lot.id);
+    const mortMales   = mortLot.reduce((s,m)=>s+parseInt(m.nb_males||m.nbMales||0),0);
+    const mortFemelles= mortLot.reduce((s,m)=>s+parseInt(m.nb_femelles||m.nbFemelles||0),0);
+    const initMales   = parseInt(lot.nb_males||lot.nbMales||0);
+    const initFem     = parseInt(lot.nb_femelles||lot.nbFemelles||0);
+    return {
+      initMales, initFem,
+      actuelMales:   Math.max(0, initMales - mortMales),
+      actuelFemelles:Math.max(0, initFem   - mortFemelles),
+      mortMales, mortFemelles,
+      total: Math.max(0, (initMales+initFem) - (mortMales+mortFemelles))
+    };
+  }
+
+  // KPIs globaux 7 jours
+  const d7 = new Date(); d7.setDate(d7.getDate()-7);
+  const morts7 = morts.filter(m=>(m.date||'')>=d7.toISOString().slice(0,10));
+  const totMorts7M = morts7.reduce((s,m)=>s+parseInt(m.nb_males||m.nbMales||0),0);
+  const totMorts7F = morts7.reduce((s,m)=>s+parseInt(m.nb_femelles||m.nbFemelles||0),0);
+  const totMorts7  = totMorts7M + totMorts7F;
+  const totEffActuel= reproLots.reduce((s,l)=>s+effectifsLot(l).total,0);
+  const totInitial  = reproLots.reduce((s,l)=>s+(parseInt(l.nb_males||0)+parseInt(l.nb_femelles||0)),0);
+  const tauxMortG   = totInitial>0 ? ((totInitial-totEffActuel)/totInitial*100).toFixed(1) : '0.0';
+
+  // Causes les plus fréquentes
+  const causes = {};
+  morts.forEach(m=>{
+    const c = m.cause||'Non précisée';
+    causes[c]=(causes[c]||0)+parseInt(m.nb_males||m.nbMales||0)+parseInt(m.nb_femelles||m.nbFemelles||0);
+  });
+  const topCauses = Object.entries(causes).sort((a,b)=>b[1]-a[1]).slice(0,3);
+
+  // Tableau mortalités récentes
+  const recent = [...morts].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,30);
+  const rows = recent.length ? recent.map(m=>{
+    const lot = reproLots.find(l=>l.id===(m.repro_lot_id||m.reproLotId));
+    const nm = parseInt(m.nb_males||m.nbMales||0);
+    const nf = parseInt(m.nb_femelles||m.nbFemelles||0);
+    const tot = nm+nf;
+    const gravite = tot>=5?'🔴':tot>=2?'🟡':'🟢';
+    return `<tr>
+      <td style="color:var(--text3);white-space:nowrap">${m.date||'—'}</td>
+      <td><strong>${esc(lot?.nom||'—')}</strong></td>
+      <td style="text-align:center;color:#185FA5;font-weight:600">${nm>0?'♂ '+nm:'—'}</td>
+      <td style="text-align:center;color:#D4537E;font-weight:600">${nf>0?'♀ '+nf:'—'}</td>
+      <td style="text-align:center;font-weight:700">${tot}</td>
+      <td style="text-align:center">${gravite}</td>
+      <td style="font-size:11px;color:var(--text3)">${esc(m.cause||'Non précisée')}</td>
+      <td style="font-size:11px;color:var(--text3);max-width:150px">${esc(m.observations||'')}</td>
+      <td><button class="btn-del" onclick="delMortRepro(${m.id})"><i class="fas fa-trash"></i></button></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:24px">Aucune mortalité enregistrée</td></tr>`;
+
+  // Tableau effectifs actuels par lot
+  const rowsEff = reproLots.length ? reproLots.map(lot=>{
+    const e = effectifsLot(lot);
+    const tauxM = e.initMales>0   ? (e.mortMales/e.initMales*100).toFixed(1)   : '0.0';
+    const tauxF = e.initFem>0     ? (e.mortFemelles/e.initFem*100).toFixed(1)   : '0.0';
+    const alerteM = parseFloat(tauxM)>10;
+    const alerteF = parseFloat(tauxF)>10;
+    return `<tr>
+      <td><strong>${esc(lot.nom)}</strong></td>
+      <td style="text-align:center;color:#185FA5">
+        <span style="font-weight:700">♂ ${e.actuelMales}</span>
+        <span style="font-size:10px;color:var(--text3)">/ ${e.initMales}</span>
+      </td>
+      <td style="text-align:center;color:#D4537E">
+        <span style="font-weight:700">♀ ${e.actuelFemelles}</span>
+        <span style="font-size:10px;color:var(--text3)">/ ${e.initFem}</span>
+      </td>
+      <td style="text-align:center;font-weight:700">${e.total}</td>
+      <td style="text-align:center;color:#185FA5">
+        <span style="background:${alerteM?'#fee2e2':'#e0f2fe'};color:${alerteM?'#991b1b':'#075985'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${tauxM}%</span>
+      </td>
+      <td style="text-align:center;color:#D4537E">
+        <span style="background:${alerteF?'#fee2e2':'#fce7f3'};color:${alerteF?'#991b1b':'#831843'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${tauxF}%</span>
+      </td>
+      <td style="text-align:center">${alerteM||alerteF?'⚠️ Alerte':lot.statut==='actif'?'✅ Normal':'—'}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Aucun lot géniteur</td></tr>`;
+
+  const causesBadges = topCauses.map(([c,n])=>
+    `<span style="background:#f3e8ff;color:#6b21a8;padding:3px 10px;border-radius:10px;font-size:12px;margin-right:6px"><strong>${n}</strong> — ${esc(c)}</span>`
+  ).join('');
+
+  return `
+  <!-- KPIs -->
+  <div class="kpi-grid" style="margin-bottom:14px">
+    <div class="kpi" style="background:#fff7ed;border:.5px solid #fed7aa">
+      <div class="kpi-lbl">Morts 7 jours</div>
+      <div class="kpi-val" style="color:#c2410c">${totMorts7}</div>
+      <div class="kpi-sub">♂ ${totMorts7M} · ♀ ${totMorts7F}</div>
+    </div>
+    <div class="kpi" style="background:#f0fdf4;border:.5px solid #bbf7d0">
+      <div class="kpi-lbl">Effectif actuel</div>
+      <div class="kpi-val" style="color:#15803d">${totEffActuel}</div>
+      <div class="kpi-sub">sur ${totInitial} initial</div>
+    </div>
+    <div class="kpi" style="background:${parseFloat(tauxMortG)>8?'#fef2f2':'#f8fafc'};border:.5px solid ${parseFloat(tauxMortG)>8?'#fca5a5':'var(--color-border-tertiary)'}">
+      <div class="kpi-lbl">Taux mortalité cumulé</div>
+      <div class="kpi-val" style="color:${parseFloat(tauxMortG)>8?'#dc2626':'var(--color-text-primary)'}">${tauxMortG}%</div>
+      <div class="kpi-sub">${parseFloat(tauxMortG)>8?'⚠️ Élevé':'✅ Normal'}</div>
+    </div>
+    <div class="kpi" style="background:#fdf4ff;border:.5px solid #e9d5ff">
+      <div class="kpi-lbl">Causes principales</div>
+      <div style="margin-top:4px;font-size:12px">${causesBadges||'<span style="color:var(--text3)">—</span>'}</div>
+    </div>
+  </div>
+
+  <!-- Formulaire saisie -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd" style="background:linear-gradient(135deg,#7c3aed,#be185d);color:#fff;border-radius:var(--r) var(--r) 0 0">
+      <span>💀 Saisir une mortalité géniteurs</span>
+      <span style="font-size:11px;opacity:.8">Mises à jour des effectifs automatiques</span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px">
+        <div class="fg"><label>Date *</label>
+          <input type="date" id="mrDate" value="${today}"></div>
+        <div class="fg"><label>Lot géniteur *</label>
+          <select id="mrLot"><option value="">— Choisir —</option>${lotOpts}</select></div>
+        <div class="fg"><label>♂ Mâles morts</label>
+          <input type="number" id="mrMales" min="0" value="0" oninput="updateMrTotal()"></div>
+        <div class="fg"><label>♀ Femelles mortes</label>
+          <input type="number" id="mrFemelles" min="0" value="0" oninput="updateMrTotal()"></div>
+        <div class="fg"><label>Cause principale</label>
+          <select id="mrCause">
+            <option value="Maladie respiratoire">Maladie respiratoire</option>
+            <option value="Maladie digestive">Maladie digestive</option>
+            <option value="Marek / Tumeurs">Marek / Tumeurs</option>
+            <option value="Coccidiose">Coccidiose</option>
+            <option value="Gumboro">Gumboro</option>
+            <option value="Newcastle">Newcastle</option>
+            <option value="Traumatisme / Blessure">Traumatisme / Blessure</option>
+            <option value="Cannibalisme">Cannibalisme</option>
+            <option value="Stress thermique">Stress thermique</option>
+            <option value="Manque d'eau / aliment">Manque d'eau / aliment</option>
+            <option value="Cause inconnue">Cause inconnue</option>
+            <option value="Autre">Autre</option>
+          </select></div>
+        <div class="fg"><label>Total</label>
+          <input type="text" id="mrTotal" readonly style="background:var(--bg2);font-weight:700;color:#7c3aed" value="0 mort(s)"></div>
+      </div>
+      <div class="fg" style="margin-top:8px"><label>Observations</label>
+        <input type="text" id="mrObs" placeholder="Symptômes, conditions, mesures prises..."></div>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-p" onclick="saveMortRepro()"><i class="fas fa-save"></i> Enregistrer</button>
+        <span id="mrEffInfo" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Effectifs actuels par lot -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">
+      <span>🐓 Effectifs actuels par lot géniteur</span>
+      <span style="font-size:11px;color:var(--text3)">Mis à jour en temps réel</span>
+    </div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Lot</th>
+          <th style="text-align:center">♂ Mâles</th>
+          <th style="text-align:center">♀ Femelles</th>
+          <th style="text-align:center">Total</th>
+          <th style="text-align:center">Mort. mâles</th>
+          <th style="text-align:center">Mort. femelles</th>
+          <th style="text-align:center">Statut</th>
+        </tr></thead>
+        <tbody>${rowsEff}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Historique mortalités -->
+  <div class="card">
+    <div class="card-hd">
+      <span>📋 Historique mortalités</span>
+      <span style="font-size:11px;color:var(--text3)">${morts.length} enregistrement(s)</span>
+    </div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date</th><th>Lot</th>
+          <th style="text-align:center">♂</th>
+          <th style="text-align:center">♀</th>
+          <th style="text-align:center">Total</th>
+          <th style="text-align:center">Gravité</th>
+          <th>Cause</th><th>Observations</th><th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+  function updateMrTotal(){
+    const m=parseInt(document.getElementById('mrMales')?.value)||0;
+    const f=parseInt(document.getElementById('mrFemelles')?.value)||0;
+    const el=document.getElementById('mrTotal');
+    if(el) el.value=(m+f)+' mort(s)  (♂'+m+' / ♀'+f+')';
+    // Afficher les effectifs restants du lot sélectionné
+    const lotId=document.getElementById('mrLot')?.value;
+    const info=document.getElementById('mrEffInfo');
+    if(info && lotId){
+      const lots=${JSON.stringify(reproLots.map(l=>({id:l.id,nom:l.nom,nb_males:l.nb_males||l.nbMales||0,nb_femelles:l.nb_femelles||l.nbFemelles||0})))};
+      const lot=lots.find(l=>l.id==lotId);
+      if(lot) info.textContent='Effectif après saisie : ♂'+(parseInt(lot.nb_males)-m)+' / ♀'+(parseInt(lot.nb_femelles)-f);
+    }
+  }
+  setTimeout(()=>{
+    document.getElementById('mrLot')?.addEventListener('change',updateMrTotal);
+  },100);
+  <\/script>`;
+}
+
+window.saveMortRepro = async function(){
+  const date     = document.getElementById('mrDate')?.value;
+  const lotId    = document.getElementById('mrLot')?.value;
+  const nbMales  = parseInt(document.getElementById('mrMales')?.value)||0;
+  const nbFem    = parseInt(document.getElementById('mrFemelles')?.value)||0;
+  const cause    = document.getElementById('mrCause')?.value;
+  const obs      = document.getElementById('mrObs')?.value.trim();
+
+  if(!date||!lotId)     { toast('Date et lot géniteur requis','err'); return; }
+  if(nbMales+nbFem<=0)  { toast('Saisir au moins 1 mortalité','err'); return; }
+
+  await addRec(S.MORT_REPRO, {
+    repro_lot_id: parseInt(lotId),
+    date, nb_males: nbMales, nb_femelles: nbFem,
+    cause: cause||'Cause inconnue',
+    observations: obs||'',
+    ts: Date.now()
+  });
+
+  toast(`✅ ${nbMales+nbFem} mortalité(s) enregistrée(s) — Effectifs mis à jour`);
+  rcTab='mortrepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('mortrepro');
+};
+
+window.delMortRepro = async function(id){
+  if(!confirm('Supprimer cet enregistrement de mortalité ?')) return;
+  await delRec(S.MORT_REPRO, id);
+  toast('Supprimé');
+  rcTab='mortrepro';
+  await renderReproCouvoir(document.getElementById('contentArea'));
+  switchRCTab('mortrepro');
 };
 
 // ══════════ ALIMENTATION GÉNITEURS ══════════
