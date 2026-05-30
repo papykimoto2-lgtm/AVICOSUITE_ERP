@@ -2,8 +2,31 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
 <title>Sanix AviNest Pro — ERP Avicole Intelligent</title>
+
+<!-- ── PWA Manifest ── -->
+<link rel="manifest" href="/manifest.json">
+
+<!-- ── PWA Meta iOS (Safari) ── -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AviNest Pro">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png">
+
+<!-- ── PWA Meta Android / Chrome ── -->
+<meta name="theme-color" content="#1a4731">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="application-name" content="AviNest Pro">
+
+<!-- ── SEO / description ── -->
+<meta name="description" content="ERP avicole intelligent pour la gestion d'élevage, couvoir, stock, finance et rapports automatisés. Conçu pour la Côte d'Ivoire.">
+<meta name="robots" content="noindex"><!-- app privée -->
+
+<!-- ── Couleur splash screen Android ── -->
+<meta name="msapplication-TileColor" content="#1a4731">
+<meta name="msapplication-TileImage" content="/icons/icon-144.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
@@ -19303,6 +19326,72 @@ window.addEventListener('resize', ()=>{ if(!isMobile()) mobCloseAll(); });
   },{passive:true});
 })();
 
+</script>
+
+<!-- ── PWA Service Worker Registration ────────────────────── -->
+<script>
+(function(){
+  if(!('serviceWorker' in navigator)) return;
+
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(function(reg){
+        console.log('[AviNest PWA] Service Worker enregistré :', reg.scope);
+
+        // Vérifier les mises à jour toutes les 60s
+        setInterval(function(){ reg.update(); }, 60000);
+
+        // Proposer la mise à jour si nouvelle version disponible
+        reg.addEventListener('updatefound', function(){
+          const newSW = reg.installing;
+          newSW.addEventListener('statechange', function(){
+            if(newSW.state === 'installed' && navigator.serviceWorker.controller){
+              // Notifier l'utilisateur qu'une mise à jour est disponible
+              if(window.toast) {
+                window.toast('🔄 Mise à jour disponible — Rechargez la page pour l\'appliquer');
+              }
+            }
+          });
+        });
+      })
+      .catch(function(err){
+        console.warn('[AviNest PWA] Service Worker non enregistré :', err);
+      });
+  });
+
+  // Bouton "Installer" — intercepter l'événement beforeinstallprompt
+  var deferredPrompt;
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault();
+    deferredPrompt = e;
+    // Afficher un bouton d'installation discret si l'app n'est pas déjà installée
+    var btn = document.createElement('div');
+    btn.id = 'pwaInstallBanner';
+    btn.style.cssText = 'position:fixed;bottom:72px;left:50%;transform:translateX(-50%);background:#1a4731;color:#fff;padding:10px 20px;border-radius:24px;font-size:13px;font-weight:600;cursor:pointer;z-index:9000;box-shadow:0 4px 16px rgba(0,0,0,.3);display:flex;align-items:center;gap:8px;white-space:nowrap';
+    btn.innerHTML = '<span>📱</span><span>Installer AviNest Pro</span>';
+    btn.onclick = function(){
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function(choice){
+        if(choice.outcome === 'accepted'){
+          if(window.toast) window.toast('✅ AviNest Pro installé sur votre téléphone !');
+        }
+        btn.remove();
+        deferredPrompt = null;
+      });
+    };
+    document.body.appendChild(btn);
+    // Masquer après 10 secondes si non cliqué
+    setTimeout(function(){ if(btn.parentNode) btn.remove(); }, 10000);
+  });
+
+  // Masquer le banner si déjà installé
+  window.addEventListener('appinstalled', function(){
+    var banner = document.getElementById('pwaInstallBanner');
+    if(banner) banner.remove();
+    if(window.toast) window.toast('🎉 AviNest Pro installé avec succès !');
+    console.log('[AviNest PWA] Application installée');
+  });
+})();
 </script>
 
 </body>
