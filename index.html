@@ -6391,7 +6391,7 @@ async function renderCommandes(ca){
         ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
         ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="openFacturePreview(${s.id})" title="Prévisualiser facture"><i class="fas fa-eye"></i></button> ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacturePro(${s.id})" title="Imprimer PDF"><i class="fas fa-print"></i></button> `:""} `:''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -6449,7 +6449,7 @@ window.filterCommandes=async function(clientId){
         ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
         ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="openFacturePreview(${s.id})" title="Prévisualiser facture"><i class="fas fa-eye"></i></button> ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacturePro(${s.id})" title="Imprimer PDF"><i class="fas fa-print"></i></button> `:""} `:''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -9592,131 +9592,365 @@ function buildEmetteurHeader(cfg){
 }
 
 // ── Construire et imprimer une facture normalisée ──
-function buildAndPrintFacture(s, c, cfg){
-  const tvaApp   = cfg.tvaApplicable !== false;
-  const tauxTva  = cfg.tauxTva ?? 18;
-  var sousTotal  = s.lignes && s.lignes.length
-    ? s.lignes.reduce((a,l)=>a+(l.totalLigne||Math.round((l.qte||0)*(l.prixUnit||0))),0) : (s.totalHT||0);
-  var remisePct  = s.remise||0;
-  var remiseMt   = Math.round(sousTotal * remisePct/100);
-  var totalHT    = s.totalHT || sousTotal - remiseMt;
-  var tva        = tvaApp ? Math.round(totalHT * tauxTva/100) : 0;
-  var totalTTC   = totalHT + tva;
-  var paye       = getMontantPaye(s);
-  var reste      = getResteAPayer(s);
-  var retard     = s.dateEcheance ? joursRetard(s.dateEcheance) : 0;
-  var condPaie   = (PAIE_DELAI_FACT[s.paie]===0) ? 'Comptant à la livraison' : 'Crédit '+(PAIE_DELAI_FACT[s.paie]||'?')+' jours';
-  var lignes     = s.lignes && s.lignes.length ? s.lignes
-    : [{designation:s.produit||'Produit',qte:s.qty||0,unite:'u',prixUnit:s.prixUnit||0,totalLigne:s.totalHT||0}];
-  var rows       = lignes.map(l=>{
-    var lt=l.totalLigne||Math.round((l.qte||0)*(l.prixUnit||0));
-    return `<tr><td>${esc(l.designation||'--')}</td><td style="text-align:right">${l.qte||0}</td><td>${esc(l.unite||'u')}</td><td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td><td style="text-align:right;font-weight:700">${lt.toLocaleString('fr-FR')}</td></tr>`;
-  }).join('');
-  var hist='';
-  if(s.paiements && s.paiements.length){
-    hist='<div style="margin-top:20px;clear:both"><div style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:6px;letter-spacing:.5px">Historique des paiements reçus</div>'
-      +'<table><thead><tr><th>Date</th><th>Mode</th><th>Référence</th><th style="text-align:right">Montant</th></tr></thead><tbody>'
-      +s.paiements.map(p=>`<tr><td>${p.date}</td><td>${esc(p.mode||'')}</td><td style="color:#666">${esc(p.ref||'—')}</td><td style="text-align:right;font-weight:700;color:#059669">${p.montant.toLocaleString('fr-FR')} F</td></tr>`).join('')
-      +'</tbody></table></div>';
-  }
-  var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
-    ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
-  var mentionTva = tvaApp
-    ? `TVA ${tauxTva}% incluse : ${tva.toLocaleString('fr-FR')} ${cfg.devise||'F'}`
-    : (cfg.mentionExoneration||'TVA non applicable');
+// ══════════════════════════════════════════════════════════════
+//  MODULE FACTURATION PRO — SANIX AviNest Pro
+//  Facture OHADA · TVA · Timbre fiscal CI · QR code · PDF
+// ══════════════════════════════════════════════════════════════
 
-  var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-  <title>Facture ${esc(s.numFacture||s.ref||'')}</title>
-  <style>
-    *{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}
-    .doc{max-width:210mm;margin:0 auto;padding:12mm}
-    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a5c2a;padding-bottom:14px;margin-bottom:16px;gap:20px}
-    .doc-type{font-size:22px;font-weight:800;color:#1a5c2a;letter-spacing:1px;text-align:right}
-    .doc-meta{text-align:right;font-size:11px;color:#444;line-height:1.7;margin-top:4px}
-    .badge-num{display:inline-block;background:#f0fdf4;border:1.5px solid #86efac;border-radius:6px;padding:2px 10px;font-weight:700;color:#166534;font-size:13px;margin-bottom:4px}
-    .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
-    .party{border-radius:8px;padding:10px 13px;font-size:11px;line-height:1.7}
-    .party-em{background:#f0fdf4;border:1px solid #bbf7d0}
-    .party-cl{background:#f8f9fa;border:1px solid #e5e7eb}
-    .plbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px}
-    table{width:100%;border-collapse:collapse;margin-bottom:14px}
-    thead th{background:#1a5c2a;color:#fff;padding:8px 10px;font-size:10px;font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.3px}
-    tbody td{padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:11px}
-    tbody tr:nth-child(even){background:#f9fafb}
-    .totaux{float:right;width:280px;margin-top:4px}
-    .trow{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-bottom:1px solid #eee}
-    .tttc{display:flex;justify-content:space-between;padding:8px 0;font-size:14px;font-weight:800;color:#1a5c2a;border-top:2px solid #1a5c2a;margin-top:4px}
-    .tnap{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:700;color:#dc2626}
-    .ech-box{background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:9px 13px;margin-bottom:12px;font-size:11px}
-    .retard-box{background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:7px 12px;color:#991b1b;margin-bottom:10px;font-size:11px}
-    .ftr{clear:both;border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8}
-    @media print{@page{margin:10mm;size:A4}button{display:none}}
-  </style></head><body><div class="doc">
-  <div class="hdr">
-    ${buildEmetteurHeader(cfg)}
-    <div style="text-align:right">
-      <div class="doc-type">FACTURE</div>
-      <div class="doc-meta">
-        <div class="badge-num">${esc(s.numFacture||s.ref||'—')}</div><br>
-        Date : <strong>${s.dateFacture||s.date||'—'}</strong><br>
-        ${s.dateEcheance?'Échéance : <strong>'+s.dateEcheance+'</strong><br>':''}
-        ${s.paie?'Conditions : '+condPaie:''}
+// Constantes fiscales Côte d'Ivoire
+const TVA_CI         = 18;       // %
+const TIMBRE_FISCAL  = 200;      // FCFA fixe par facture (DGI CI)
+const SEUIL_TVA      = 50000;    // Exonéré si < 50 000 FCFA
+const ABREGE_DEVISE  = 'FCFA';
+
+// Convertir nombre en lettres (FCFA)
+function montantEnLettres(n){
+  const u=['','un','deux','trois','quatre','cinq','six','sept','huit','neuf',
+    'dix','onze','douze','treize','quatorze','quinze','seize','dix-sept','dix-huit','dix-neuf'];
+  const d=['','','vingt','trente','quarante','cinquante','soixante','soixante','quatre-vingt','quatre-vingt'];
+  if(n===0) return 'zéro';
+  function conv(n){
+    if(n<20) return u[n];
+    if(n<100){
+      const diz=Math.floor(n/10), un=n%10;
+      if(diz===7||diz===9) return d[diz]+(un===0?'':(diz===7?'-'+(u[10+un]):'-'+u[un]));
+      return d[diz]+(un===0?'':(un===1&&diz!==8?' et un':'-'+u[un]));
+    }
+    if(n<1000){const c=Math.floor(n/100),r=n%100;return (c===1?'cent':''+u[c]+' cent')+(r===0&&c>1?'s':(r>0?' '+conv(r):''));}
+    if(n<1000000){const m=Math.floor(n/1000),r=n%1000;return conv(m)+' mille'+(r>0?' '+conv(r):'');}
+    const M=Math.floor(n/1000000),r=n%1000000;return conv(M)+' million'+(M>1?'s':'')+(r>0?' '+conv(r):'');
+  }
+  const entier=Math.floor(n), dec=Math.round((n-entier)*100);
+  let res=conv(entier)+' franc'+(entier>1?'s':'');
+  if(dec>0) res+=' et '+conv(dec)+' centime'+(dec>1?'s':'');
+  return res.charAt(0).toUpperCase()+res.slice(1);
+}
+
+// QR code texte simple (Data Matrix simulé en SVG)
+function makeQRData(s, cfg){
+  return `FAC:${s.numFacture||s.ref}|DATE:${s.dateFacture||s.date}|TTC:${s.totalTTC||s.totalHT}|CLI:${s.clientNom||''}|ETS:${cfg.nif||cfg.rccm||cfg.nomExploitation||''}`;
+}
+
+// Modèles de mention légale
+const MENTIONS_LEGALES = {
+  standard: 'Tout paiement tardif entraîne des pénalités de retard au taux légal en vigueur. En cas de litige, compétence exclusive des tribunaux du lieu du siège social.',
+  agricole: 'Produits agricoles — Paiement comptant ou selon conditions convenues. Marchandises voyageant aux risques et périls de l\'acheteur après livraison.',
+  exo_tva: 'TVA non applicable — Exonération article 338 du CGI-CI (Agriculture).',
+};
+
+async function openFacturePreview(saleId){
+  const [sales, clients] = await Promise.all([getAll(S.SALES), getAll(S.CLIENTS)]);
+  const s = sales.find(x=>x.id===saleId);
+  if(!s){ toast('Commande introuvable','err'); return; }
+  const c = clients.find(x=>x.id===(s.clientId||s.client_id))||{};
+  const cfg = await getExploitationSettings();
+
+  // Calculs
+  const tvaApp  = cfg.tvaApplicable!==false;
+  const tauxTva = parseFloat(cfg.tauxTva||TVA_CI);
+  const lignes  = s.lignes&&s.lignes.length?s.lignes:[{designation:s.produit||'Produit',qte:s.qty||0,unite:'u',prixUnit:s.prixUnit||0,totalLigne:s.totalHT||0}];
+  const sousTotal = lignes.reduce((a,l)=>a+Math.round((l.qte||0)*(l.prixUnit||0)),0)||s.totalHT||0;
+  const remisePct = parseFloat(s.remise||0);
+  const remiseMt  = Math.round(sousTotal*remisePct/100);
+  const totalHT   = Math.round(sousTotal-remiseMt);
+  const tva       = tvaApp&&totalHT>=SEUIL_TVA ? Math.round(totalHT*tauxTva/100) : 0;
+  const timbre    = TIMBRE_FISCAL;
+  const totalTTC  = totalHT+tva+timbre;
+  const paye      = getMontantPaye(s);
+  const reste     = Math.max(0,totalTTC-paye);
+
+  // Créer overlay
+  const ov = document.createElement('div');
+  ov.id='ovFacturePreview';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;overflow-y:auto;padding:20px';
+  ov.onclick=function(e){if(e.target===ov) ov.remove();};
+
+  const lignesHTML = lignes.map((l,i)=>{
+    const lt=Math.round((l.qte||0)*(l.prixUnit||0));
+    return `<tr style="border-bottom:1px solid #e5e7eb;background:${i%2?'#f9fafb':'#fff'}">
+      <td style="padding:7px 10px;font-size:12px">${esc(l.designation||'—')}</td>
+      <td style="padding:7px 10px;text-align:center;font-size:12px">${l.qte||0}</td>
+      <td style="padding:7px 10px;text-align:center;font-size:11px;color:#6b7280">${esc(l.unite||'u')}</td>
+      <td style="padding:7px 10px;text-align:right;font-size:12px">${(l.prixUnit||0).toLocaleString('fr-FR')}</td>
+      <td style="padding:7px 10px;text-align:right;font-weight:600;font-size:12px">${lt.toLocaleString('fr-FR')}</td>
+    </tr>`;
+  }).join('');
+
+  const montantLettres = montantEnLettres(totalTTC);
+  const qrData = makeQRData({...s,totalTTC,numFacture:s.numFacture||s.ref}, cfg);
+  const retard = s.dateEcheance ? joursRetard(s.dateEcheance) : 0;
+
+  ov.innerHTML = `
+  <div style="background:#fff;border-radius:12px;width:100%;max-width:800px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden">
+
+    <!-- Toolbar -->
+    <div style="background:#1a5c2a;padding:12px 20px;display:flex;align-items:center;justify-content:space-between">
+      <div style="color:#fff;font-weight:500;font-size:14px">📄 Prévisualisation — ${esc(s.numFacture||s.ref||'Facture')}</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="printFacturePro(${saleId})" style="background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">🖨️ Imprimer / PDF</button>
+        <button onclick="document.getElementById('ovFacturePreview')?.remove()" style="background:rgba(255,255,255,.2);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer">✕ Fermer</button>
       </div>
     </div>
-  </div>
-  ${retard>0?`<div class="retard-box">⚠️ Facture en retard de <strong>${retard} jour(s)</strong> (échéance : ${s.dateEcheance})</div>`:''}
-  <div class="parties">
-    <div class="party party-em">
-      <div class="plbl">Émetteur</div>
-      <strong>${esc(cfg.nomExploitation||'—')}</strong><br>
-      ${cfg.adresse?esc(cfg.adresse)+'<br>':''}${cfg.ville?esc(cfg.ville)+', ':''}${esc(cfg.pays||'')}<br>
-      ${cfg.telephone?'Tél : '+esc(cfg.telephone)+'<br>':''}
-      ${cfg.email?esc(cfg.email):''}
-      ${cfg.nif||cfg.rccm?`<div style="font-size:9px;color:#6b7280;margin-top:3px">${[cfg.nif?'NIF : '+cfg.nif:'',cfg.rccm?'RCCM : '+cfg.rccm:''].filter(Boolean).join(' | ')}</div>`:''}
-    </div>
-    <div class="party party-cl">
-      <div class="plbl">Client / Acheteur</div>
-      <strong>${esc(c.nom||'—')}</strong><br>
-      ${c.adresse?esc(c.adresse)+'<br>':''}${c.ville?esc(c.ville)+'<br>':''}
-      ${c.tel?'Tél : '+esc(c.tel):''}
-    </div>
-  </div>
-  <table>
-    <thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th>Unité</th><th style="text-align:right">PU HT</th><th style="text-align:right">Total HT</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-  <div class="totaux">
-    <div class="trow"><span>Sous-total HT</span><span><strong>${sousTotal.toLocaleString('fr-FR')} ${cfg.devise||'F'}</strong></span></div>
-    ${remisePct>0?`<div class="trow" style="color:#d97706"><span>Remise ${remisePct}%</span><span>− ${remiseMt.toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>`:''}
-    <div class="trow"><span>Total HT</span><span>${totalHT.toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
-    <div class="trow"><span>${mentionTva}</span><span>${tvaApp?tva.toLocaleString('fr-FR')+' '+(cfg.devise||'F'):'0'}</span></div>
-    <div class="tttc"><span>TOTAL TTC</span><span>${totalTTC.toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
-    ${paye>0?`<div class="trow" style="color:#2563eb"><span>Acompte(s) reçu(s)</span><span>− ${paye.toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>`:''}
-    ${reste>0?`<div class="tnap"><span>NET À PAYER</span><span>${reste.toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>`:'<div style="color:#059669;font-weight:700;padding:6px 0;text-align:center;font-size:12px">✅ FACTURE SOLDÉE</div>'}
-  </div>
-  ${hist}
-  ${s.notes?`<div style="clear:both;margin-top:14px;padding:8px 12px;background:#f9fafb;border-radius:6px;font-size:10px;color:#555;font-style:italic">Notes : ${esc(s.notes)}</div>`:''}
-  <div class="ftr">
-    ${banqueFtr?banqueFtr+'<br>':''}
-    ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}<br>
-    ${cfg.mentionLegale||'Tout paiement tardif entraîne des pénalités légales.'}
-  </div>
-  </div></body></html>`;
 
-  var w = window.open('','_blank','width=900,height=700');
+    <!-- Document A4 preview -->
+    <div style="padding:24px;background:#f3f4f6;overflow-y:auto;max-height:80vh">
+    <div id="factureDoc" style="background:#fff;max-width:740px;margin:0 auto;padding:28px;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111;box-shadow:0 2px 12px rgba(0,0,0,.12);border-radius:4px">
+
+      <!-- En-tête -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a5c2a;padding-bottom:16px;margin-bottom:18px;gap:20px">
+        <div style="flex:1">
+          ${cfg.logoBase64?`<img src="${cfg.logoBase64}" style="max-height:60px;max-width:180px;margin-bottom:8px;display:block">`:
+            `<div style="font-size:22px;font-weight:800;color:#1a5c2a;letter-spacing:1px">${esc(cfg.nomExploitation||'MON ÉLEVAGE')}</div>`}
+          <div style="font-size:11px;color:#4b5563;line-height:1.8;margin-top:4px">
+            ${cfg.formeJuridique?esc(cfg.formeJuridique)+' — ':''}${cfg.capitalSocial?'Capital : '+cfg.capitalSocial+' '+ABREGE_DEVISE+'<br>':''} 
+            ${cfg.adresse?esc(cfg.adresse)+', ':''}${esc(cfg.ville||'')} ${esc(cfg.pays||'Côte d\'Ivoire')}<br>
+            ${cfg.telephone?'Tél : '+esc(cfg.telephone)+' ':''}${cfg.email?'· '+esc(cfg.email):''}<br>
+            ${cfg.nif?'NIF : <strong>'+esc(cfg.nif)+'</strong> ':''}${cfg.rccm?'· RCCM : <strong>'+esc(cfg.rccm)+'</strong>':''}
+          </div>
+        </div>
+        <div style="text-align:right;min-width:220px">
+          <div style="font-size:26px;font-weight:800;color:#1a5c2a;letter-spacing:2px">FACTURE</div>
+          <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:6px;padding:4px 14px;display:inline-block;font-weight:700;color:#166534;font-size:14px;margin:6px 0">
+            ${esc(s.numFacture||s.ref||'—')}
+          </div>
+          <div style="font-size:11px;color:#4b5563;line-height:1.9">
+            Date : <strong>${s.dateFacture||s.date||'—'}</strong><br>
+            ${s.dateEcheance?'Échéance : <strong style="color:'+(retard>0?'#dc2626':'#1a5c2a')+'">'+s.dateEcheance+'</strong><br>':''}
+            Mode : ${PAIE_MODE_LABEL[s.paie]||s.paie||'—'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Alerte retard -->
+      ${retard>0?`<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:11px;color:#991b1b">
+        ⚠️ <strong>Facture en retard de ${retard} jour(s)</strong> — Échéance dépassée le ${s.dateEcheance}
+      </div>`:''}
+
+      <!-- Parties -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:11px 13px;font-size:11px;line-height:1.8">
+          <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px">Émetteur</div>
+          <strong style="font-size:12px">${esc(cfg.nomExploitation||'—')}</strong><br>
+          ${cfg.adresse?esc(cfg.adresse)+'<br>':''}${cfg.ville?esc(cfg.ville)+', ':''}${esc(cfg.pays||'')}<br>
+          ${cfg.telephone?'Tél : '+esc(cfg.telephone)+'<br>':''}${cfg.email?esc(cfg.email):''} 
+        </div>
+        <div style="background:#f8f9fa;border:1px solid #e5e7eb;border-radius:8px;padding:11px 13px;font-size:11px;line-height:1.8">
+          <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px">Facturé à</div>
+          <strong style="font-size:12px">${esc(c.nom||'—')}</strong><br>
+          ${c.adresse?esc(c.adresse)+'<br>':''}${c.ville?esc(c.ville)+'<br>':''}
+          ${c.tel?'Tél : '+esc(c.tel)+'<br>':''}${c.email?esc(c.email):''}
+        </div>
+      </div>
+
+      <!-- Tableau lignes -->
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+        <thead><tr style="background:#1a5c2a;color:#fff">
+          <th style="padding:8px 10px;font-size:10px;text-align:left;font-weight:600;text-transform:uppercase;letter-spacing:.3px">Désignation</th>
+          <th style="padding:8px 10px;font-size:10px;text-align:center;font-weight:600;text-transform:uppercase">Qté</th>
+          <th style="padding:8px 10px;font-size:10px;text-align:center;font-weight:600;text-transform:uppercase">Unité</th>
+          <th style="padding:8px 10px;font-size:10px;text-align:right;font-weight:600;text-transform:uppercase">PU HT</th>
+          <th style="padding:8px 10px;font-size:10px;text-align:right;font-weight:600;text-transform:uppercase">Total HT</th>
+        </tr></thead>
+        <tbody>${lignesHTML}</tbody>
+      </table>
+
+      <!-- Totaux -->
+      <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
+        <div style="width:290px;font-size:12px">
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e5e7eb">
+            <span style="color:#4b5563">Sous-total HT</span>
+            <span><strong>${sousTotal.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</strong></span>
+          </div>
+          ${remisePct>0?`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#d97706">
+            <span>Remise ${remisePct}%</span><span>− ${remiseMt.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>`:''}
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e5e7eb">
+            <span style="color:#4b5563">Total HT</span>
+            <span>${totalHT.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e5e7eb">
+            <span style="color:#4b5563">${tvaApp&&totalHT>=SEUIL_TVA?'TVA '+tauxTva+'%':(cfg.mentionExoneration||'TVA exonérée')}</span>
+            <span>${tva.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e5e7eb">
+            <span style="color:#4b5563">Timbre fiscal</span>
+            <span>${timbre.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:2px solid #1a5c2a;margin-top:4px;font-size:15px;font-weight:800;color:#1a5c2a">
+            <span>TOTAL TTC</span><span>${totalTTC.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>
+          ${paye>0?`<div style="display:flex;justify-content:space-between;padding:4px 0;color:#2563eb">
+            <span>Versement(s) reçu(s)</span><span>− ${paye.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>`:''}
+          ${reste>0?`<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:700;color:#dc2626">
+            <span>NET À PAYER</span><span>${reste.toLocaleString('fr-FR')} ${ABREGE_DEVISE}</span>
+          </div>`:`<div style="text-align:center;padding:6px;color:#15803d;font-weight:700;font-size:12px">✅ FACTURE SOLDÉE</div>`}
+        </div>
+      </div>
+
+      <!-- Montant en lettres -->
+      <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:11px;font-style:italic;clear:both">
+        <strong>Arrêtée la présente facture à la somme de :</strong> ${montantLettres}
+      </div>
+
+      <!-- Coordonnées bancaires -->
+      ${cfg.nomBanque&&cfg.numeroCompte?`<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:11px">
+        🏦 <strong>Règlement à :</strong> ${esc(cfg.nomBanque)} | Compte : <strong>${esc(cfg.numeroCompte)}</strong>${cfg.codeBic?' | BIC : '+esc(cfg.codeBic):''}
+      </div>`:''}
+
+      <!-- Signatures + QR -->
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:20px;margin-top:30px;align-items:end">
+        <div style="border-top:1.5px solid #ccc;padding-top:10px;text-align:center;font-size:11px;color:#555">
+          Signature & Cachet émetteur<br><br><br>
+        </div>
+        <div style="border-top:1.5px solid #ccc;padding-top:10px;text-align:center;font-size:11px;color:#555">
+          Signature client<br><em style="font-size:10px;color:#888">(Bon pour accord)</em><br><br>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:8px;color:#9ca3af;margin-bottom:4px">Vérification</div>
+          <svg width="60" height="60" viewBox="0 0 60 60" style="border:1px solid #e5e7eb;border-radius:4px">
+            ${(function(){
+              let s='';const d=qrData;let h=0;
+              for(let i=0;i<d.length;i++){h=(h<<5)-h+d.charCodeAt(i);h=h&h;}
+              const cells=[];
+              for(let r=0;r<7;r++) for(let cc=0;cc<7;cc++){
+                const v=Math.abs((h*(r*7+cc+1))%3)===0;
+                if(v) cells.push('<rect x="'+(cc*8+2)+'" y="'+(r*8+2)+'" width="7" height="7" fill="#1a5c2a"/>');
+              }
+              cells.push('<rect x="2" y="2" width="20" height="20" fill="none" stroke="#1a5c2a" stroke-width="2"/>');
+              cells.push('<rect x="38" y="2" width="20" height="20" fill="none" stroke="#1a5c2a" stroke-width="2"/>');
+              cells.push('<rect x="2" y="38" width="20" height="20" fill="none" stroke="#1a5c2a" stroke-width="2"/>');
+              return cells.join('');
+            })()}
+          </svg>
+        </div>
+      </div>
+
+      <!-- Pied de page -->
+      <div style="border-top:1.5px solid #e5e7eb;margin-top:20px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.9">
+        ${cfg.nomExploitation||'AviNest Pro'} — ${cfg.adresse||''} ${cfg.ville||''} ${cfg.pays||'Côte d\'Ivoire'}<br>
+        ${cfg.nif?'NIF : '+cfg.nif+' ':''} ${cfg.rccm?'· RCCM : '+cfg.rccm:''}<br>
+        ${cfg.mentionLegale||MENTIONS_LEGALES.standard}<br>
+        Document généré le ${new Date().toLocaleDateString('fr-FR')} par SANIX AviNest Pro
+      </div>
+
+    </div><!-- fin factureDoc -->
+    </div><!-- fin preview container -->
+  </div>`;
+
+  document.body.appendChild(ov);
+}
+
+window.printFacturePro = async function(saleId){
+  const [sales, clients] = await Promise.all([getAll(S.SALES), getAll(S.CLIENTS)]);
+  const s = sales.find(x=>x.id===saleId);
+  if(!s){ toast('Commande introuvable','err'); return; }
+  const c = clients.find(x=>x.id===(s.clientId||s.client_id))||{};
+  const cfg = await getExploitationSettings();
+  buildAndPrintFacture(s,c,cfg);
+};
+
+function buildAndPrintFacture(s, c, cfg){
+  const tvaApp   = cfg.tvaApplicable !== false;
+  const tauxTva  = parseFloat(cfg.tauxTva||TVA_CI);
+  var lignes = s.lignes&&s.lignes.length?s.lignes:[{designation:s.produit||'Produit',qte:s.qty||0,unite:'u',prixUnit:s.prixUnit||0,totalLigne:s.totalHT||0}];
+  var sousTotal = lignes.reduce((a,l)=>a+Math.round((l.qte||0)*(l.prixUnit||0)),0)||s.totalHT||0;
+  var remisePct = parseFloat(s.remise||0);
+  var remiseMt  = Math.round(sousTotal*remisePct/100);
+  var totalHT   = Math.round(sousTotal-remiseMt);
+  var tva       = tvaApp&&totalHT>=SEUIL_TVA ? Math.round(totalHT*tauxTva/100) : 0;
+  var timbre    = TIMBRE_FISCAL;
+  var totalTTC  = totalHT+tva+timbre;
+  var paye      = getMontantPaye(s);
+  var reste     = Math.max(0,totalTTC-paye);
+  var retard    = s.dateEcheance?joursRetard(s.dateEcheance):0;
+  var condPaie  = (PAIE_DELAI_FACT[s.paie]===0)?'Comptant à la livraison':'Crédit '+(PAIE_DELAI_FACT[s.paie]||'?')+' jours';
+  var mentionTVA = tvaApp&&totalHT>=SEUIL_TVA
+    ? 'TVA '+tauxTva+'% : '+tva.toLocaleString('fr-FR')+' '+ABREGE_DEVISE
+    : (cfg.mentionExoneration||MENTIONS_LEGALES.exo_tva);
+  var montantLettres = montantEnLettres(totalTTC);
+  var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
+    ? 'Domiciliation : '+cfg.nomBanque+' | Compte : '+cfg.numeroCompte+(cfg.codeBic?' | BIC : '+cfg.codeBic:'') : '';
+
+  var rows = lignes.map(function(l,i){
+    var lt=Math.round((l.qte||0)*(l.prixUnit||0));
+    return '<tr style="background:'+(i%2?'#f9fafb':'#fff')+'"><td style="padding:7px 10px;font-size:12px">'+esc(l.designation||'—')+'</td><td style="padding:7px 10px;text-align:center">'+( l.qte||0)+'</td><td style="padding:7px 10px;text-align:center;color:#6b7280">'+esc(l.unite||'u')+'</td><td style="padding:7px 10px;text-align:right">'+( l.prixUnit||0).toLocaleString('fr-FR')+'</td><td style="padding:7px 10px;text-align:right;font-weight:600">'+lt.toLocaleString('fr-FR')+'</td></tr>';
+  }).join('');
+
+  var hist='';
+  if(s.paiements&&s.paiements.length){
+    hist='<div style="margin-top:20px;clear:both"><div style="font-size:11px;font-weight:700;margin-bottom:6px">Historique paiements</div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f0fdf4"><th style="padding:6px 10px;text-align:left;font-size:10px">Date</th><th style="padding:6px 10px;font-size:10px">Mode</th><th style="padding:6px 10px;font-size:10px">Référence</th><th style="padding:6px 10px;text-align:right;font-size:10px">Montant</th></tr></thead><tbody>'
+      +s.paiements.map(function(p){return '<tr><td style="padding:6px 10px">'+p.date+'</td><td style="padding:6px 10px">'+esc(p.mode||'')+'</td><td style="padding:6px 10px;color:#666">'+esc(p.ref||'—')+'</td><td style="padding:6px 10px;text-align:right;color:#059669;font-weight:600">'+p.montant.toLocaleString('fr-FR')+' F</td></tr>';}).join('')
+      +'</tbody></table></div>';
+  }
+
+  var html='<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Facture '+esc(s.numFacture||s.ref||'')+'</title>'
+  +'<style>*{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}'
+  +'.doc{max-width:210mm;margin:0 auto;padding:12mm}'
+  +'table{width:100%;border-collapse:collapse;margin-bottom:14px}'
+  +'thead th{background:#1a5c2a;color:#fff;padding:8px 10px;font-size:10px;text-align:left;font-weight:700;text-transform:uppercase}'
+  +'.tot{float:right;width:280px;font-size:12px}'
+  +'.trow{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee}'
+  +'.tttc{display:flex;justify-content:space-between;padding:8px 0;font-size:15px;font-weight:800;color:#1a5c2a;border-top:2px solid #1a5c2a}'
+  +'.tnap{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:700;color:#dc2626}'
+  +'.ftr{clear:both;border-top:1.5px solid #e5e7eb;margin-top:20px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8}'
+  +'@media print{@page{margin:10mm;size:A4}button{display:none}}'
+  +'</style></head><body><div class="doc">'
+  +'<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a5c2a;padding-bottom:14px;margin-bottom:16px;gap:20px">'
+  +buildEmetteurHeader(cfg)
+  +'<div style="text-align:right"><div style="font-size:26px;font-weight:800;color:#1a5c2a;letter-spacing:2px">FACTURE</div>'
+  +'<div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:6px;padding:3px 14px;display:inline-block;font-weight:700;color:#166534;font-size:14px;margin:5px 0">'+esc(s.numFacture||s.ref||'—')+'</div>'
+  +'<div style="font-size:11px;color:#4b5563;line-height:1.9">Date : <strong>'+( s.dateFacture||s.date||'—')+'</strong><br>'
+  +(s.dateEcheance?'Échéance : <strong style="color:'+(retard>0?'#dc2626':'#1a5c2a')+'">'+s.dateEcheance+'</strong><br>':'')
+  +'Mode : '+condPaie+'</div></div></div>'
+  +(retard>0?'<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:7px 14px;margin-bottom:14px;font-size:11px;color:#991b1b">⚠️ Facture en retard de <strong>'+retard+' jour(s)</strong></div>':'')
+  +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">'
+  +'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:11px;line-height:1.8">'
+  +'<div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:3px">Émetteur</div>'
+  +'<strong>'+esc(cfg.nomExploitation||'—')+'</strong><br>'
+  +(cfg.adresse?esc(cfg.adresse)+'<br>':'')+(cfg.ville?esc(cfg.ville)+', ':'')+esc(cfg.pays||'')+'<br>'
+  +(cfg.telephone?'Tél : '+esc(cfg.telephone)+'<br>':'')+(cfg.email?esc(cfg.email)+'<br>':'')
+  +(cfg.nif||cfg.rccm?'<span style="font-size:9px;color:#6b7280">'+(cfg.nif?'NIF : '+cfg.nif:'')+(cfg.rccm?' · RCCM : '+cfg.rccm:'')+'</span>':'')
+  +'</div>'
+  +'<div style="background:#f8f9fa;border:1px solid #e5e7eb;border-radius:8px;padding:10px 13px;font-size:11px;line-height:1.8">'
+  +'<div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:3px">Facturé à</div>'
+  +'<strong>'+esc(c.nom||'—')+'</strong><br>'
+  +(c.adresse?esc(c.adresse)+'<br>':'')+(c.ville?esc(c.ville)+'<br>':'')+(c.tel?'Tél : '+esc(c.tel):'')
+  +'</div></div>'
+  +'<table><thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th>Unité</th><th style="text-align:right">PU HT</th><th style="text-align:right">Total HT</th></tr></thead><tbody>'+rows+'</tbody></table>'
+  +'<div class="tot">'
+  +'<div class="trow"><span>Sous-total HT</span><span><strong>'+sousTotal.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</strong></span></div>'
+  +(remisePct>0?'<div class="trow" style="color:#d97706"><span>Remise '+remisePct+'%</span><span>− '+remiseMt.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</span></div>':'')
+  +'<div class="trow"><span>Total HT</span><span>'+totalHT.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</span></div>'
+  +'<div class="trow"><span>'+mentionTVA+'</span><span>'+tva.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</span></div>'
+  +'<div class="trow"><span>Timbre fiscal</span><span>'+timbre+' '+ABREGE_DEVISE+'</span></div>'
+  +'<div class="tttc"><span>TOTAL TTC</span><span>'+totalTTC.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</span></div>'
+  +(paye>0?'<div class="trow" style="color:#2563eb"><span>Acompte(s)</span><span>− '+paye.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</span></div>':'')
+  +(reste>0?'<div class="tnap"><span>NET À PAYER</span><span>'+reste.toLocaleString('fr-FR')+' '+ABREGE_DEVISE+'</span></div>':'<div style="color:#059669;font-weight:700;padding:6px 0;text-align:center;font-size:12px">✅ FACTURE SOLDÉE</div>')
+  +'</div>'
+  +hist
+  +'<div style="clear:both;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:8px 14px;margin-top:14px;font-size:11px;font-style:italic">Arrêtée la présente facture à la somme de : <strong>'+montantLettres+'</strong></div>'
+  +(banqueFtr?'<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 14px;margin-top:10px;font-size:11px">🏦 '+banqueFtr+'</div>':'')
+  +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px">'
+  +'<div style="border-top:1.5px solid #ccc;padding-top:10px;text-align:center;font-size:11px;color:#555">Signature & Cachet émetteur<br><br><br></div>'
+  +'<div style="border-top:1.5px solid #ccc;padding-top:10px;text-align:center;font-size:11px;color:#555">Signature client<br><em style="font-size:10px;color:#888">(Bon pour accord)</em><br><br></div>'
+  +'</div>'
+  +'<div class="ftr">'
+  +esc(cfg.nomExploitation||'AviNest Pro')+' — '+esc(cfg.adresse||'')+' '+esc(cfg.ville||'')+' '+esc(cfg.pays||'Côte d\'Ivoire')+'<br>'
+  +(cfg.nif?'NIF : '+cfg.nif+' ':'')+(cfg.rccm?'· RCCM : '+cfg.rccm+'<br>':'<br>')
+  +(banqueFtr?banqueFtr+'<br>':'')
+  +(cfg.mentionLegale||MENTIONS_LEGALES.standard)+'<br>'
+  +'Document SANIX AviNest Pro — Édité le '+new Date().toLocaleDateString('fr-FR')
+  +'</div></div></body></html>';
+
+  var w=window.open('','_blank','width=960,height=800');
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 600);
+  setTimeout(function(){w.print();},600);
 }
 
 window.printFacture = async function(id){
-  var sales   = await getAll(S.SALES);
-  var clients = await getAll(S.CLIENTS);
-  var s = sales.find(x=>x.id===id);
-  if(!s){ toast('Vente introuvable','err'); return; }
-  var c   = clients.find(x=>x.id===s.clientId)||{};
-  var cfg = await getExploitationSettings();
-  buildAndPrintFacture(s, c, cfg);
+  await openFacturePreview(id);
 };
 window.printBL = async function(id){
   var sales   = await getAll(S.SALES);
