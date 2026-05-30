@@ -12099,6 +12099,7 @@ async function renderRapports(ca){
   <div class="tab-nav">
     <button class="tab-btn active" id="rptab-etats" onclick="switchRapTab('etats')">🖨️ États & Impression</button>
     <button class="tab-btn" id="rptab-envoi" onclick="switchRapTab('envoi')">📨 Rapports & Envoi auto</button>
+    <button class="tab-btn" id="rptab-alertes" onclick="switchRapTab('alertes')">💬 Alertes WhatsApp</button>
   </div>
 
   <!-- TAB: ÉTATS & IMPRESSION -->
@@ -12277,6 +12278,13 @@ async function renderRapports(ca){
       </div>
     </div>
 
+  </div>
+
+  <!-- TAB: ALERTES WHATSAPP -->
+  <div id="rptab-alertes-content" class="tab-content" style="display:none;max-width:860px;margin:0 auto">
+    <div id="alertesWAContent"><div style="text-align:center;padding:40px;color:var(--color-text-tertiary)"><i class="fas fa-spinner fa-spin"></i> Chargement...</div></div>
+  </div>
+
   </div>`;
 
   // Charger les lots dans le filtre
@@ -12293,13 +12301,414 @@ async function renderRapports(ca){
   document.getElementById('preset-mois')?.classList.add('active');
 }
 
+// ══════════════════════════════════════════════════════════════
+//  MOTEUR D'ALERTES WHATSAPP — SANIX AviNest Pro
+//  Alertes : mortalité · vaccins · stock critique · bilan 18h
+// ══════════════════════════════════════════════════════════════
+
+// Config alertes (localStorage)
+const ALERT_CFG_KEY = 'sanix_alert_cfg';
+function getAlertCfg(){
+  try { return JSON.parse(localStorage.getItem(ALERT_CFG_KEY)||'{}'); }
+  catch(e){ return {}; }
+}
+function saveAlertCfg(cfg){ localStorage.setItem(ALERT_CFG_KEY, JSON.stringify(cfg)); }
+
+// Historique alertes (localStorage, 50 max)
+const ALERT_HIST_KEY = 'sanix_alert_hist';
+function getAlertHist(){ try{return JSON.parse(localStorage.getItem(ALERT_HIST_KEY)||'[]');}catch(e){return[];} }
+function addAlertHist(entry){
+  const h = getAlertHist();
+  h.unshift({...entry, ts: new Date().toISOString()});
+  localStorage.setItem(ALERT_HIST_KEY, JSON.stringify(h.slice(0,50)));
+}
+
+// ── Génération des messages d'alerte ────────────────────────
+
+async function buildAlerteMortalite(lots, mortRecords){
+  const today = new Date().toISOString().slice(0,10);
+  const alertes = [];
+  for(const lot of lots){
+    const mortJ = mortRecords.filter(m=>(m.flockId||m.flock_id)===lot.id && m.date===today);
+    const nbMorts = mortJ.reduce((s,m)=>s+(m.nbMorts||m.nb_morts||0),0);
+    const mortCum = mortRecords.filter(m=>(m.flockId||m.flock_id)===lot.id).reduce((s,m)=>s+(m.nbMorts||m.nb_morts||0),0);
+    const mortPct = lot.initialStock>0 ? (mortCum/lot.initialStock*100) : 0;
+    const cfg = getAlertCfg();
+    const seuil = parseFloat(cfg.seuilMortalite||3);
+    if(mortPct > seuil || nbMorts >= parseInt(cfg.seuilMortsJour||5)){
+      alertes.push({lot:lot.nom, nbMorts, mortPct:mortPct.toFixed(1), vivants:lot.initialStock-mortCum});
+    }
+  }
+  if(!alertes.length) return null;
+  let msg = '🚨 *ALERTE MORTALITÉ — SANIX AviNest Pro*\n';
+  msg += '━━━━━━━━━━━━━━━━\n';
+  msg += `📅 ${new Date().toLocaleDateString('fr-FR')}\n\n`;
+  alertes.forEach(a=>{
+    msg += `🐔 *${a.lot}*\n`;
+    msg += `• Morts aujourd'hui : *${a.nbMorts}* têtes\n`;
+    msg += `• Taux mortalité cumulé : *${a.mortPct}%*\n`;
+    msg += `• Effectif vivant : *${a.vivants}* têtes\n\n`;
+  });
+  msg += '⚠️ Vérifier immédiatement les conditions d\'élevage.\n';
+  msg += '_Alerte automatique SANIX AviNest Pro_';
+  return msg;
+}
+
+async function buildAlerteVaccins(lots, tasks){
+  const today = new Date();
+  const in3j = new Date(); in3j.setDate(today.getDate()+3);
+  const todayStr = today.toISOString().slice(0,10);
+  const in3jStr = in3j.toISOString().slice(0,10);
+  const rappels = [];
+  lots.forEach(lot=>{
+    const taskLot = tasks.filter(t=>(t.flockId||t.flock_id)===lot.id);
+    taskLot.forEach(t=>{
+      const d = t.plannedDate||t.date_prevue||'';
+      if(!t.realizedDate&&!t.date_realisee&&d>=todayStr&&d<=in3jStr){
+        const jours = Math.ceil((new Date(d)-today)/(1000*3600*24));
+        rappels.push({lot:lot.nom, acte:t.action||t.acte||'Vaccination', date:d, jours});
+      }
+    });
+    // Retards
+    taskLot.forEach(t=>{
+      const d = t.plannedDate||t.date_prevue||'';
+      if(!t.realizedDate&&!t.date_realisee&&d<todayStr){
+        rappels.push({lot:lot.nom, acte:t.action||t.acte||'Vaccination', date:d, jours:-Math.ceil((today-new Date(d))/(1000*3600*24))});
+      }
+    });
+  });
+  if(!rappels.length) return null;
+  let msg = '💉 *RAPPEL VACCINATION — SANIX AviNest Pro*\n';
+  msg += '━━━━━━━━━━━━━━━━\n';
+  msg += `📅 ${new Date().toLocaleDateString('fr-FR')}\n\n`;
+  const retards = rappels.filter(r=>r.jours<0);
+  const avenir  = rappels.filter(r=>r.jours>=0);
+  if(retards.length){
+    msg += `🔴 *EN RETARD (${retards.length})*\n`;
+    retards.forEach(r=>{ msg += `• *${r.lot}* — ${r.acte} (retard ${Math.abs(r.jours)}j)\n`; });
+    msg += '\n';
+  }
+  if(avenir.length){
+    msg += `⚠️ *À VENIR (${avenir.length})*\n`;
+    avenir.forEach(r=>{ msg += `• *${r.lot}* — ${r.acte} le ${r.date} (dans ${r.jours}j)\n`; });
+  }
+  msg += '\n_Alerte automatique SANIX AviNest Pro_';
+  return msg;
+}
+
+async function buildAlerteStock(produits, mvts){
+  const critiques = [];
+  const stock = {};
+  mvts.forEach(m=>{
+    const pid = m.produit_id||m.produitId;
+    if(!pid) return;
+    if(!stock[pid]) stock[pid]=0;
+    if(m.type==='entree'||m.type==='inventaire') stock[pid]+= parseFloat(m.quantite||m.qty||0);
+    else if(m.type==='sortie') stock[pid]-= parseFloat(m.quantite||m.qty||0);
+  });
+  produits.forEach(p=>{
+    const qte = stock[p.id]||0;
+    const seuil = parseFloat(p.seuil||p.seuil_alerte||p.seuilAlerte||0);
+    if(seuil>0 && qte<=seuil){
+      critiques.push({nom:p.nom, qte:Math.round(qte*10)/10, seuil, unite:p.unite||'kg', critique:qte<=0});
+    }
+  });
+  if(!critiques.length) return null;
+  let msg = '📦 *ALERTE STOCK CRITIQUE — SANIX AviNest Pro*\n';
+  msg += '━━━━━━━━━━━━━━━━\n';
+  msg += `📅 ${new Date().toLocaleDateString('fr-FR')}\n\n`;
+  const ruptures = critiques.filter(c=>c.critique);
+  const faibles  = critiques.filter(c=>!c.critique);
+  if(ruptures.length){
+    msg += `🔴 *RUPTURE DE STOCK (${ruptures.length})*\n`;
+    ruptures.forEach(p=>{ msg += `• *${p.nom}* : ${p.qte} ${p.unite} (seuil : ${p.seuil})\n`; });
+    msg += '\n';
+  }
+  if(faibles.length){
+    msg += `⚠️ *STOCK FAIBLE (${faibles.length})*\n`;
+    faibles.forEach(p=>{ msg += `• *${p.nom}* : ${p.qte} ${p.unite} (seuil : ${p.seuil})\n`; });
+  }
+  msg += '\n🔔 Commander rapidement pour éviter toute rupture.\n';
+  msg += '_Alerte automatique SANIX AviNest Pro_';
+  return msg;
+}
+
+async function buildBilanJournalier(){
+  const [lots,eggs,growths,mortalites,feeds,mvts,produits,sales,tresoData] = await Promise.all([
+    getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.GROWTH_PROD),
+    getAll(S.MORTALITE), getAll(S.FEEDING), getAll(S.MVTS),
+    getAll(S.PRODUITS), getAll(S.SALES), getAll(S.TRESORERIE)
+  ]);
+  const today = new Date().toISOString().slice(0,10);
+  const lotsActifs = lots.filter(l=>l.statut==='actif'||!l.statut);
+
+  // Production œufs du jour
+  const oeufsDuJour = eggs.filter(e=>e.date===today).reduce((s,e)=>s+(e.eggCount||0),0);
+  // Mortalités du jour
+  const mortsDuJour = mortalites.filter(m=>m.date===today).reduce((s,m)=>s+(m.nbMorts||0),0);
+  // Aliment distribué
+  const alimentDuJour = feeds.filter(f=>f.date===today).reduce((s,f)=>s+(f.quantityKg||0),0);
+  // Ventes du jour
+  const ventesDuJour = sales.filter(s=>s.date===today);
+  const caJour = ventesDuJour.reduce((s,v)=>s+(v.totalHT||0),0);
+  // Trésorerie
+  const recettesJ = tresoData.filter(t=>t.date===today&&(t.type==='recette'||t.montant>0)).reduce((s,t)=>s+parseFloat(t.montant||0),0);
+  const depensesJ = tresoData.filter(t=>t.date===today&&t.type==='depense').reduce((s,t)=>s+parseFloat(t.montant||0),0);
+  // Stocks critiques
+  const stock = {};
+  mvts.forEach(m=>{const pid=m.produit_id||m.produitId;if(!pid)return;if(!stock[pid])stock[pid]=0;if(m.type==='entree')stock[pid]+=parseFloat(m.quantite||0);else if(m.type==='sortie')stock[pid]-=parseFloat(m.quantite||0);});
+  const critiques = produits.filter(p=>{const s=parseFloat(p.seuil||p.seuil_alerte||0);return s>0&&(stock[p.id]||0)<=s;});
+
+  let msg = '📊 *BILAN JOURNALIER — SANIX AviNest Pro*\n';
+  msg += '━━━━━━━━━━━━━━━━\n';
+  msg += `📅 *${new Date().toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}*\n`;
+  msg += `🕐 Généré à ${new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}\n\n`;
+  msg += `🐔 *ÉLEVAGE*\n`;
+  msg += `• Lots actifs : ${lotsActifs.length}\n`;
+  msg += `• 🥚 Œufs collectés : *${oeufsDuJour.toLocaleString('fr-FR')}* unités\n`;
+  msg += `• 💀 Mortalités : *${mortsDuJour}* têtes${mortsDuJour>5?' ⚠️':''}\n`;
+  msg += `• 🌾 Aliment distribué : *${Math.round(alimentDuJour)} kg*\n\n`;
+  msg += `🛒 *VENTES*\n`;
+  msg += `• Commandes du jour : *${ventesDuJour.length}*\n`;
+  msg += `• CA du jour : *${caJour.toLocaleString('fr-FR')} FCFA*\n\n`;
+  msg += `💰 *FINANCE*\n`;
+  msg += `• Recettes : *${recettesJ.toLocaleString('fr-FR')} FCFA*\n`;
+  msg += `• Dépenses : *${depensesJ.toLocaleString('fr-FR')} FCFA*\n`;
+  const solde = recettesJ-depensesJ;
+  msg += `• Solde net : *${solde>=0?'✅':'🔴'} ${solde.toLocaleString('fr-FR')} FCFA*\n`;
+  if(critiques.length){
+    msg += `\n📦 *STOCKS*\n`;
+    msg += `• ⚠️ Articles en alerte : *${critiques.length}*\n`;
+    critiques.slice(0,3).forEach(p=>{ msg += `  - ${p.nom}\n`; });
+    if(critiques.length>3) msg += `  ...et ${critiques.length-3} autre(s)\n`;
+  }
+  msg += `\n_Bilan automatique SANIX AviNest Pro_`;
+  return msg;
+}
+
+// ── Envoi d'une alerte ────────────────────────────────────────
+async function envoyerAlerteWA(type){
+  const cfg = getAlertCfg();
+  const numero = cfg.numeroWA;
+  if(!numero){ toast('Configurez un numéro WhatsApp dans les paramètres','err'); return; }
+  let msg = null;
+  if(type==='mortalite'){
+    const [lots,morts] = await Promise.all([getAll(S.FLOCKS),getAll(S.MORTALITE)]);
+    msg = await buildAlerteMortalite(lots,morts);
+    if(!msg){ toast('Aucune alerte mortalité à envoyer','err'); return; }
+  } else if(type==='vaccins'){
+    const [lots,tasks] = await Promise.all([getAll(S.FLOCKS),getAll(S.PROPHY)]);
+    msg = await buildAlerteVaccins(lots,tasks);
+    if(!msg){ toast('Aucun rappel vaccin en cours','err'); return; }
+  } else if(type==='stock'){
+    const [prods,mvts] = await Promise.all([getAll(S.PRODUITS),getAll(S.MVTS)]);
+    msg = await buildAlerteStock(prods,mvts);
+    if(!msg){ toast('Aucun stock critique détecté','err'); return; }
+  } else if(type==='bilan'){
+    msg = await buildBilanJournalier();
+  }
+  if(!msg){ toast('Aucune alerte à envoyer','err'); return; }
+  addAlertHist({type, numero, extrait:msg.slice(0,80)+'...'});
+  envoyerWhatsApp(msg, numero);
+  toast('✅ WhatsApp ouvert avec le message — validez l\'envoi');
+  renderAlertesWA();
+}
+
+// ── Vérification automatique toutes les minutes ───────────────
+let _alertInterval = null;
+function demarrerMoteurAlertes(){
+  if(_alertInterval) clearInterval(_alertInterval);
+  _alertInterval = setInterval(async()=>{
+    const cfg = getAlertCfg();
+    if(!cfg.numeroWA) return;
+    const now = new Date();
+    const hhmm = now.toTimeString().slice(0,5);
+
+    // Bilan journalier
+    if(cfg.bilanAuto && hhmm===cfg.heureBilan){
+      const msg = await buildBilanJournalier();
+      if(msg){ envoyerWhatsApp(msg,cfg.numeroWA); addAlertHist({type:'bilan_auto',numero:cfg.numeroWA,extrait:'Bilan automatique '+hhmm}); }
+    }
+    // Alerte vaccins
+    if(cfg.vaccinsAuto && hhmm===cfg.heureVaccins){
+      const [lots,tasks] = await Promise.all([getAll(S.FLOCKS),getAll(S.PROPHY)]);
+      const msg = await buildAlerteVaccins(lots,tasks);
+      if(msg){ envoyerWhatsApp(msg,cfg.numeroWA); addAlertHist({type:'vaccins_auto',numero:cfg.numeroWA,extrait:'Rappel vaccins auto'}); }
+    }
+    // Alerte stock
+    if(cfg.stockAuto && hhmm===cfg.heureStock){
+      const [prods,mvts] = await Promise.all([getAll(S.PRODUITS),getAll(S.MVTS)]);
+      const msg = await buildAlerteStock(prods,mvts);
+      if(msg){ envoyerWhatsApp(msg,cfg.numeroWA); addAlertHist({type:'stock_auto',numero:cfg.numeroWA,extrait:'Stock critique auto'}); }
+    }
+  }, 60000); // vérif chaque minute
+}
+// Démarrer au chargement
+if(window.PRODUCTION_MODE) setTimeout(demarrerMoteurAlertes, 5000);
+
+// ── Rendu du panneau alertes ─────────────────────────────────
+async function renderAlertesWA(){
+  const el = document.getElementById('alertesWAContent');
+  if(!el) return;
+  const cfg = getAlertCfg();
+  const hist = getAlertHist();
+
+  // Vérifier les alertes actives en temps réel
+  const [lots,morts,tasks,prods,mvts] = await Promise.all([
+    getAll(S.FLOCKS),getAll(S.MORTALITE),getAll(S.PROPHY),getAll(S.PRODUITS),getAll(S.MVTS)
+  ]);
+  const today = new Date().toISOString().slice(0,10);
+
+  // Compter les alertes actives
+  const nbMortsJ = morts.filter(m=>m.date===today).reduce((s,m)=>s+(m.nbMorts||0),0);
+  const stock={};
+  mvts.forEach(m=>{const pid=m.produit_id||m.produitId;if(!pid)return;if(!stock[pid])stock[pid]=0;if(m.type==='entree')stock[pid]+=parseFloat(m.quantite||0);else if(m.type==='sortie')stock[pid]-=parseFloat(m.quantite||0);});
+  const nbStockCrit = prods.filter(p=>{const s=parseFloat(p.seuil||p.seuil_alerte||0);return s>0&&(stock[p.id]||0)<=s;}).length;
+  const today2=new Date();
+  const nbVaccRetard = tasks.filter(t=>!t.realizedDate&&!t.date_realisee&&(t.plannedDate||t.date_prevue||'')<today).length;
+  const nbVaccSoon   = tasks.filter(t=>{const d=t.plannedDate||t.date_prevue||'';const j=Math.ceil((new Date(d)-today2)/(1000*3600*24));return !t.realizedDate&&!t.date_realisee&&j>=0&&j<=3;}).length;
+
+  const typeInfo = {
+    mortalite:  {ico:'💀', lbl:'Mortalité',        col:'#dc2626', bg:'#fee2e2',  nb:nbMortsJ,    unit:'mort(s) aujourd\'hui'},
+    vaccins:    {ico:'💉', lbl:'Vaccins',           col:'#7c3aed', bg:'#f3e8ff',  nb:nbVaccRetard+nbVaccSoon, unit:'rappel(s) à venir/retard'},
+    stock:      {ico:'📦', lbl:'Stock critique',    col:'#d97706', bg:'#fef9c3',  nb:nbStockCrit, unit:'article(s) en alerte'},
+    bilan:      {ico:'📊', lbl:'Bilan journalier',  col:'#0891b2', bg:'#e0f7fa',  nb:null,        unit:'envoi manuel'},
+  };
+
+  el.innerHTML = `
+  <!-- Status moteur -->
+  <div style="background:${cfg.numeroWA?'#dcfce7':'#fee2e2'};border:.5px solid ${cfg.numeroWA?'#86efac':'#fca5a5'};border-radius:var(--border-radius-md);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px">
+    <span style="font-size:20px">${cfg.numeroWA?'🟢':'🔴'}</span>
+    <div>
+      <strong style="color:${cfg.numeroWA?'#15803d':'#991b1b'}">${cfg.numeroWA?'Moteur d\'alertes actif':'Moteur inactif'}</strong>
+      <div style="font-size:11px;color:var(--color-text-secondary)">${cfg.numeroWA?'Numéro : '+cfg.numeroWA+' — Vérification toutes les minutes':'Configurez un numéro WhatsApp pour activer les alertes'}</div>
+    </div>
+  </div>
+
+  <!-- Alertes actives -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px">
+    ${Object.entries(typeInfo).map(([type,info])=>`
+    <div style="background:${info.nb===null||info.nb>0?info.bg:'var(--color-background-secondary)'};border:.5px solid ${info.nb===null||info.nb>0?'rgba(0,0,0,.1)':'var(--color-border-tertiary)'};border-radius:var(--border-radius-md);padding:12px">
+      <div style="font-size:22px;margin-bottom:4px">${info.ico}</div>
+      <div style="font-size:12px;font-weight:500;color:var(--color-text-primary)">${info.lbl}</div>
+      ${info.nb!==null?`<div style="font-size:18px;font-weight:500;color:${info.nb>0?info.col:'#15803d'};margin:4px 0">${info.nb>0?info.nb:'✅'}</div>
+      <div style="font-size:10px;color:var(--color-text-secondary)">${info.nb>0?info.unit:'Tout est normal'}</div>`:
+      '<div style="font-size:11px;color:var(--color-text-secondary);margin:4px 0">Rapport complet</div>'}
+      <button onclick="envoyerAlerteWA('${type}')" style="width:100%;margin-top:8px;background:#25D366;color:#fff;border:none;border-radius:var(--border-radius-md);padding:5px 8px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px">
+        <i class="fab fa-whatsapp"></i> Envoyer maintenant
+      </button>
+    </div>`).join('')}
+  </div>
+
+  <!-- Configuration -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;border-radius:var(--r) var(--r) 0 0">
+      <span><i class="fab fa-whatsapp"></i> Configuration des alertes automatiques</span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">
+        <div class="fg">
+          <label>📱 Numéro WhatsApp principal *</label>
+          <input type="tel" id="aWANumero" value="${cfg.numeroWA||''}" placeholder="+225 07 79 18 10 75">
+          <div style="font-size:10px;color:var(--color-text-tertiary);margin-top:3px">Format international : +225XXXXXXXXX</div>
+        </div>
+        <div class="fg">
+          <label>📱 Numéro secondaire (manager)</label>
+          <input type="tel" id="aWANumero2" value="${cfg.numeroWA2||''}" placeholder="+225 07 XX XX XX">
+        </div>
+      </div>
+
+      <div style="margin:14px 0;font-size:11px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.5px">Seuils d'alerte</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:14px">
+        <div class="fg"><label>💀 Seuil mortalité cumulée (%)</label>
+          <input type="number" id="aSeuilMort" value="${cfg.seuilMortalite||3}" min="0" max="20" step="0.5">
+        </div>
+        <div class="fg"><label>💀 Nb morts/jour déclenchant alerte</label>
+          <input type="number" id="aSeuilMortsJ" value="${cfg.seuilMortsJour||5}" min="1" step="1">
+        </div>
+        <div class="fg"><label>⚠️ Rappel vaccin X jours avant</label>
+          <input type="number" id="aJoursVaccin" value="${cfg.joursVaccin||3}" min="1" max="14" step="1">
+        </div>
+      </div>
+
+      <div style="margin:14px 0;font-size:11px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.5px">Automatisation (heure d'envoi)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+        ${[
+          ['bilanAuto','heureBilan','18:00','📊 Bilan journalier auto'],
+          ['vaccinsAuto','heureVaccins','07:00','💉 Rappel vaccins auto'],
+          ['stockAuto','heureStock','08:00','📦 Alerte stock auto'],
+        ].map(([chk,heureId,def,lbl])=>`
+        <div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;cursor:pointer">
+            <input type="checkbox" id="a${chk}" ${cfg[chk]?'checked':''} style="width:14px;height:14px">&nbsp;${lbl}
+          </label>
+          <div style="margin-top:6px">
+            <input type="time" id="a${heureId}" value="${cfg[heureId]||def}" style="font-size:12px;padding:4px 8px;border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary)">
+          </div>
+        </div>`).join('')}
+      </div>
+
+      <div style="margin-top:14px;display:flex;gap:8px">
+        <button class="btn btn-p" onclick="sauvegarderCfgAlertes()"><i class="fas fa-save"></i> Enregistrer</button>
+        <button class="btn btn-gh" onclick="testerToutesAlertes()"><i class="fas fa-vial"></i> Tester tout maintenant</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Historique -->
+  <div class="card">
+    <div class="card-hd"><span>📋 Historique des alertes envoyées</span><span style="font-size:11px;color:var(--color-text-tertiary)">${hist.length} entrée(s)</span></div>
+    <div class="card-bd tbl-wrap">
+      ${hist.length ? `<table class="tbl" style="font-size:12px">
+        <thead><tr><th>Date/Heure</th><th>Type</th><th>Numéro</th><th>Aperçu</th></tr></thead>
+        <tbody>${hist.slice(0,20).map(h=>{
+          const type_labels={mortalite:'💀 Mortalité',vaccins:'💉 Vaccins',stock:'📦 Stock',bilan:'📊 Bilan',bilan_auto:'📊 Bilan auto',vaccins_auto:'💉 Vaccins auto',stock_auto:'📦 Stock auto'};
+          return `<tr>
+            <td style="color:var(--color-text-tertiary);white-space:nowrap;font-size:11px">${new Date(h.ts).toLocaleString('fr-FR')}</td>
+            <td>${type_labels[h.type]||h.type}</td>
+            <td style="font-size:11px">${h.numero||'—'}</td>
+            <td style="font-size:10px;color:var(--color-text-tertiary);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.extrait||'—'}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>` : '<div style="text-align:center;color:var(--color-text-tertiary);padding:20px;font-size:13px">Aucune alerte envoyée pour l\'instant</div>'}
+    </div>
+  </div>`;
+}
+
+window.sauvegarderCfgAlertes = function(){
+  const cfg = {
+    numeroWA:       document.getElementById('aWANumero')?.value.trim(),
+    numeroWA2:      document.getElementById('aWANumero2')?.value.trim(),
+    seuilMortalite: document.getElementById('aSeuilMort')?.value,
+    seuilMortsJour: document.getElementById('aSeuilMortsJ')?.value,
+    joursVaccin:    document.getElementById('aJoursVaccin')?.value,
+    bilanAuto:      document.getElementById('abilanAuto')?.checked,
+    heureBilan:     document.getElementById('aheureBilan')?.value,
+    vaccinsAuto:    document.getElementById('avaccinsAuto')?.checked,
+    heureVaccins:   document.getElementById('aheureVaccins')?.value,
+    stockAuto:      document.getElementById('astockAuto')?.checked,
+    heureStock:     document.getElementById('aheureStock')?.value,
+  };
+  saveAlertCfg(cfg);
+  toast('✅ Configuration sauvegardée');
+  if(cfg.numeroWA) demarrerMoteurAlertes();
+  renderAlertesWA();
+};
+
+window.testerToutesAlertes = async function(){
+  const types = ['mortalite','vaccins','stock','bilan'];
+  for(const type of types){ await envoyerAlerteWA(type); }
+};
+
 // ── Switcher onglets rapports ──
 window.switchRapTab = function(tab){
-  ['etats','envoi'].forEach(t=>{
-    document.getElementById('rptab-'+t+'-content').style.display = t===tab?'':'none';
+  ['etats','envoi','alertes'].forEach(t=>{
+    const content = document.getElementById('rptab-'+t+'-content');
+    if(content) content.style.display = t===tab?'':'none';
     const btn = document.getElementById('rptab-'+t);
     if(btn){ btn.classList.toggle('active', t===tab); }
   });
+  if(tab==='alertes') renderAlertesWA();
 };
 
 window.setRapportPreset = function(preset, dmin, dmax){
