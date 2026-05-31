@@ -1911,6 +1911,8 @@ const IDB_ONLY = new Set([
   'protocols','prophylaxis_tasks','nutrition_protocols',
   'buildings','lines','activity_log','slaughter',
   'budget_lignes',
+  // Fabrication : colonne ingredients JSONB non encore migrée → IDB local
+  'fab_recettes','fab_norms',
 ]);
 
 let _supaOnline = false;
@@ -13119,9 +13121,13 @@ window.saveRecette = async function(){
     } else {
       await addRec(S.FAB_RECETTES,data);
     }
+    // Mémoriser l'onglet actif avant re-render
+    const _activeTab = (()=>{ const b=document.querySelector('.fab-tab-btn.active'); return b?b.dataset.tab:'recettes'; })();
     closeOverlay('ovRecette');
     toast(id?'Recette mise à jour':'Recette créée ✓');
     await renderFab(document.getElementById('contentArea'));
+    // Restaurer l'onglet — toujours rester sur "Recettes" après save
+    if(typeof switchFabTab === 'function') switchFabTab(_activeTab==='normes'?'recettes':_activeTab);
   } finally {
     if(btn) btn.disabled = false;
   }
@@ -13132,6 +13138,7 @@ window.delRecette=async function(id){
   await delRec(S.FAB_RECETTES,id);
   toast('Recette supprimée');
   await renderFab(document.getElementById('contentArea'));
+  if(typeof switchFabTab === 'function') switchFabTab('recettes');
 };
 
 // ── Modal Ordre de Fabrication ──
