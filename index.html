@@ -1925,44 +1925,118 @@ async function _supaFetch(method, table, body=null, params='') {
   return txt ? JSON.parse(txt) : [];
 }
 
-// ── Sync offline queue ──────────────────────────────────────
+// ── Sync offline queue — v2 robuste ────────────────────────
 async function _flushQ() {
   if (!_offlineQ.length) return;
   console.log(`[SYNC] ${_offlineQ.length} opération(s) en attente...`);
+  const failed = [];
   while (_offlineQ.length) {
     const op = _offlineQ[0];
     try {
-      await _supaFetch(op.m, op.t, op.b, op.p||'');
+      // Nettoyer les champs internes avant envoi
+      const body = op.b ? Object.assign({}, op.b) : null;
+      if (body) {
+        delete body._localId; delete body._offline; delete body._supaId;
+        delete body.is_demo; delete body.isDemo;
+        delete body.ingredients; delete body.lignes; delete body.lines; delete body.items;
+      }
+      await _supaFetch(op.m, op.t, body ? _toSnake(body) : null, op.p||'');
       _offlineQ.shift();
       localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
-    } catch(e) { console.error('[SYNC]', e.message); break; }
+    } catch(e) {
+      console.error('[SYNC] Erreur op:', op.m, op.t, e.message);
+      // Si erreur 404 table ou 409 conflit → ignorer cette opération
+      if (e.message.includes('404') || e.message.includes('409') ||
+          e.message.includes('does not exist') || e.message.includes('duplicate')) {
+        console.warn('[SYNC] Op ignorée (table/conflit):', op.t);
+        _offlineQ.shift();
+        localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
+        continue;
+      }
+      // Autres erreurs (réseau) → arrêter et réessayer plus tard
+      break;
+    }
   }
-  console.log('[SYNC] ✅ Terminé');
+  if (_offlineQ.length === 0) {
+    console.log('[SYNC] ✅ Queue vidée');
+    if (typeof _showConnBadge === 'function') _showConnBadge(true, 0);
+  } else {
+    console.warn(`[SYNC] ${_offlineQ.length} op(s) restantes`);
+    if (typeof _showConnBadge === 'function') _showConnBadge(true, _offlineQ.length);
+  }
 }
 
 window.addEventListener('online',  () => { _supaOnline = true;  _flushQ(); });
 window.addEventListener('offline', () => { _supaOnline = false; });
 
-// ── Vérification connexion initiale ────────────────────────
+// ── Badge connexion (réutilisable) ───────────────────────────
+let _connBadge = null;
+function _showConnBadge(online, qLen) {
+  if (!_connBadge) {
+    _connBadge = document.createElement('div');
+    _connBadge.id = 'sanix-conn-badge';
+    _connBadge.style.cssText = 'position:fixed;bottom:10px;right:10px;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer;transition:all .3s';
+    _connBadge.title = 'Cliquer pour forcer la synchronisation';
+    _connBadge.onclick = () => { if(_supaOnline) _flushQ(); else _retryConn(); };
+    document.body.appendChild(_connBadge);
+  }
+  if (online) {
+    _connBadge.style.background = '#1D9E75';
+    _connBadge.style.color = '#fff';
+    _connBadge.innerHTML = qLen > 0 ? `🔄 Sync en cours (${qLen})` : '🟢 Cloud';
+    setTimeout(() => { if(_connBadge) _connBadge.style.opacity = '0.5'; }, 5000);
+  } else {
+    _connBadge.style.background = '#f4a261';
+    _connBadge.style.color = '#fff';
+    _connBadge.style.opacity = '1';
+    _connBadge.innerHTML = qLen > 0 ? `📴 Hors ligne (${qLen} en attente)` : '📴 Hors ligne — données IDB';
+  }
+}
+
+// ── Retry connexion manuel ───────────────────────────────────
+async function _retryConn() {
+  if (_connBadge) { _connBadge.innerHTML = '⏳ Reconnexion...'; }
+  try {
+    await _supaFetch('GET', 'utilisateurs', null, 'limit=1');
+    _supaOnline = true;
+    console.log('✅ [SUPABASE] Reconnecté');
+    _showConnBadge(true, _offlineQ.length);
+    if (_offlineQ.length) await _flushQ();
+    _showConnBadge(true, _offlineQ.length);
+  } catch(e) {
+    _supaOnline = false;
+    _showConnBadge(false, _offlineQ.length);
+  }
+}
+
+// ── Vérification connexion initiale avec retry auto ─────────
 (async () => {
   try {
     await _supaFetch('GET', 'utilisateurs', null, 'limit=1');
     _supaOnline = true;
     console.log('✅ [SUPABASE] Connecté —', SUPA_URL);
-    if (_offlineQ.length) _flushQ();
-    // Badge vert
-    const b = document.createElement('div');
-    b.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#1D9E75;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.25)';
-    b.innerHTML = '🟢 Supabase Cloud';
-    document.body.appendChild(b);
-    setTimeout(() => b.style.opacity = '0.5', 5000);
+    if (_offlineQ.length) {
+      _showConnBadge(true, _offlineQ.length);
+      await _flushQ();
+    }
+    _showConnBadge(true, 0);
   } catch(e) {
     _supaOnline = false;
-    console.warn('⚠️ [SUPABASE] Hors ligne — Mode cache local');
-    const b = document.createElement('div');
-    b.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#f4a261;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999';
-    b.innerHTML = '📴 Mode Hors ligne';
-    document.body.appendChild(b);
+    console.warn('⚠️ [SUPABASE] Hors ligne — Mode IDB local. Q:', _offlineQ.length);
+    _showConnBadge(false, _offlineQ.length);
+    // Retry automatique toutes les 30 secondes si hors ligne
+    const _retryInterval = setInterval(async () => {
+      if (_supaOnline) { clearInterval(_retryInterval); return; }
+      console.log('[SUPABASE] Retry connexion...');
+      try {
+        await _supaFetch('GET', 'utilisateurs', null, 'limit=1');
+        _supaOnline = true;
+        clearInterval(_retryInterval);
+        console.log('✅ [SUPABASE] Reconnecté automatiquement');
+        _showConnBadge(true, _offlineQ.length);
+        if (_offlineQ.length) { await _flushQ(); _showConnBadge(true, 0); }
+      } catch(_) {}
+    }, 30000);
   }
 })();
 
@@ -2024,22 +2098,28 @@ function _idbDelRec(st,id) {
 //  OVERRIDE DES FONCTIONS PRINCIPALES
 // ══════════════════════════════════════════════════════════════
 
-// ── getAll ───────────────────────────────────────────────────
+// ── getAll — v2 : double source IDB+Supabase ─────────────────
 async function getAll(st) {
   if (IDB_ONLY.has(st)) return _idbGetAll(st);
   const tbl = STORE_TABLE[st];
   if (!tbl) return _idbGetAll(st);
   if (!_supaOnline) {
-    const c = _gcache(st); if (c) return c;
     return _idbGetAll(st);
   }
   try {
     const rows = _toCamelArr(await _supaFetch('GET', tbl, null, 'order=id.asc&limit=2000'));
-    _cache(st, rows);
+    // Fusionner avec données IDB offline non encore synchro
+    const idbRows = await _idbGetAll(st);
+    const offlineOnly = idbRows.filter(r => r._offline === true);
+    if (offlineOnly.length) {
+      const supaIds = new Set(rows.map(r => r.id));
+      const extras  = offlineOnly.filter(r => !supaIds.has(r.id));
+      return [...rows, ...extras];
+    }
     return rows;
   } catch(e) {
-    console.warn(`[getAll] ${st}:`, e.message);
-    const c = _gcache(st); return c || _idbGetAll(st);
+    console.warn(`[getAll] ${st} Supabase erreur → fallback IDB:`, e.message);
+    return _idbGetAll(st);
   }
 }
 
@@ -2069,66 +2149,108 @@ async function getByIdx(st, idx, val) {
   }
 }
 
-// ── addRec ───────────────────────────────────────────────────
+// ── addRec — v2 : fallback IDB garanti ──────────────────────
 async function addRec(st, d) {
   if (IDB_ONLY.has(st)) return _idbAddRec(st, d);
   const tbl = STORE_TABLE[st];
   if (!tbl) return _idbAddRec(st, d);
+
+  // ── TOUJOURS sauvegarder en IDB local en premier ──────────
+  const localId = await _idbAddRec(st, d);
+
   if (!_supaOnline) {
-    _offlineQ.push({m:'POST', t:tbl, b:d, ts:Date.now()});
+    // Mettre en queue de sync avec l'id local pour mise à jour future
+    _offlineQ.push({m:'POST', t:tbl, b:{...d, _localId:localId}, ts:Date.now(), st});
     localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
-    const tmp = Date.now();
-    const c = _gcache(st)||[]; c.unshift({...d,id:tmp,_offline:true}); _cache(st,c);
-    return tmp;
+    console.log(`[addRec/offline] ${st} → IDB id=${localId} (sync différé)`);
+    return localId;
   }
+
   try {
-    // Nettoyer l'objet (supprimer id null)
     const rec = _toSnake(Object.assign({}, d));
     if (!rec.id) delete rec.id;
-    delete rec.is_demo;
-    delete rec.isDemo;
-    // Supprimer les champs qui sont des tableaux JS (pas des colonnes DB)
-    delete rec.ingredients;
-    delete rec.lignes;
-    delete rec.lines;
-    delete rec.items;
+    delete rec.is_demo; delete rec.isDemo;
+    delete rec.ingredients; delete rec.lignes; delete rec.lines; delete rec.items;
     const rows = await _supaFetch('POST', tbl, rec);
+    const supaId = Array.isArray(rows) ? rows[0]?.id : rows?.id;
+    // Mettre à jour l'enregistrement IDB avec l'id Supabase réel
+    if (supaId && supaId !== localId) {
+      try {
+        const existing = await _idbGetByLocalId(st, localId);
+        if (existing) await _idbUpdRec(st, localId, {...existing, _supaId: supaId});
+      } catch(_) {}
+    }
     localStorage.removeItem('sc_'+st);
-    return Array.isArray(rows) ? rows[0]?.id : rows?.id;
-  } catch(e) { console.error(`[addRec] ${st}:`, e.message); throw e; }
+    return supaId || localId;
+  } catch(e) {
+    // Supabase échoue → données déjà en IDB, mettre en queue
+    console.warn(`[addRec] ${st} Supabase erreur, données sécurisées en IDB:`, e.message);
+    _offlineQ.push({m:'POST', t:tbl, b:{...d, _localId:localId}, ts:Date.now(), st});
+    localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
+    return localId;
+  }
 }
 
-// ── updRec ───────────────────────────────────────────────────
+// ── updRec — v2 : fallback IDB garanti ──────────────────────
 async function updRec(st, id, d) {
   if (IDB_ONLY.has(st)) return _idbUpdRec(st, id, d);
   const tbl = STORE_TABLE[st];
   if (!tbl) return _idbUpdRec(st, id, d);
+
+  // Toujours mettre à jour IDB local d'abord
+  await _idbUpdRec(st, id, {...d, id});
+
   if (!_supaOnline) {
-    _offlineQ.push({m:'PATCH', t:tbl, b:d, p:`id=eq.${id}`, ts:Date.now()});
+    _offlineQ.push({m:'PATCH', t:tbl, b:d, p:`id=eq.${id}`, ts:Date.now(), st});
     localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
     return;
   }
   try {
-    const rec = _toSnake(Object.assign({}, d)); delete rec.id; delete rec.is_demo; delete rec.isDemo;
+    const rec = _toSnake(Object.assign({}, d));
+    delete rec.id; delete rec.is_demo; delete rec.isDemo;
     await _supaFetch('PATCH', tbl, rec, `id=eq.${id}`);
     localStorage.removeItem('sc_'+st);
-  } catch(e) { console.error(`[updRec] ${st}/${id}:`, e.message); throw e; }
+  } catch(e) {
+    console.warn(`[updRec] ${st}/${id} Supabase erreur, données sécurisées en IDB:`, e.message);
+    _offlineQ.push({m:'PATCH', t:tbl, b:d, p:`id=eq.${id}`, ts:Date.now(), st});
+    localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
+  }
 }
 
-// ── delRec ───────────────────────────────────────────────────
+// ── delRec — v2 : fallback IDB garanti ──────────────────────
 async function delRec(st, id) {
   if (IDB_ONLY.has(st)) return _idbDelRec(st, id);
   const tbl = STORE_TABLE[st];
   if (!tbl) return _idbDelRec(st, id);
+
+  // Supprimer IDB local immédiatement (UI réactive)
+  await _idbDelRec(st, id);
+
   if (!_supaOnline) {
-    _offlineQ.push({m:'DELETE', t:tbl, p:`id=eq.${id}`, ts:Date.now()});
+    _offlineQ.push({m:'DELETE', t:tbl, p:`id=eq.${id}`, ts:Date.now(), st});
     localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
     return;
   }
   try {
     await _supaFetch('DELETE', tbl, null, `id=eq.${id}`);
     localStorage.removeItem('sc_'+st);
-  } catch(e) { console.error(`[delRec] ${st}/${id}:`, e.message); throw e; }
+  } catch(e) {
+    console.warn(`[delRec] ${st}/${id} Supabase erreur, suppression IDB déjà effective:`, e.message);
+    _offlineQ.push({m:'DELETE', t:tbl, p:`id=eq.${id}`, ts:Date.now(), st});
+    localStorage.setItem('sanix_supa_q', JSON.stringify(_offlineQ));
+  }
+}
+
+// ── Helper interne : lecture IDB par id local ────────────────
+function _idbGetByLocalId(st, id) {
+  return new Promise(res => {
+    if (!db) { res(null); return; }
+    try {
+      const r = db.transaction(st,'readonly').objectStore(st).get(id);
+      r.onsuccess = () => res(r.result || null);
+      r.onerror   = () => res(null);
+    } catch(e) { res(null); }
+  });
 }
 
 // ── getBalance & getStockTotal ───────────────────────────────
