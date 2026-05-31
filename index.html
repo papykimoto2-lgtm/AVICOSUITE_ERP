@@ -13050,7 +13050,7 @@ window.openRecetteModal = async function(id=null) {
         <option value="finition" ${recette?.type==='finition'?'selected':''}>Finition (35j+)</option>
         <option value="autre" ${recette?.type==='autre'?'selected':''}>Autre</option>
       </select></div>
-      <div class="fg"><label>Quantité de référence (kg)</label><input id="recetteQteRef" type="number" value="${recette?.qteRef||100}" placeholder="100"></div>
+      <div class="fg"><label>Quantité de référence (kg)</label><input id="recetteQteRef" type="number" value="${recette?.qteCible||recette?.qteRef||100}" placeholder="100"></div>
       <div class="fg"><label>Dépôt destination</label><select id="recetteDepot"><option value="">— Aucun —</option></select></div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -13077,7 +13077,7 @@ window.openRecetteModal = async function(id=null) {
   // Fill depots
   const depots = await getAll(S.DEPOTS);
   document.getElementById('recetteDepot').innerHTML='<option value="">— Aucun —</option>'+
-    depots.map(d=>`<option value="${d.id}" ${recette?.depotId===d.id?'selected':''}>${esc(d.nom)}</option>`).join('');
+    depots.map(d=>`<option value="${d.id}" ${(recette?.depotDestId||recette?.depotId)===d.id?'selected':''}>${esc(d.nom)}</option>`).join('');
 
   document.getElementById('fabIngDiv').addEventListener('rerender',()=>{renderLignesFab();calcCoutRecette();});
   renderLignesFab();
@@ -13109,16 +13109,14 @@ window.saveRecette = async function(){
     const depotId=depotRaw?parseInt(depotRaw):null;
     const data={
       nom, type:document.getElementById('recetteType').value,
-      qteRef,
-      depotId: isNaN(depotId)?null:depotId,
+      qteCible:qteRef,
+      depotDestId: isNaN(depotId)?null:depotId,
       ingredients:window._fabLignes.filter(l=>l.qte>0).map(l=>({...l,produitId:l.produitId?parseInt(l.produitId):null})),
-      notes:document.getElementById('recetteNotes').value.trim(),
-      updatedAt:Date.now()
+      notes:document.getElementById('recetteNotes').value.trim()
     };
     if(id){
       await updRec(S.FAB_RECETTES,parseInt(id),data);
     } else {
-      data.createdAt=Date.now();
       await addRec(S.FAB_RECETTES,data);
     }
     closeOverlay('ovRecette');
