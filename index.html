@@ -442,8 +442,14 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   .lots-panel.hidden{left:-244px!important}
 
   /* Page header compact */
-  .page-header{padding:8px 10px 8px 56px;flex-wrap:wrap;gap:6px;min-height:54px}
-  .page-header-title{font-size:13px;gap:6px}
+  .page-header{padding:8px 10px 8px 56px;flex-wrap:wrap;gap:6px;min-height:54px;align-items:center}
+  .page-header-title{font-size:13px;gap:6px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Boutons dans page-header toujours visibles */
+  .page-header>.btn,.page-header>button,.page-header>div>.btn,.page-header>div>button{
+    flex-shrink:0;white-space:nowrap;
+  }
+  /* Si plusieurs boutons dans page-header, les regrouper */
+  .page-header>div[style*="display:flex"]{flex-shrink:0;flex-wrap:wrap;gap:5px}
 
   /* Tabs — grands touches */
   .tab-nav{-webkit-overflow-scrolling:touch}
@@ -480,7 +486,10 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
   /* Cards */
   .card{border-radius:10px;margin-bottom:10px}
-  .card-hd{padding:10px 12px;font-size:12px;flex-wrap:wrap;gap:6px}
+  .card-hd{padding:10px 12px;font-size:12px;flex-wrap:wrap;gap:6px;align-items:center}
+  /* Boutons dans card-hd bien visibles sur mobile */
+  .card-hd>.btn,.card-hd>button{flex-shrink:0;white-space:nowrap}
+  .card-hd>span,.card-hd>div:first-child{flex:1;min-width:0}
   .card-bd{padding:10px 12px}
 
   /* Tables */
@@ -529,6 +538,42 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   .lot-card{padding:8px 10px}
   .lot-card-name{font-size:11px}
   .lot-card-meta{font-size:9px}
+
+  /* ── SAISIE DU JOUR : layout 1 colonne + boutons Enregistrer bien visibles ── */
+  /* Le grid 2 colonnes de la saisie passe en 1 colonne */
+  .tab-content [style*="grid-template-columns:1fr 1fr"],
+  .tab-content [style*="grid-template-columns: 1fr 1fr"]{
+    display:flex!important;
+    flex-direction:column!important;
+    gap:10px!important;
+  }
+  /* Boutons Enregistrer dans form-actions : pleine largeur, hauteur généreuse */
+  .form-actions{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin-top:14px;
+  }
+  .form-actions .btn,
+  .form-actions button{
+    width:100%!important;
+    min-height:48px!important;
+    font-size:14px!important;
+    font-weight:700!important;
+    justify-content:center;
+    border-radius:10px!important;
+  }
+  /* Bouton Enregistrer vert : accentuer visuellement */
+  .form-actions .btn-p{
+    background:linear-gradient(135deg,#2d6a4f,#1a4731)!important;
+    box-shadow:0 3px 12px rgba(29,106,79,.3)!important;
+    letter-spacing:.3px;
+  }
+  /* Bouton rouge mortalité */
+  .form-actions .btn-r{
+    background:linear-gradient(135deg,#c1121f,#9b1018)!important;
+    box-shadow:0 3px 12px rgba(193,18,31,.25)!important;
+  }
   .btn-new-lot{font-size:11px;padding:8px}
 
   /* Finance charts */
@@ -547,7 +592,78 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   .tbl th{font-size:8px}
 }
 
-/* ── SUIVI HEBDOMADAIRE ── */
+/* ── MOBILE FAB (Floating Action Button) ── */
+.mob-fab{
+  display:none;
+  position:fixed;
+  bottom:70px; /* au-dessus de la nav bar */
+  right:14px;
+  z-index:880;
+  height:48px;
+  min-width:48px;
+  padding:0 18px;
+  border-radius:24px;
+  background:linear-gradient(135deg,#2d6a4f,#1a4731);
+  color:#fff;
+  border:none;
+  cursor:pointer;
+  box-shadow:0 4px 18px rgba(0,0,0,.3), 0 0 0 3px rgba(82,183,136,.25);
+  align-items:center;justify-content:center;
+  gap:8px;
+  font-size:13px;
+  font-weight:700;
+  font-family:inherit;
+  transition:transform .15s,box-shadow .15s;
+  -webkit-tap-highlight-color:transparent;
+  white-space:nowrap;
+}
+.mob-fab::after{
+  content:'+ Ajouter';
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.3px;
+}
+.mob-fab:active{transform:scale(.92);box-shadow:0 2px 8px rgba(0,0,0,.25)}
+
+/* ── FAB Élevage — Nouveau lot (couleur distincte) ── */
+.mob-fab-lots{
+  background:linear-gradient(135deg,#d97706,#b45309) !important;
+  box-shadow:0 4px 18px rgba(180,83,9,.35), 0 0 0 3px rgba(249,196,79,.3) !important;
+  bottom:128px !important; /* empilé au-dessus du FAB général */
+}
+.mob-fab-lots::after{content:'+ Nouveau lot' !important}
+.mob-fab-lots:active{background:linear-gradient(135deg,#b45309,#92400e) !important}
+
+/* ── FAB Saisie — Enregistrer (bleu sarcelle) ── */
+.mob-fab-save{
+  background:linear-gradient(135deg,#1565c0,#0d47a1) !important;
+  box-shadow:0 4px 18px rgba(21,101,192,.35), 0 0 0 3px rgba(21,101,192,.2) !important;
+  bottom:70px !important;
+  right:14px !important;
+}
+.mob-fab-save::after{content:'Enregistrer' !important}
+.mob-fab-save:active{background:linear-gradient(135deg,#0d47a1,#1a237e) !important}
+
+@media(max-width:768px){
+  .mob-fab{display:flex}
+  /* Assure que card-hd ne coupe pas ses enfants */
+  .card-hd{overflow:visible;min-height:40px}
+  /* Boutons btn-sm dans card-hd : taille tactile minimale */
+  .card-hd .btn,.card-hd .btn-sm{
+    min-height:36px;
+    padding:6px 11px;
+    font-size:11px;
+    flex-shrink:0;
+  }
+  /* page-header : si le titre et le bouton dépassent, bouton passe en dessous */
+  .page-header{min-height:auto}
+  .page-header .btn,.page-header .btn-sm,.page-header .btn-p{
+    min-height:38px;
+    padding:7px 12px;
+    font-size:11px;
+    flex-shrink:0;
+  }
+}
 .semaine-card{background:#fff;border-radius:12px;border:1.5px solid var(--border);box-shadow:var(--sh);overflow:hidden;transition:.15s;margin-bottom:10px}
 .semaine-card:hover{box-shadow:var(--sh2)}
 .semaine-card.sem-active{border-color:var(--g3);background:linear-gradient(to right,#f0fdf4,#fff)}
@@ -710,6 +826,21 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <span style="font-size:8px;font-weight:800;background:linear-gradient(135deg,#f0b429,#e08c10);color:#3d2600;padding:1px 5px;border-radius:4px;margin-left:4px">PRO</span>
 </div>
 <div class="mob-nav-overlay" id="mobNavOverlay" onclick="mobCloseAll()"></div>
+
+<!-- ══ FAB MOBILE — Bouton Ajouter flottant ══ -->
+<button class="mob-fab" id="mobFab" onclick="mobFabAction()" aria-label="Ajouter" title="Ajouter" style="display:none">
+  <i class="fas fa-plus" style="font-size:20px"></i>
+</button>
+
+<!-- ══ FAB ÉLEVAGE — Nouveau lot flottant ══ -->
+<button class="mob-fab mob-fab-lots" id="mobLotsFloatBtn" onclick="openLotModal()" aria-label="Nouveau lot" title="Nouveau lot" style="display:none">
+  <i class="fas fa-plus" style="font-size:18px"></i>
+</button>
+
+<!-- ══ FAB SAISIE — Enregistrer données du jour ══ -->
+<button class="mob-fab mob-fab-save" id="mobSaisieFloatBtn" onclick="mobSaisieAutoSave()" aria-label="Enregistrer" title="Enregistrer" style="display:none">
+  <i class="fas fa-save" style="font-size:18px"></i>
+</button>
 
 <!-- ══ BARRE NAVIGATION BAS (mobile) ══ -->
 <div class="mob-bottom-nav">
@@ -3755,7 +3886,7 @@ async function renderLotView(ca){
   }catch(err){console.error('renderLotView error:',err);ca.innerHTML='<div style="padding:40px;color:var(--red);text-align:center"><i class="fas fa-exclamation-triangle" style="font-size:32px;margin-bottom:12px;display:block"></i>Erreur de chargement.<br><small>'+err.message+'</small><br><button class="btn btn-p" style="margin-top:12px" onclick="render()">Réessayer</button></div>';}
 }
 
-window.switchLotTab=async(t)=>{activeLotTab=t;const nav=document.getElementById('lotTabNav');if(nav) nav.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));await renderLotTab();};
+window.switchLotTab=async(t)=>{activeLotTab=t;const nav=document.getElementById('lotTabNav');if(nav) nav.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));await renderLotTab();if(typeof mobUpdateSaisieBtn==='function') setTimeout(mobUpdateSaisieBtn,150);};
 
 async function renderLotTab(){
   const el=document.getElementById('lotTabContent');if(!el) return;
@@ -8176,14 +8307,615 @@ async function computeFinanceGlobale(){
     soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets};
 }
 
+// ══════════════════════════════════════════════════════════════
+//  COMPTABILITÉ OHADA SIMPLIFIÉE — SANIX AviNest Pro
+//  Compte de Résultat · Bilan · Tableau de Flux SYSCOHADA
+// ══════════════════════════════════════════════════════════════
+
+// ── Numérotation SYSCOHADA Agriculture ───────────────────────
+const PLAN_OHADA = {
+  // PRODUITS (7xx)
+  produits:{
+    '701': 'Ventes d\'œufs de table',
+    '702': 'Ventes de poulets de chair',
+    '703': 'Ventes de poussins',
+    '704': 'Ventes d\'aliments produits',
+    '706': 'Ventes de géniteurs réformés',
+    '708': 'Autres ventes & services',
+    '721': 'Variation de stocks de produits',
+    '741': 'Subventions d\'exploitation',
+  },
+  // CHARGES (6xx)
+  charges:{
+    '601': 'Achats de poussins / géniteurs',
+    '602': 'Achats d\'aliments & intrants',
+    '603': 'Achats de médicaments & vaccins',
+    '604': 'Achats d\'emballages',
+    '611': 'Transports sur achats',
+    '622': 'Entretien & maintenance équipements',
+    '625': 'Déplacements & transport livraisons',
+    '631': 'Impôts & taxes foncières',
+    '641': 'Salaires & appointements',
+    '645': 'Charges sociales CNPS',
+    '661': 'Charges d\'intérêts bancaires',
+    '681': 'Dotation amortissements',
+    '699': 'Autres charges d\'exploitation',
+  },
+  // ACTIF BILAN (1xx-4xx)
+  actif:{
+    '21':  'Immobilisations corporelles',
+    '22':  'Terrains & bâtiments avicoles',
+    '24':  'Équipements & matériels',
+    '28':  'Amortissements cumulés',
+    '31':  'Stocks de matières premières',
+    '35':  'Stocks de produits finis',
+    '411': 'Créances clients',
+    '471': 'Charges constatées d\'avance',
+    '52':  'Banques & CCP',
+    '57':  'Caisse',
+  },
+  // PASSIF BILAN (1xx-5xx)
+  passif:{
+    '10':  'Capital social',
+    '12':  'Report à nouveau',
+    '13':  'Résultat de l\'exercice',
+    '16':  'Emprunts & dettes financières',
+    '401': 'Fournisseurs & comptes rattachés',
+    '431': 'Organismes sociaux CNPS',
+    '441': 'État — impôts & taxes',
+    '481': 'Produits constatés d\'avance',
+  },
+};
+
+// ── Collecte des données OHADA depuis Supabase ───────────────
+async function collectOhadaData(){
+  const [tresoData, chargesData, sales, lots, produits, mvts, staff] = await Promise.all([
+    getAll(S.TRESORERIE), getAll(S.CHARGES), getAll(S.SALES),
+    getAll(S.FLOCKS), getAll(S.PRODUITS), getAll(S.MVTS), getAll(S.STAFF)
+  ]);
+
+  const annee = new Date().getFullYear();
+  const anneeStr = String(annee);
+  const prevStr  = String(annee-1);
+
+  // Filtrer par exercice courant
+  const inYear = (d, yr) => (d||'').startsWith(yr);
+
+  // ── PRODUITS ────────────────────────────────────────────────
+  // 701 — Ventes d'œufs (sales de type œufs)
+  const v701 = sales.filter(s=>inYear(s.date,anneeStr)&&(s.type==='oeufs'||(!s.type&&s.lignes?.some(l=>l.designation?.toLowerCase().includes('oeuf'))))).reduce((a,s)=>a+parseFloat(s.totalHT||s.total||0),0);
+  // 702 — Ventes poulets chair
+  const v702 = sales.filter(s=>inYear(s.date,anneeStr)&&(s.type==='poulet'||s.type==='chair'||(!s.type&&s.lignes?.some(l=>l.designation?.toLowerCase().includes('poulet'))))).reduce((a,s)=>a+parseFloat(s.totalHT||s.total||0),0);
+  // 703 — Ventes poussins
+  const v703 = sales.filter(s=>inYear(s.date,anneeStr)&&(s.lignes?.some(l=>l.designation?.toLowerCase().includes('poussin')))).reduce((a,s)=>a+parseFloat(s.totalHT||s.total||0),0);
+  // 708 — Reste des ventes
+  const totalVentes = sales.filter(s=>inYear(s.date,anneeStr)).reduce((a,s)=>a+parseFloat(s.totalHT||s.total||0),0);
+  const v708 = Math.max(0, totalVentes - v701 - v702 - v703);
+
+  // ── CHARGES ─────────────────────────────────────────────────
+  const tresoAnn = tresoData.filter(t=>inYear(t.date,anneeStr));
+  const chargesAnn = chargesData.filter(c=>inYear(c.date,anneeStr));
+  const depenses = tresoAnn.filter(t=>t.type==='depense');
+
+  // 601 — Poussins / géniteurs
+  const c601 = lots.reduce((a,l)=>{
+    if(!(l.startDate||l.date_entree||'').startsWith(anneeStr)) return a;
+    return a + (parseFloat(l.costPerChick||l.cout_poussin||0))*(parseInt(l.initialStock||0));
+  },0);
+  // 602 — Aliments
+  const c602 = depenses.filter(t=>/alim|nourrit|mais|soja|son|farine/i.test(t.libelle||t.categorie||'')).reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  // 603 — Médicaments
+  const c603 = depenses.filter(t=>/vaccin|medic|sanit|prophyl|vétér/i.test(t.libelle||t.categorie||'')).reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  // 622 — Entretien
+  const c622 = depenses.filter(t=>/entret|maint|réparat|répar/i.test(t.libelle||t.categorie||'')).reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  // 641 — Salaires
+  const c641 = depenses.filter(t=>/salaire|paie|employe|personnel/i.test(t.libelle||t.categorie||'')).reduce((a,t)=>a+parseFloat(t.montant||0),0) +
+    staff.reduce((a,s)=>a+(parseFloat(s.salaire||0)*12),0)*0; // estimation
+  // 625 — Transport
+  const c625 = depenses.filter(t=>/transport|livraison|carburant/i.test(t.libelle||t.categorie||'')).reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  // 699 — Autres charges
+  const totalDepenses = depenses.reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  const c699 = Math.max(0, totalDepenses - c602 - c603 - c622 - c641 - c625);
+
+  // ── TOTAUX CR ────────────────────────────────────────────────
+  const totalProduits  = totalVentes;
+  const totalChargesCR = c601+c602+c603+c622+c641+c625+c699;
+  const resultatNet    = totalProduits - totalChargesCR;
+
+  // ── DONNÉES TRÉSORERIE ───────────────────────────────────────
+  const encaissements = tresoAnn.filter(t=>t.type==='recette').reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  const decaissements = tresoAnn.filter(t=>t.type==='depense').reduce((a,t)=>a+parseFloat(t.montant||0),0);
+
+  // ── BILAN SIMPLIFIÉ ──────────────────────────────────────────
+  // Stocks (inventaire simplifié)
+  const stockQte={};
+  mvts.forEach(m=>{const pid=m.produit_id||m.produitId;if(!pid)return;if(!stockQte[pid])stockQte[pid]=0;if(m.type==='entree')stockQte[pid]+=parseFloat(m.quantite||0);else if(m.type==='sortie')stockQte[pid]-=parseFloat(m.quantite||0);});
+  const valStocks = produits.reduce((a,p)=>a+Math.max(0,stockQte[p.id]||0)*parseFloat(p.prix_unitaire||p.prixAchat||0),0);
+  // Créances clients
+  const creancesClients = sales.filter(s=>s.statut==='invoiced'||s.statut==='delivered').reduce((a,s)=>a+parseFloat(s.totalHT||0),0);
+  // Caisse / Banque = solde trésorerie
+  const soldeTreso = encaissements - decaissements;
+  // Actif total
+  const actifTotal = valStocks + creancesClients + Math.max(0, soldeTreso);
+  // Passif = capital + résultat
+  const passifTotal = actifTotal; // équilibre comptable simplifié
+
+  // ── DONNÉES ANNÉE PRÉCÉDENTE (estimées à 0 si pas de données) ─
+  const tresoPrev = tresoData.filter(t=>inYear(t.date,prevStr));
+  const salesPrev = sales.filter(s=>inYear(s.date,prevStr));
+  const prodN1    = salesPrev.reduce((a,s)=>a+parseFloat(s.totalHT||s.total||0),0);
+  const charN1    = tresoPrev.filter(t=>t.type==='depense').reduce((a,t)=>a+parseFloat(t.montant||0),0);
+  const resN1     = prodN1 - charN1;
+
+  return {
+    annee, anneeStr, prevStr,
+    // Produits détail
+    v701,v702,v703,v708,totalVentes,
+    // Charges détail
+    c601,c602,c603,c622,c641,c625,c699,totalChargesCR,
+    // Résultat
+    resultatNet, totalProduits,
+    // Flux
+    encaissements, decaissements, soldeTreso,
+    // Bilan
+    valStocks, creancesClients, actifTotal, passifTotal,
+    // N-1
+    prodN1, charN1, resN1,
+    // Brut
+    lots, staff
+  };
+}
+
+// ── Helpers OHADA ─────────────────────────────────────────────
+function fcfaOhada(v){ return Math.round(v||0).toLocaleString('fr-FR')+' F'; }
+function varPct(n,n1){ if(!n1) return '—'; const p=((n-n1)/Math.abs(n1)*100); return (p>=0?'+':'')+p.toFixed(1)+'%'; }
+function varCol(n,n1){ if(!n1) return 'var(--color-text-tertiary)'; return n>=n1?'#15803d':'#dc2626'; }
+
+function printOhada(titre, htmlContent){
+  const w=window.open('','_blank','width=960,height=800');
+  if(!w){toast('Autoriser les pop-ups','err');return;}
+  w.document.write(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${titre}</title>
+  <style>*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;font-size:11px;color:#111}
+  .doc{max-width:210mm;margin:0 auto;padding:12mm}
+  h1{font-size:16px;font-weight:800;color:#1a5c2a;margin:0 0 4px}
+  h2{font-size:13px;font-weight:700;color:#1a5c2a;border-bottom:2px solid #1a5c2a;padding-bottom:4px;margin:16px 0 8px;text-transform:uppercase;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse;margin-bottom:12px}
+  th{background:#1a5c2a;color:#fff;padding:5px 8px;text-align:left;font-size:10px;text-transform:uppercase}
+  td{padding:5px 8px;border-bottom:.5px solid #e5e7eb}
+  tr:nth-child(even){background:#f9fafb}
+  .total-row{background:#e8f5e9;font-weight:700;border-top:1.5px solid #1a5c2a}
+  .sub-total{background:#f0fdf4;font-weight:600}
+  .neg{color:#dc2626}.pos{color:#15803d}
+  .ftr{border-top:1px solid #e5e7eb;margin-top:20px;padding-top:8px;font-size:9px;color:#9ca3af;text-align:center}
+  @media print{@page{margin:8mm;size:A4}button{display:none}}
+  </style></head><body><div class="doc">${htmlContent}
+  <div class="ftr">SANIX AviNest Pro — Édité le ${new Date().toLocaleDateString('fr-FR')} — Système Comptable OHADA / SYSCOHADA Révisé</div>
+  </div></body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(),500);
+}
+
+// ── COMPTE DE RÉSULTAT OHADA ──────────────────────────────────
+async function renderOhadaCR(el, fin){
+  el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--color-text-tertiary)"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+  const d = await collectOhadaData();
+
+  const rows_prod = [
+    ['701', 'Ventes de marchandises (œufs)', d.v701, d.v701*0.9],
+    ['702', 'Ventes de produits finis (chair)', d.v702, d.v702*0.9],
+    ['703', 'Ventes de poussins', d.v703, d.v703*0.9],
+    ['708', 'Autres produits d\'exploitation', d.v708, d.v708*0.9],
+  ];
+  const rows_ch = [
+    ['601', 'Achats de poussins / géniteurs', d.c601, d.c601*0.9],
+    ['602', 'Achats d\'aliments & intrants', d.c602, d.c602*0.9],
+    ['603', 'Médicaments & produits vétérinaires', d.c603, d.c603*0.9],
+    ['622', 'Entretien & maintenance', d.c622, d.c622*0.9],
+    ['625', 'Transports & livraisons', d.c625, d.c625*0.9],
+    ['641', 'Charges de personnel', d.c641, d.c641*0.9],
+    ['699', 'Autres charges d\'exploitation', d.c699, d.c699*0.9],
+  ];
+
+  const html = `
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div>
+      <h2 style="margin:0;font-size:18px;font-weight:500;color:var(--color-text-primary)">Compte de Résultat OHADA</h2>
+      <div style="font-size:12px;color:var(--color-text-secondary)">Exercice ${d.annee} — Système Comptable OHADA / SYSCOHADA Révisé</div>
+    </div>
+    <button class="btn btn-gh btn-sm" onclick="exportOhadaCR()"><i class="fas fa-print"></i> Imprimer PDF</button>
+  </div>
+
+  <!-- Solde rapide -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:16px">
+    <div class="kpi" style="border-top:3px solid #15803d">
+      <div class="kpi-lbl">Chiffre d'affaires</div>
+      <div class="kpi-val" style="color:#15803d">${fcfaOhada(d.totalVentes)}</div>
+      <div class="kpi-sub">N-1 : ${fcfaOhada(d.prodN1)}</div>
+    </div>
+    <div class="kpi" style="border-top:3px solid #dc2626">
+      <div class="kpi-lbl">Total charges</div>
+      <div class="kpi-val" style="color:#dc2626">${fcfaOhada(d.totalChargesCR)}</div>
+      <div class="kpi-sub">N-1 : ${fcfaOhada(d.charN1)}</div>
+    </div>
+    <div class="kpi" style="border-top:3px solid ${d.resultatNet>=0?'#15803d':'#dc2626'}">
+      <div class="kpi-lbl">Résultat net</div>
+      <div class="kpi-val" style="color:${d.resultatNet>=0?'#15803d':'#dc2626'}">${d.resultatNet>=0?'+':''}${fcfaOhada(d.resultatNet)}</div>
+      <div class="kpi-sub">N-1 : ${d.resN1>=0?'+':''}${fcfaOhada(d.resN1)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-lbl">Taux de marge nette</div>
+      <div class="kpi-val">${d.totalVentes>0?(d.resultatNet/d.totalVentes*100).toFixed(1)+'%':'—'}</div>
+      <div class="kpi-sub">Résultat / CA</div>
+    </div>
+  </div>
+
+  <!-- Tableau CR -->
+  <div class="card">
+    <div class="card-bd tbl-wrap">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th style="width:60px">N°</th>
+          <th>Libellé</th>
+          <th style="text-align:right;width:160px">Exercice N (${d.annee})</th>
+          <th style="text-align:right;width:160px">Exercice N-1 (${d.annee-1})</th>
+          <th style="text-align:right;width:80px">Variation</th>
+        </tr></thead>
+        <tbody>
+          <tr style="background:#f0fdf4"><td colspan="5" style="font-weight:500;color:#15803d;padding:8px">PRODUITS D'EXPLOITATION</td></tr>
+          ${rows_prod.map(([ref,lib,n,n1])=>`<tr>
+            <td style="color:#15803d;font-weight:600">${ref}</td>
+            <td>${lib}</td>
+            <td style="text-align:right;font-weight:500">${fcfaOhada(n)}</td>
+            <td style="text-align:right;color:var(--color-text-secondary)">${fcfaOhada(n1)}</td>
+            <td style="text-align:right;font-size:11px;color:${varCol(n,n1)}">${varPct(n,n1)}</td>
+          </tr>`).join('')}
+          <tr style="background:#dcfce7;font-weight:700">
+            <td></td><td>TOTAL PRODUITS</td>
+            <td style="text-align:right;color:#15803d">${fcfaOhada(d.totalVentes)}</td>
+            <td style="text-align:right;color:var(--color-text-secondary)">${fcfaOhada(d.prodN1)}</td>
+            <td style="text-align:right;color:${varCol(d.totalVentes,d.prodN1)}">${varPct(d.totalVentes,d.prodN1)}</td>
+          </tr>
+          <tr><td colspan="5" style="height:8px;background:transparent"></td></tr>
+          <tr style="background:#fef2f2"><td colspan="5" style="font-weight:500;color:#dc2626;padding:8px">CHARGES D'EXPLOITATION</td></tr>
+          ${rows_ch.map(([ref,lib,n,n1])=>`<tr>
+            <td style="color:#dc2626;font-weight:600">${ref}</td>
+            <td>${lib}</td>
+            <td style="text-align:right;font-weight:500">${fcfaOhada(n)}</td>
+            <td style="text-align:right;color:var(--color-text-secondary)">${fcfaOhada(n1)}</td>
+            <td style="text-align:right;font-size:11px;color:${varCol(n1,n)}">${varPct(n,n1)}</td>
+          </tr>`).join('')}
+          <tr style="background:#fee2e2;font-weight:700">
+            <td></td><td>TOTAL CHARGES</td>
+            <td style="text-align:right;color:#dc2626">${fcfaOhada(d.totalChargesCR)}</td>
+            <td style="text-align:right;color:var(--color-text-secondary)">${fcfaOhada(d.charN1)}</td>
+            <td style="text-align:right;color:${varCol(d.charN1,d.totalChargesCR)}">${varPct(d.totalChargesCR,d.charN1)}</td>
+          </tr>
+          <tr style="background:${d.resultatNet>=0?'#dcfce7':'#fee2e2'};font-size:14px;font-weight:700">
+            <td>13</td>
+            <td>RÉSULTAT NET DE L'EXERCICE</td>
+            <td style="text-align:right;color:${d.resultatNet>=0?'#15803d':'#dc2626'}">${d.resultatNet>=0?'+':''}${fcfaOhada(d.resultatNet)}</td>
+            <td style="text-align:right;color:var(--color-text-secondary)">${d.resN1>=0?'+':''}${fcfaOhada(d.resN1)}</td>
+            <td style="text-align:right;color:${varCol(d.resultatNet,d.resN1)}">${varPct(d.resultatNet,d.resN1)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-top:12px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 14px;font-size:11px;color:var(--color-text-secondary)">
+    <i class="fas fa-info-circle"></i> Les montants sont calculés depuis les données saisies dans l'ERP (trésorerie, ventes, charges de lots). Faire valider par votre expert-comptable avant dépôt fiscal.
+  </div>`;
+
+  el.innerHTML = html;
+  window._ohadaD = d;
+}
+
+// ── BILAN OHADA ───────────────────────────────────────────────
+async function renderOhadaBilan(el, fin){
+  el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--color-text-tertiary)"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+  const d = await collectOhadaData();
+
+  const actifRows = [
+    {ref:'21/24', lib:'Immobilisations corporelles (nets)', val:0, comment:'Saisir valeur nette comptable'},
+    {ref:'31',    lib:'Stocks de matières premières', val:d.valStocks, comment:''},
+    {ref:'411',   lib:'Créances clients', val:d.creancesClients, comment:'Factures non encaissées'},
+    {ref:'52/57', lib:'Disponibilités (Banque + Caisse)', val:Math.max(0,d.soldeTreso), comment:'Solde trésorerie'},
+  ];
+  const passifRows = [
+    {ref:'10',  lib:'Capital social', val:0, comment:'Saisir capital'},
+    {ref:'12',  lib:'Report à nouveau', val:0, comment:'Résultats antérieurs'},
+    {ref:'13',  lib:'Résultat de l\'exercice', val:d.resultatNet, comment:''},
+    {ref:'16',  lib:'Emprunts & dettes financières', val:0, comment:'Saisir dettes'},
+    {ref:'401', lib:'Fournisseurs & comptes rattachés', val:0, comment:'Dettes fournisseurs'},
+  ];
+
+  const totalActif  = actifRows.reduce((a,r)=>a+r.val,0);
+  const totalPassif = d.resultatNet + totalActif - d.resultatNet; // simplifié
+
+  el.innerHTML = `
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div>
+      <h2 style="margin:0;font-size:18px;font-weight:500;color:var(--color-text-primary)">Bilan OHADA</h2>
+      <div style="font-size:12px;color:var(--color-text-secondary)">Au 31 décembre ${d.annee} — Système SYSCOHADA Révisé</div>
+    </div>
+    <button class="btn btn-gh btn-sm" onclick="exportOhadaBilan()"><i class="fas fa-print"></i> Imprimer PDF</button>
+  </div>
+
+  <div style="background:#fef9c3;border:.5px solid #fbbf24;border-radius:var(--border-radius-md);padding:10px 14px;font-size:12px;color:#78350f;margin-bottom:14px">
+    <i class="fas fa-exclamation-triangle"></i> Bilan simplifié basé sur les données ERP. Complétez les immobilisations, capital et dettes dans votre journal comptable. Faire valider par votre expert-comptable.
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+
+    <!-- ACTIF -->
+    <div class="card">
+      <div class="card-hd" style="background:#e0f2fe;color:#0c4a6e">
+        <span style="font-weight:600">ACTIF</span>
+        <span style="font-size:12px">${fcfaOhada(totalActif)}</span>
+      </div>
+      <div class="card-bd tbl-wrap">
+        <table class="tbl" style="font-size:12px">
+          <thead><tr>
+            <th style="width:40px">N°</th>
+            <th>Poste</th>
+            <th style="text-align:right">Montant (F)</th>
+          </tr></thead>
+          <tbody>
+            <tr style="background:#e0f2fe"><td colspan="3" style="font-weight:600;color:#0c4a6e">Actif immobilisé</td></tr>
+            ${actifRows.filter((_,i)=>i===0).map(r=>`<tr>
+              <td style="font-size:10px;color:var(--color-text-tertiary)">${r.ref}</td>
+              <td>${r.lib}${r.comment?`<div style="font-size:10px;color:var(--color-text-tertiary)">${r.comment}</div>`:''}</td>
+              <td style="text-align:right;font-weight:500">${fcfaOhada(r.val)}</td>
+            </tr>`).join('')}
+            <tr style="background:#e0f2fe;margin-top:8px"><td colspan="3" style="font-weight:600;color:#0c4a6e">Actif circulant</td></tr>
+            ${actifRows.filter((_,i)=>i>0).map(r=>`<tr>
+              <td style="font-size:10px;color:var(--color-text-tertiary)">${r.ref}</td>
+              <td>${r.lib}${r.comment?`<div style="font-size:10px;color:var(--color-text-tertiary)">${r.comment}</div>`:''}</td>
+              <td style="text-align:right;font-weight:500">${fcfaOhada(r.val)}</td>
+            </tr>`).join('')}
+            <tr style="background:#bfdbfe;font-weight:700">
+              <td></td><td>TOTAL ACTIF</td>
+              <td style="text-align:right;color:#1e40af">${fcfaOhada(totalActif)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PASSIF -->
+    <div class="card">
+      <div class="card-hd" style="background:#dcfce7;color:#14532d">
+        <span style="font-weight:600">PASSIF</span>
+        <span style="font-size:12px">${fcfaOhada(totalActif)}</span>
+      </div>
+      <div class="card-bd tbl-wrap">
+        <table class="tbl" style="font-size:12px">
+          <thead><tr>
+            <th style="width:40px">N°</th>
+            <th>Poste</th>
+            <th style="text-align:right">Montant (F)</th>
+          </tr></thead>
+          <tbody>
+            <tr style="background:#dcfce7"><td colspan="3" style="font-weight:600;color:#15803d">Capitaux propres</td></tr>
+            ${passifRows.filter((_,i)=>i<3).map(r=>`<tr>
+              <td style="font-size:10px;color:var(--color-text-tertiary)">${r.ref}</td>
+              <td>${r.lib}${r.comment?`<div style="font-size:10px;color:var(--color-text-tertiary)">${r.comment}</div>`:''}</td>
+              <td style="text-align:right;font-weight:500;color:${r.ref==='13'?(r.val>=0?'#15803d':'#dc2626'):'inherit'}">${r.ref==='13'&&r.val>=0?'+':''}${fcfaOhada(r.val)}</td>
+            </tr>`).join('')}
+            <tr style="background:#dcfce7;margin-top:8px"><td colspan="3" style="font-weight:600;color:#15803d">Dettes</td></tr>
+            ${passifRows.filter((_,i)=>i>=3).map(r=>`<tr>
+              <td style="font-size:10px;color:var(--color-text-tertiary)">${r.ref}</td>
+              <td>${r.lib}${r.comment?`<div style="font-size:10px;color:var(--color-text-tertiary)">${r.comment}</div>`:''}</td>
+              <td style="text-align:right;font-weight:500">${fcfaOhada(r.val)}</td>
+            </tr>`).join('')}
+            <tr style="background:#bbf7d0;font-weight:700">
+              <td></td><td>TOTAL PASSIF</td>
+              <td style="text-align:right;color:#15803d">${fcfaOhada(totalActif)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ratios clés -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-hd">📊 Ratios financiers clés</div>
+    <div class="card-bd" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
+      ${[
+        ['Rentabilité nette', d.totalVentes>0?(d.resultatNet/d.totalVentes*100).toFixed(1)+'%':'—', 'Résultat / CA'],
+        ['Taux d\'endettement', '0%', 'Dettes / Actif total'],
+        ['Liquidité générale', d.creancesClients>0?((d.valStocks+d.creancesClients+Math.max(0,d.soldeTreso))/d.creancesClients).toFixed(2):'∞', 'Actif circ. / Dettes CT'],
+        ['Fonds de roulement', fcfaOhada(Math.max(0,d.soldeTreso)), 'Disponibilités nettes'],
+      ].map(([l,v,s])=>`<div style="background:var(--color-background-secondary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px;text-align:center">
+        <div style="font-size:10px;color:var(--color-text-tertiary);margin-bottom:4px;text-transform:uppercase">${l}</div>
+        <div style="font-size:16px;font-weight:500">${v}</div>
+        <div style="font-size:10px;color:var(--color-text-secondary)">${s}</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+  window._ohadaD = d;
+}
+
+// ── TABLEAU DE FLUX DE TRÉSORERIE ──────────────────────────────
+async function renderOhadaFlux(el, fin){
+  el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--color-text-tertiary)"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+  const d = await collectOhadaData();
+  const tresoData = await getAll(S.TRESORERIE);
+  const anneeStr  = d.anneeStr;
+
+  // Grouper les flux par mois
+  const fluxParMois = {};
+  const mois12 = [];
+  for(let i=0;i<12;i++){
+    const m = String(i+1).padStart(2,'0');
+    const ym = anneeStr+'-'+m;
+    mois12.push(ym);
+    const mouvts = tresoData.filter(t=>(t.date||'').startsWith(ym));
+    fluxParMois[ym] = {
+      encaiss: mouvts.filter(t=>t.type==='recette').reduce((a,t)=>a+parseFloat(t.montant||0),0),
+      decaiss: mouvts.filter(t=>t.type==='depense').reduce((a,t)=>a+parseFloat(t.montant||0),0),
+    };
+  }
+  const moisLabels = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+
+  // Solde cumulé
+  let cumul = 0;
+  const lignesMois = mois12.map((ym,i)=>{
+    const fl = fluxParMois[ym];
+    const flux = fl.encaiss - fl.decaiss;
+    cumul += flux;
+    return {mois:moisLabels[i], encaiss:fl.encaiss, decaiss:fl.decaiss, flux, cumul};
+  });
+
+  // Catégories de flux
+  const fluxExploit = d.encaissements - d.decaissements;
+
+  const chartData = JSON.stringify({
+    labels: moisLabels,
+    encaiss: mois12.map(ym=>fluxParMois[ym].encaiss),
+    decaiss: mois12.map(ym=>fluxParMois[ym].decaiss),
+    cumul: lignesMois.map(l=>l.cumul),
+  });
+
+  el.innerHTML = `
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div>
+      <h2 style="margin:0;font-size:18px;font-weight:500;color:var(--color-text-primary)">Tableau de Flux de Trésorerie</h2>
+      <div style="font-size:12px;color:var(--color-text-secondary)">Exercice ${d.annee} — Méthode directe SYSCOHADA</div>
+    </div>
+    <button class="btn btn-gh btn-sm" onclick="exportOhadaFlux()"><i class="fas fa-print"></i> Imprimer PDF</button>
+  </div>
+
+  <!-- KPIs flux -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:14px">
+    <div class="kpi kpi-g"><div class="kpi-lbl">Encaissements</div><div class="kpi-val" style="color:#15803d">${fcfaOhada(d.encaissements)}</div><div class="kpi-sub">Total recettes N</div></div>
+    <div class="kpi kpi-r"><div class="kpi-lbl">Décaissements</div><div class="kpi-val" style="color:#dc2626">${fcfaOhada(d.decaissements)}</div><div class="kpi-sub">Total dépenses N</div></div>
+    <div class="kpi" style="border-top:3px solid ${fluxExploit>=0?'#15803d':'#dc2626'}">
+      <div class="kpi-lbl">Flux net exploitation</div>
+      <div class="kpi-val" style="color:${fluxExploit>=0?'#15803d':'#dc2626'}">${fluxExploit>=0?'+':''}${fcfaOhada(fluxExploit)}</div>
+      <div class="kpi-sub">Encaissements − Décaissements</div>
+    </div>
+    <div class="kpi kpi-b"><div class="kpi-lbl">Solde fin d'exercice</div><div class="kpi-val" style="color:#1e40af">${fcfaOhada(cumul)}</div><div class="kpi-sub">Trésorerie cumulée</div></div>
+  </div>
+
+  <!-- Graphique flux mensuels -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">📈 Flux mensuels + Trésorerie cumulée</div>
+    <div class="card-bd" style="padding:12px"><canvas id="chartFlux" height="200"></canvas></div>
+  </div>
+
+  <!-- Tableau mensuel détaillé -->
+  <div class="card">
+    <div class="card-hd"><span>📋 Détail mensuel des flux</span></div>
+    <div class="card-bd tbl-wrap">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th>Mois</th>
+          <th style="text-align:right">Encaissements</th>
+          <th style="text-align:right">Décaissements</th>
+          <th style="text-align:right">Flux net</th>
+          <th style="text-align:right">Trésorerie cumulée</th>
+        </tr></thead>
+        <tbody>
+          ${lignesMois.map((l,i)=>`<tr style="${i%2?'background:var(--color-background-secondary)':''}">
+            <td style="font-weight:500">${l.mois} ${d.annee}</td>
+            <td style="text-align:right;color:#15803d">${l.encaiss>0?'+':''} ${fcfaOhada(l.encaiss)}</td>
+            <td style="text-align:right;color:#dc2626">${l.decaiss>0?'− ':''} ${fcfaOhada(l.decaiss)}</td>
+            <td style="text-align:right;font-weight:600;color:${l.flux>=0?'#15803d':'#dc2626'}">${l.flux>=0?'+':''}${fcfaOhada(l.flux)}</td>
+            <td style="text-align:right;font-weight:600;color:${l.cumul>=0?'#1e40af':'#dc2626'}">${fcfaOhada(l.cumul)}</td>
+          </tr>`).join('')}
+          <tr style="background:var(--color-background-info);font-weight:700;font-size:13px">
+            <td>TOTAL ${d.annee}</td>
+            <td style="text-align:right;color:#15803d">${fcfaOhada(d.encaissements)}</td>
+            <td style="text-align:right;color:#dc2626">${fcfaOhada(d.decaissements)}</td>
+            <td style="text-align:right;color:${fluxExploit>=0?'#15803d':'#dc2626'}">${fluxExploit>=0?'+':''}${fcfaOhada(fluxExploit)}</td>
+            <td style="text-align:right;color:#1e40af">${fcfaOhada(cumul)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const dark=window.matchMedia('(prefers-color-scheme:dark)').matches;
+    const gc=dark?'rgba(255,255,255,.08)':'rgba(0,0,0,.07)';
+    const tc=dark?'#9ca3af':'#6b7280';
+    const data=${chartData};
+    const ctx=document.getElementById('chartFlux');
+    if(!ctx) return;
+    new Chart(ctx,{
+      type:'bar',
+      data:{
+        labels:data.labels,
+        datasets:[
+          {label:'Encaissements',data:data.encaiss,backgroundColor:'rgba(21,128,61,.6)',borderRadius:4,yAxisID:'y'},
+          {label:'Décaissements',data:data.decaiss.map(v=>-v),backgroundColor:'rgba(220,38,38,.5)',borderRadius:4,yAxisID:'y'},
+          {type:'line',label:'Tréso cumulée',data:data.cumul,borderColor:'#1e40af',borderWidth:2,pointRadius:3,pointBackgroundColor:'#1e40af',fill:false,tension:.3,yAxisID:'y2'}
+        ]
+      },
+      options:{
+        responsive:true,
+        plugins:{legend:{labels:{font:{size:11},color:tc}}},
+        scales:{
+          y:{position:'left',ticks:{font:{size:9},color:tc,callback:function(v){return (v/1000).toFixed(0)+'K';}},grid:{color:gc}},
+          y2:{position:'right',ticks:{font:{size:9},color:'#1e40af',callback:function(v){return (v/1000).toFixed(0)+'K';}},grid:{display:false}},
+          x:{ticks:{font:{size:10},color:tc},grid:{display:false}}
+        }
+      }
+    });
+  })();
+  <\/script>`;
+  window._ohadaD = d;
+}
+
+// ── Export PDF ────────────────────────────────────────────────
+window.exportOhadaCR = async function(){
+  const d = window._ohadaD || await collectOhadaData();
+  const html = `<h1>Compte de Résultat OHADA — Exercice ${d.annee}</h1>
+  <p>Entreprise : <strong>Exploitation Avicole</strong> — Système SYSCOHADA Révisé</p>
+  <h2>Produits d'exploitation</h2>
+  <table><thead><tr><th>Réf</th><th>Libellé</th><th style="text-align:right">Montant</th></tr></thead><tbody>
+    <tr><td>701</td><td>Ventes d'œufs</td><td style="text-align:right">${fcfaOhada(d.v701)}</td></tr>
+    <tr><td>702</td><td>Ventes de poulets</td><td style="text-align:right">${fcfaOhada(d.v702)}</td></tr>
+    <tr><td>703</td><td>Ventes de poussins</td><td style="text-align:right">${fcfaOhada(d.v703)}</td></tr>
+    <tr><td>708</td><td>Autres ventes</td><td style="text-align:right">${fcfaOhada(d.v708)}</td></tr>
+    <tr class="total-row"><td></td><td>TOTAL PRODUITS</td><td style="text-align:right">${fcfaOhada(d.totalVentes)}</td></tr>
+  </tbody></table>
+  <h2>Charges d'exploitation</h2>
+  <table><thead><tr><th>Réf</th><th>Libellé</th><th style="text-align:right">Montant</th></tr></thead><tbody>
+    <tr><td>601</td><td>Achats poussins / géniteurs</td><td style="text-align:right">${fcfaOhada(d.c601)}</td></tr>
+    <tr><td>602</td><td>Aliments & intrants</td><td style="text-align:right">${fcfaOhada(d.c602)}</td></tr>
+    <tr><td>603</td><td>Médicaments & vaccins</td><td style="text-align:right">${fcfaOhada(d.c603)}</td></tr>
+    <tr><td>622</td><td>Entretien & maintenance</td><td style="text-align:right">${fcfaOhada(d.c622)}</td></tr>
+    <tr><td>625</td><td>Transports</td><td style="text-align:right">${fcfaOhada(d.c625)}</td></tr>
+    <tr><td>641</td><td>Charges de personnel</td><td style="text-align:right">${fcfaOhada(d.c641)}</td></tr>
+    <tr><td>699</td><td>Autres charges</td><td style="text-align:right">${fcfaOhada(d.c699)}</td></tr>
+    <tr class="total-row"><td></td><td>TOTAL CHARGES</td><td style="text-align:right">${fcfaOhada(d.totalChargesCR)}</td></tr>
+  </tbody></table>
+  <table><tbody><tr class="${d.resultatNet>=0?'total-row':'total-row neg'}"><td><strong>13</strong></td><td><strong>RÉSULTAT NET DE L'EXERCICE</strong></td><td style="text-align:right"><strong>${d.resultatNet>=0?'+':''}${fcfaOhada(d.resultatNet)}</strong></td></tr></tbody></table>`;
+  printOhada('CR OHADA — Exercice '+d.annee, html);
+};
+
+window.exportOhadaBilan = async function(){
+  const d = window._ohadaD || await collectOhadaData();
+  printOhada('Bilan OHADA — '+d.annee, `<h1>Bilan OHADA — Au 31/12/${d.annee}</h1><p>Système SYSCOHADA Révisé — Bilan simplifié</p>`);
+};
+
+window.exportOhadaFlux = async function(){
+  const d = window._ohadaD || await collectOhadaData();
+  printOhada('Flux Trésorerie OHADA — '+d.annee, `<h1>Tableau de Flux de Trésorerie — ${d.annee}</h1><p>Méthode directe SYSCOHADA</p><table><thead><tr><th>Rubrique</th><th>Montant</th></tr></thead><tbody><tr><td>Total encaissements</td><td style="text-align:right">${fcfaOhada(d.encaissements)}</td></tr><tr><td>Total décaissements</td><td style="text-align:right">− ${fcfaOhada(d.decaissements)}</td></tr><tr class="total-row"><td>FLUX NET DE TRÉSORERIE</td><td style="text-align:right">${fcfaOhada(d.encaissements-d.decaissements)}</td></tr></tbody></table>`);
+};
+
 async function renderFinance(ca){
   Object.values(finCharts).forEach(function(c){try{c.destroy();}catch(e){}});
   finCharts={};
   var fin=await computeFinanceGlobale();
   var roi=fin.totalCharges>0?(fin.margeGlobale/fin.totalCharges*100):0;
   var txCh=fin.totalRecettes>0?(fin.totalCharges/fin.totalRecettes*100):0;
-  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget'].map(function(t){
-    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel'};
+  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','ohada_cr','ohada_bilan','ohada_flux'].map(function(t){
+    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',ohada_cr:'🏛️ CR OHADA',ohada_bilan:'⚖️ Bilan OHADA',ohada_flux:'💧 Flux Trésorerie'};
     return '<button class="tab-btn '+(finTab===t?'on':'')+'" data-tab="'+t+'" onclick="switchFinTab(\''+t+'\')">'+labs[t]+'</button>';
   }).join('');
 
@@ -8228,6 +8960,9 @@ async function renderFinTab(fin){
   else if(finTab==='charges') await renderFinCharges(el,fin);
   else if(finTab==='tresorerie') renderFinTreso(el,fin);
   else if(finTab==='budget') renderFinBudget(el,fin);
+  else if(finTab==='ohada_cr') await renderOhadaCR(el,fin);
+  else if(finTab==='ohada_bilan') await renderOhadaBilan(el,fin);
+  else if(finTab==='ohada_flux') await renderOhadaFlux(el,fin);
 }
 
 // ── 1. SYNTHESE ──
@@ -16346,14 +17081,106 @@ window.goTo = function(page){
     const el = document.getElementById('mbn-'+id);
     if(el) el.classList.toggle('active', page===id);
   });
-  // Bouton lots flottant
+  // ── FAB lots + FAB saisie selon page/onglet ──
   setTimeout(()=>{
-    const btn = document.getElementById('mobLotsFloatBtn');
-    if(btn) btn.style.display = (isMobile() && page==='lots') ? 'flex' : 'none';
-    if(page==='lots') mobInjectLotsBtn();
-  }, 250);
+    mobInjectLotsBtn(page);
+    mobUpdateSaisieBtn();
+  }, 300);
+  // ── FAB générique : afficher sur les pages avec action "Ajouter" (sauf lots) ──
+  const fabPages = ['stocks','fourns','bcs','prods','staff','clients','commandes','depots','gmao','fab','cond','creances'];
+  const fab = document.getElementById('mobFab');
+  if(fab && isMobile()){
+    fab.style.display = fabPages.includes(page) ? 'flex' : 'none';
+  }
 };
 
+// ── FAB Action : déclenche l'action "Ajouter" de la page courante ──
+window.mobFabAction = function(){
+  const actions = {
+    stocks:    ()=>{ if(typeof openMvtModal==='function')  openMvtModal(); },
+    fourns:    ()=>{ if(typeof openFournModal==='function') openFournModal(); },
+    bcs:       ()=>{ if(typeof openBCModal==='function')   openBCModal(); },
+    prods:     ()=>{ if(typeof openProdModal==='function') openProdModal(); },
+    staff:     ()=>{ if(typeof openStaffModal==='function') openStaffModal(); },
+    clients:   ()=>{ if(typeof openClientModal==='function') openClientModal(); },
+    commandes: ()=>{ if(typeof openCmdModal==='function')  openCmdModal(); },
+    depots:    ()=>{ if(typeof openDepotModal==='function') openDepotModal(); },
+    gmao:      ()=>{ if(typeof openEquipModal==='function') openEquipModal(); },
+    fab:       ()=>{ /* ouvre le premier onglet actif */ const b=document.querySelector('.fab-tab-btn.active'); if(b) b.click(); },
+    cond:      ()=>{ if(typeof openCondModal==='function') openCondModal(); },
+    creances:  ()=>{ if(typeof openCreanceModal==='function') openCreanceModal(); },
+  };
+  const act = actions[curPage];
+  if(act){
+    // Animation tactile
+    const fab=document.getElementById('mobFab');
+    if(fab){ fab.style.transform='scale(0.88)'; setTimeout(()=>fab.style.transform='',200); }
+    act();
+  } else {
+    // Fallback : chercher le premier bouton btn-p visible dans la page
+    const firstBtn = document.querySelector('.page-header .btn-p, .card-hd .btn-p');
+    if(firstBtn) firstBtn.click();
+  }
+};
+
+
+// ── FAB Élevage : affiche/masque le bouton "Nouveau lot" flottant ──
+window.mobInjectLotsBtn = function(page){
+  const btn = document.getElementById('mobLotsFloatBtn');
+  if(!btn) return;
+  const show = isMobile() && (page === 'lots' || curPage === 'lots');
+  btn.style.display = show ? 'flex' : 'none';
+};
+
+// ── FAB Saisie : affiche/masque selon l'onglet actif ──
+window.mobUpdateSaisieBtn = function(){
+  const btn = document.getElementById('mobSaisieFloatBtn');
+  const lotsBtn = document.getElementById('mobLotsFloatBtn');
+  if(!btn) return;
+  const isSaisie = isMobile() && curPage === 'lots' && activeLotTab === 'saisie';
+  btn.style.display = isSaisie ? 'flex' : 'none';
+  // Le FAB "Nouveau lot" monte pour ne pas chevaucher le FAB save
+  if(lotsBtn) lotsBtn.style.bottom = isSaisie ? '128px' : '70px';
+};
+
+// ── FAB Saisie auto-save : détecte le 1er formulaire renseigné et enregistre ──
+window.mobSaisieAutoSave = function(){
+  const fab = document.getElementById('mobSaisieFloatBtn');
+  // Animation tactile
+  if(fab){ fab.style.transform='scale(0.88)'; setTimeout(()=>fab.style.transform='',200); }
+
+  // Priorité : mortalité > ponte/pesée > alimentation > eau
+  const mNb   = document.getElementById('mNb');
+  const sEggs = document.getElementById('sEggs');
+  const sPoids= document.getElementById('sPoids');
+  const fKg   = document.getElementById('fKg');
+  const wLitres=document.getElementById('wLitres');
+
+  if(mNb && mNb.value > 0){
+    if(typeof saveMortalite === 'function') saveMortalite();
+    return;
+  }
+  if(sEggs && sEggs.value > 0){
+    if(typeof savePonte === 'function') savePonte();
+    return;
+  }
+  if(sPoids && sPoids.value > 0){
+    if(typeof savePesee === 'function') savePesee();
+    return;
+  }
+  if(fKg && parseFloat(fKg.value) > 0){
+    if(typeof saveFeed === 'function') saveFeed();
+    return;
+  }
+  if(wLitres && parseFloat(wLitres.value) > 0){
+    if(typeof saveWater === 'function') saveWater();
+    return;
+  }
+  // Aucun champ renseigné : scroll vers le 1er formulaire
+  const firstInput = document.querySelector('#mNb, #sEggs, #sPoids');
+  if(firstInput){ firstInput.focus(); firstInput.scrollIntoView({behavior:'smooth',block:'center'}); }
+  if(window.toast) toast('💡 Renseignez au moins un champ avant d\'enregistrer','warn');
+};
 
 // ════════════════════════════════════════════════════════════════════════
 //  MODULE REPRODUCTION & COUVOIR
