@@ -13010,12 +13010,12 @@ window.openRecetteModal = async function(id=null) {
     if(!div)return;
     div.innerHTML=window._fabLignes.map((l,i)=>`
       <div style="display:grid;grid-template-columns:1fr 1fr 90px 70px 32px;gap:6px;margin-bottom:6px;align-items:center">
-        <select style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" onchange="window._fabLignes[${i}].produitId=parseInt(this.value||s.valeur)||null;if(!this.value||s.valeur){}else{var pn=window._fabLignes[${i}];window._fabLignes[${i}].designation=this.options[this.selectedIndex].text.split('(')[0].trim();}document.getElementById('fabIngDiv').dispatchEvent(new Event('rerender'))">
+        <select style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" onchange="window._fabLignes[${i}].produitId=parseInt(this.value)||null;if(this.value){window._fabLignes[${i}].designation=this.options[this.selectedIndex].text.split('(')[0].trim();}document.getElementById('fabIngDiv').dispatchEvent(new Event('rerender'))">
           <option value="">— Produit catalogue —</option>${opts.replace('value="'+l.produitId+'"', 'value="'+l.produitId+'" selected')}
         </select>
-        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" value="${esc(l.designation||'')}" placeholder="ou saisir désignation libre" oninput="window._fabLignes[${i}].designation=this.value||s.valeur;window._fabLignes[${i}].produitId=null">
-        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;text-align:right" type="number" value="${l.qte||0}" min="0" step="0.1" placeholder="Qté" oninput="window._fabLignes[${i}].qte=parseFloat(this.value||s.valeur)||0;calcCoutRecette()">
-        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" value="${esc(l.unite||'kg')}" placeholder="kg" oninput="window._fabLignes[${i}].unite=this.value||s.valeur">
+        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" value="${esc(l.designation||'')}" placeholder="ou saisir désignation libre" oninput="window._fabLignes[${i}].designation=this.value;window._fabLignes[${i}].produitId=null">
+        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;text-align:right" type="number" value="${l.qte||0}" min="0" step="0.1" placeholder="Qté" oninput="window._fabLignes[${i}].qte=parseFloat(this.value)||0;calcCoutRecette()">
+        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" value="${esc(l.unite||'kg')}" placeholder="kg" oninput="window._fabLignes[${i}].unite=this.value||'kg'">
         <button class="btn-del" onclick="window._fabLignes.splice(${i},1);document.getElementById('fabIngDiv').dispatchEvent(new Event('rerender'))"><i class="fas fa-times"></i></button>
       </div>`).join('');
   };
@@ -13082,22 +13082,38 @@ window.openRecetteModal = async function(id=null) {
 };
 
 window.saveRecette = async function(){
-  const id=document.getElementById('recetteId').value;
-  const nom=document.getElementById('recetteNom').value.trim();
-  if(!nom){toast('Nom requis','err');return;}
-  if(!window._fabLignes.length||!window._fabLignes.some(l=>l.qte>0)){toast('Ajoutez au moins un ingrédient avec une quantité','err');return;}
-  const data={
-    nom, type:document.getElementById('recetteType').value,
-    qteRef:parseFloat(document.getElementById('recetteQteRef').value)||100,
-    depotId:document.getElementById('recetteDepot').value?parseInt(document.getElementById('recetteDepot').value):null,
-    ingredients:window._fabLignes.filter(l=>l.qte>0).map(l=>({...l,produitId:l.produitId?parseInt(l.produitId):null})),
-    notes:document.getElementById('recetteNotes').value.trim(), ts:Date.now()
-  };
-  if(id) await updRec(S.FAB_RECETTES,parseInt(id),data);
-  else await addRec(S.FAB_RECETTES,data);
-  closeOverlay('ovRecette');
-  toast(id?'Recette mise à jour':'Recette créée ✓');
-  await renderFab(document.getElementById('contentArea'));
+  const btn = document.querySelector('#ovRecette .modal-footer .btn-p');
+  if(btn && btn.disabled) return; // Protection double-clic
+  if(btn) btn.disabled = true;
+  try {
+    const id=document.getElementById('recetteId').value;
+    const nom=document.getElementById('recetteNom').value.trim();
+    if(!nom){toast('Nom requis','err');return;}
+    if(!window._fabLignes.length||!window._fabLignes.some(l=>l.qte>0)){toast('Ajoutez au moins un ingrédient avec une quantité','err');return;}
+    const qteRef=parseFloat(document.getElementById('recetteQteRef').value);
+    if(!qteRef||qteRef<=0){toast('Quantité de référence invalide (doit être > 0)','err');return;}
+    const depotRaw=document.getElementById('recetteDepot').value;
+    const depotId=depotRaw?parseInt(depotRaw):null;
+    const data={
+      nom, type:document.getElementById('recetteType').value,
+      qteRef,
+      depotId: isNaN(depotId)?null:depotId,
+      ingredients:window._fabLignes.filter(l=>l.qte>0).map(l=>({...l,produitId:l.produitId?parseInt(l.produitId):null})),
+      notes:document.getElementById('recetteNotes').value.trim(),
+      updatedAt:Date.now()
+    };
+    if(id){
+      await updRec(S.FAB_RECETTES,parseInt(id),data);
+    } else {
+      data.createdAt=Date.now();
+      await addRec(S.FAB_RECETTES,data);
+    }
+    closeOverlay('ovRecette');
+    toast(id?'Recette mise à jour':'Recette créée ✓');
+    await renderFab(document.getElementById('contentArea'));
+  } finally {
+    if(btn) btn.disabled = false;
+  }
 };
 
 window.delRecette=async function(id){
