@@ -1837,10 +1837,16 @@ function _toSnake(obj) {
 function _toCamel(obj) {
   if (!obj || typeof obj !== 'object') return obj;
   const out = {};
+  // Champs JSONB stockés en string selon les configs Supabase
+  const _JSONB_FIELDS = new Set(['ingredients','lignes','lines','items']);
   for (const [k, v] of Object.entries(obj)) {
     const ck = _FIELD_MAP_INV[k] || k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-    out[ck] = v;
-    out[k]  = v; // garder aussi snake_case pour compatibilité
+    let val = v;
+    if (_JSONB_FIELDS.has(k) && typeof v === 'string') {
+      try { val = JSON.parse(v); } catch(_) {}
+    }
+    out[ck] = val;
+    out[k]  = val; // garder aussi snake_case pour compatibilité
   }
   return out;
 }
@@ -1938,7 +1944,9 @@ async function _flushQ() {
       if (body) {
         delete body._localId; delete body._offline; delete body._supaId;
         delete body.is_demo; delete body.isDemo;
-        delete body.ingredients; delete body.lignes; delete body.lines; delete body.items;
+        // Conserver ingredients/lignes pour les stores fab_ (colonnes JSONB Supabase)
+        const _FAB_JSONB_Q = new Set(['fab_recettes','fab_aliments']);
+        if (!_FAB_JSONB_Q.has(op.t)) { delete body.ingredients; delete body.lignes; delete body.lines; delete body.items; }
       }
       await _supaFetch(op.m, op.t, body ? _toSnake(body) : null, op.p||'');
       _offlineQ.shift();
@@ -2170,7 +2178,9 @@ async function addRec(st, d) {
     const rec = _toSnake(Object.assign({}, d));
     if (!rec.id) delete rec.id;
     delete rec.is_demo; delete rec.isDemo;
-    delete rec.ingredients; delete rec.lignes; delete rec.lines; delete rec.items;
+    // Conserver ingredients/lignes pour les stores fab_ (colonnes JSONB Supabase)
+    const _FAB_JSONB_STORES = new Set(['fab_recettes','fab_aliments']);
+    if (!_FAB_JSONB_STORES.has(tbl)) { delete rec.ingredients; delete rec.lignes; delete rec.lines; delete rec.items; }
     const rows = await _supaFetch('POST', tbl, rec);
     const supaId = Array.isArray(rows) ? rows[0]?.id : rows?.id;
     // Mettre à jour l'enregistrement IDB avec l'id Supabase réel
@@ -2208,6 +2218,9 @@ async function updRec(st, id, d) {
   try {
     const rec = _toSnake(Object.assign({}, d));
     delete rec.id; delete rec.is_demo; delete rec.isDemo;
+    // Conserver ingredients/lignes pour les stores fab_ (colonnes JSONB Supabase)
+    const _FAB_JSONB_STORES2 = new Set(['fab_recettes','fab_aliments']);
+    if (!_FAB_JSONB_STORES2.has(tbl)) { delete rec.ingredients; delete rec.lignes; delete rec.lines; delete rec.items; }
     await _supaFetch('PATCH', tbl, rec, `id=eq.${id}`);
     localStorage.removeItem('sc_'+st);
   } catch(e) {
