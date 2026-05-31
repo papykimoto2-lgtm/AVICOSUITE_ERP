@@ -1911,8 +1911,6 @@ const IDB_ONLY = new Set([
   'protocols','prophylaxis_tasks','nutrition_protocols',
   'buildings','lines','activity_log','slaughter',
   'budget_lignes',
-  // Fabrication : colonne ingredients JSONB non encore migrée → IDB local
-  'fab_recettes','fab_norms',
 ]);
 
 let _supaOnline = false;
@@ -12565,7 +12563,8 @@ async function renderFab(ca) {
   const rowsRecettes = recettes.map(r => {
     const lignes = (r.ingredients||[]).length;
     const coût = (r.ingredients||[]).reduce((a,ig)=>{
-      const p=prods.find(x=>x.id===ig.produitId);
+      const pid = ig.produitId||ig.produit_id||null;
+      const p=prods.find(x=>x.id===pid);
       return a+(ig.qte||0)*(p?.prix||0);
     },0);
     return `<tr>
@@ -13016,7 +13015,14 @@ window.openRecetteModal = async function(id=null) {
   const matieres = prods; // Tous les produits disponibles comme matières
   let recette = null;
   if(id){const all=await getAll(S.FAB_RECETTES);recette=all.find(x=>x.id===id);}
-  window._fabLignes = recette ? (recette.ingredients||[]).map(l=>({...l})) : [{produitId:'',qte:0,unite:'kg'}];
+  // Supabase peut retourner ingredients en camelCase ou snake_case selon le mapping
+  const _ingrs = recette ? (recette.ingredients || recette.ingredients || []) : [];
+  window._fabLignes = _ingrs.length ? _ingrs.map(l=>({
+    produitId: l.produitId||l.produit_id||null,
+    designation: l.designation||'',
+    qte: l.qte||0,
+    unite: l.unite||'kg'
+  })) : [{produitId:null,designation:'',qte:0,unite:'kg'}];
 
   const opts = matieres.map(p=>`<option value="${p.id}">${esc(p.nom)} (${p.unite||'kg'})</option>`).join('');
 
@@ -13052,7 +13058,7 @@ window.openRecetteModal = async function(id=null) {
         <option value="finition" ${recette?.type==='finition'?'selected':''}>Finition (35j+)</option>
         <option value="autre" ${recette?.type==='autre'?'selected':''}>Autre</option>
       </select></div>
-      <div class="fg"><label>Quantité de référence (kg)</label><input id="recetteQteRef" type="number" value="${recette?.qteCible||recette?.qteRef||100}" placeholder="100"></div>
+      <div class="fg"><label>Quantité de référence (kg)</label><input id="recetteQteRef" type="number" value="${recette?.qte_cible||recette?.qteCible||recette?.qte_ref||recette?.qteRef||100}" placeholder="100"></div>
       <div class="fg"><label>Dépôt destination</label><select id="recetteDepot"><option value="">— Aucun —</option></select></div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -13079,14 +13085,14 @@ window.openRecetteModal = async function(id=null) {
   // Fill depots
   const depots = await getAll(S.DEPOTS);
   document.getElementById('recetteDepot').innerHTML='<option value="">— Aucun —</option>'+
-    depots.map(d=>`<option value="${d.id}" ${(recette?.depotDestId||recette?.depotId)===d.id?'selected':''}>${esc(d.nom)}</option>`).join('');
+    depots.map(d=>`<option value="${d.id}" ${(recette?.depot_dest_id||recette?.depotDestId||recette?.depot_id||recette?.depotId)===d.id?'selected':''}>${esc(d.nom)}</option>`).join('');
 
   document.getElementById('fabIngDiv').addEventListener('rerender',()=>{renderLignesFab();calcCoutRecette();});
   renderLignesFab();
 
   window.calcCoutRecette = async function(){
     const all=await getAll(S.PRODUITS);
-    const cout=window._fabLignes.reduce((a,l)=>{const p=all.find(x=>x.id===l.produitId);return a+(l.qte||0)*(p?.prix||0);},0);
+    const cout=window._fabLignes.reduce((a,l)=>{const pid=l.produitId||l.produit_id||null;const p=all.find(x=>x.id===pid);return a+(l.qte||0)*(p?.prix||0);},0);
     const qref=parseFloat(document.getElementById('recetteQteRef')?.value)||100;
     const el1=document.getElementById('coutMatTotal');if(el1)el1.textContent=Math.round(cout).toLocaleString()+' F';
     const el2=document.getElementById('coutQteRef');if(el2)el2.textContent=qref;
@@ -13110,24 +13116,29 @@ window.saveRecette = async function(){
     const depotRaw=document.getElementById('recetteDepot').value;
     const depotId=depotRaw?parseInt(depotRaw):null;
     const data={
-      nom, type:document.getElementById('recetteType').value,
-      qteCible:qteRef,
+      nom,
+      type: document.getElementById('recetteType').value,
+      qteCible: qteRef,
+      qteRef: qteRef,
       depotDestId: isNaN(depotId)?null:depotId,
-      ingredients:window._fabLignes.filter(l=>l.qte>0).map(l=>({...l,produitId:l.produitId?parseInt(l.produitId):null})),
-      notes:document.getElementById('recetteNotes').value.trim()
+      ingredients: window._fabLignes.filter(l=>l.qte>0).map(l=>({
+        produitId: l.produitId?parseInt(l.produitId):null,
+        designation: l.designation||'',
+        qte: l.qte||0,
+        unite: l.unite||'kg'
+      })),
+      notes: document.getElementById('recetteNotes').value.trim()
     };
     if(id){
       await updRec(S.FAB_RECETTES,parseInt(id),data);
     } else {
       await addRec(S.FAB_RECETTES,data);
     }
-    // Mémoriser l'onglet actif avant re-render
-    const _activeTab = (()=>{ const b=document.querySelector('.fab-tab-btn.active'); return b?b.dataset.tab:'recettes'; })();
     closeOverlay('ovRecette');
-    toast(id?'Recette mise à jour':'Recette créée ✓');
+    toast(id?'Recette mise à jour ✓':'Recette créée ✓');
     await renderFab(document.getElementById('contentArea'));
-    // Restaurer l'onglet — toujours rester sur "Recettes" après save
-    if(typeof switchFabTab === 'function') switchFabTab(_activeTab==='normes'?'recettes':_activeTab);
+    // Toujours revenir sur l'onglet Recettes après save
+    if(typeof switchFabTab === 'function') switchFabTab('recettes');
   } finally {
     if(btn) btn.disabled = false;
   }
