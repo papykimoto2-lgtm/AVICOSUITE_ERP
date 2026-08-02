@@ -1752,9 +1752,24 @@ const STORES_DEF=[
 //  Même interface qu'avant (openDB/getAll/getByIdx/addRec/updRec/delRec)
 //  → aucun autre endroit du fichier n'a besoin d'être modifié.
 // ════════════════════════════════════════════════════════
-const SUPA_URL = 'https://izgpvhwhbrgeagjfhfli.supabase.co';
-const SUPA_KEY = 'sb_publishable_IVhJiZJ8vSlmkou1QBCdXw_psNob1WK';
-const SUPA_ORG = 'default'; // même exploitation pour tous les comptes de la démo
+// ⚠️ Ces valeurs sont les défauts de démo. En production, CHAQUE exploitation cliente
+// doit avoir son propre org_id (idéalement son propre projet Supabase) pour éviter
+// tout mélange de données entre entreprises. Configurable dans Paramétrage > Cloud.
+const SUPA_DEFAULTS = {
+  url: 'https://izgpvhwhbrgeagjfhfli.supabase.co',
+  key: 'sb_publishable_IVhJiZJ8vSlmkou1QBCdXw_psNob1WK',
+  org: 'default'
+};
+function getSupaConfig(){
+  try{
+    const stored = JSON.parse(localStorage.getItem('sanixavi_supabase_config')||'null');
+    if(stored && stored.url && stored.key && stored.org) return stored;
+  }catch{}
+  return SUPA_DEFAULTS;
+}
+let SUPA_URL = getSupaConfig().url;
+let SUPA_KEY = getSupaConfig().key;
+let SUPA_ORG = getSupaConfig().org;
 let supa = null;
 
 // ── Chantier 1 : file d'attente hors-ligne ──
@@ -2485,6 +2500,7 @@ async function renderSettings(ca){
   const [users, settingsAll] = await Promise.all([getAll(S.USERS), getAll(S.SETTINGS_APP)]);
   const cfg = settingsAll.find(s=>s.key==='exploitation') || {};
   const isAdmin = currentUser?.role==='admin' || currentUser?.role==='manager';
+  const isSuperAdmin = currentUser?.role==='admin';
 
   const tabs = [
     ['exploitation','fa-building','Exploitation'],
@@ -2497,7 +2513,7 @@ async function renderSettings(ca){
     ['diagnostic','fa-stethoscope','Diagnostic'],
   ];
 
-  const tabContent = await renderSettingsTab(settingsTab, cfg, users, isAdmin);
+  const tabContent = await renderSettingsTab(settingsTab, cfg, users, isAdmin, isSuperAdmin);
 
   const tabsHtml = tabs.map(([id,ico,lbl])=>{
     const active = settingsTab===id ? 'active' : '';
@@ -2515,14 +2531,14 @@ async function renderSettings(ca){
     +'</div></div>';
 }
 
-async function renderSettingsTab(tab, cfg, users, isAdmin){
+async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='exploitation') return renderSettingsExploitation(cfg, isAdmin);
-  if(tab==='users')        return await renderSettingsUsers(users, isAdmin);
+  if(tab==='users')        return await renderSettingsUsers(users, isSuperAdmin);
   if(tab==='roles')        return renderSettingsRoles(isAdmin);
   if(tab==='notifs')       return renderSettingsNotifs(cfg, isAdmin);
   if(tab==='production')   return await renderSettingsProduction(cfg, users);
   if(tab==='cloud')        return renderSettingsCloud(cfg);
-  if(tab==='data')         return renderSettingsData();
+  if(tab==='data')         return renderSettingsData(isSuperAdmin);
   if(tab==='diagnostic')   return '<div id="diagContainer"><div style="padding:30px;text-align:center"><button class="btn btn-p" onclick="runDbDiagnostic()"><i class="fas fa-stethoscope"></i> Lancer le diagnostic</button></div></div>';
   return '';
 }
@@ -2532,6 +2548,7 @@ window.switchSettingsTab = async function(tab){
   const [users, settingsAll] = await Promise.all([getAll(S.USERS), getAll(S.SETTINGS_APP)]);
   const cfg = settingsAll.find(s=>s.key==='exploitation')||{};
   const isAdmin = currentUser?.role==='admin'||currentUser?.role==='manager';
+  const isSuperAdmin = currentUser?.role==='admin';
 
   // Màj sidebar actif
   document.querySelectorAll('.settings-nav-item').forEach(el=>{
@@ -2541,7 +2558,7 @@ window.switchSettingsTab = async function(tab){
 
   // Màj contenu
   const cont = document.getElementById('settingsContent');
-  if(cont) cont.innerHTML = await renderSettingsTab(tab, cfg, users, isAdmin);
+  if(cont) cont.innerHTML = await renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin);
 
   // Sur mobile : scroll l'onglet actif en vue
   const sidebar = document.querySelector('.settings-sidebar');
@@ -2760,7 +2777,7 @@ async function renderSettingsUsers(users, isAdmin){
       <td style="font-size:10px;color:var(--text3)">${lastAcces}</td>
       <td><span class="${u.actif!==false?'badge b-g':'badge b-r'}">${u.actif!==false?'Actif':'Inactif'}</span></td>
       <td style="white-space:nowrap">
-        ${isAdmin?`<button class="btn btn-sm btn-gh" onclick="openUserModal(${u.id})"><i class="fas fa-edit"></i></button>${!isMe?`<button class="btn-del" onclick="toggleUserActif(${u.id},${u.actif!==false})"><i class="fas fa-${u.actif!==false?'ban':'check'}"></i></button>`:''}`:'-'}
+        ${isAdmin?`<button class="btn btn-sm btn-gh" onclick="openUserModal(${u.id})"><i class="fas fa-edit"></i></button>${!isMe?`<button class="btn-del" onclick="toggleUserActif(${u.id},${u.actif!==false})"><i class="fas fa-${u.actif!==false?'ban':'check'}"></i></button><button class="btn-del" style="color:#dc2626" onclick="deleteUser(${u.id})"><i class="fas fa-trash"></i></button>`:''}`:'-'}
       </td>
     </tr>`;
   }).join('');
@@ -2782,7 +2799,7 @@ async function renderSettingsUsers(users, isAdmin){
       </div>
       ${isAdmin?`<div style="display:flex;flex-direction:column;gap:5px">
         <button class="btn btn-sm btn-gh" style="min-height:36px;padding:4px 10px" onclick="openUserModal(${u.id})"><i class="fas fa-edit"></i></button>
-        ${!isMe?`<button class="btn-del" style="min-height:36px;padding:4px 10px" onclick="toggleUserActif(${u.id},${u.actif!==false})"><i class="fas fa-${u.actif!==false?'ban':'check'}"></i></button>`:''}
+        ${!isMe?`<button class="btn-del" style="min-height:36px;padding:4px 10px" onclick="toggleUserActif(${u.id},${u.actif!==false})"><i class="fas fa-${u.actif!==false?'ban':'check'}"></i></button><button class="btn-del" style="min-height:36px;padding:4px 10px;color:#dc2626" onclick="deleteUser(${u.id})"><i class="fas fa-trash"></i></button>`:''}
       </div>`:''}
     </div>`;
   }).join('');
@@ -2808,6 +2825,7 @@ async function renderSettingsUsers(users, isAdmin){
 }
 
 window.openUserModal = async function(id){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const users = await getAll(S.USERS);
   const u = id ? users.find(x=>x.id===id) : null;
   const rp = u ? (ROLE_PERMS[u.role]||{}) : {};
@@ -2881,6 +2899,7 @@ window.openUserModal = async function(id){
 
 
 window.saveUser = async function(id){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const nom   = document.getElementById('uNom')?.value.trim();
   const email = document.getElementById('uEmail')?.value.trim().toLowerCase();
   const tel   = document.getElementById('uTel')?.value.trim()||'';
@@ -2915,6 +2934,7 @@ window.saveUser = async function(id){
 };
 
 window.toggleUserActif = async function(id, currentlyActif){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const users = await getAll(S.USERS);
   const u = users.find(x=>x.id===id);
   if(!u) return;
@@ -2927,10 +2947,13 @@ window.toggleUserActif = async function(id, currentlyActif){
 function renderSettingsRoles(isAdmin){
   const PAGES = [
     {id:'dash',label:'Tableau de bord'}, {id:'lots',label:'Lots & Élevage'},
-    {id:'stocks',label:'Stocks'}, {id:'depots',label:'Dépôts'},
-    {id:'clients',label:'Clients'}, {id:'commandes',label:'Commandes'},
+    {id:'reprocouvoir',label:'Repro. & Couvoir'},
+    {id:'stocks',label:'Stocks'}, {id:'depots',label:'Dépôts'}, {id:'mvts',label:'Mouvements'},
+    {id:'prods',label:'Produits & Matières'}, {id:'fourns',label:'Fournisseurs'}, {id:'bcs',label:'Bons de commande'},
+    {id:'cond',label:'Conditionnement'},
+    {id:'clients',label:'Clients'}, {id:'commandes',label:'Commandes'}, {id:'creances',label:'Créances'},
     {id:'finance',label:'Finance'}, {id:'fab',label:'Fabrication aliments'},
-    {id:'gmao',label:'GMAO'}, {id:'rapports',label:'Rapports'},
+    {id:'gmao',label:'GMAO'}, {id:'staff',label:'Personnel'}, {id:'rapports',label:'Rapports'},
     {id:'reappro',label:'Réappro auto'}, {id:'simubande',label:'Simulation'},
     {id:'settings',label:'Paramétrage'},
   ];
@@ -3037,7 +3060,7 @@ window.saveNotifs = async function(){
 };
 
 // ── Tab Données ──
-function renderSettingsData(){
+function renderSettingsData(isSuperAdmin){
   return `
   <div class="settings-section-title">💾 Gestion des données</div>
   <div class="settings-section-sub">Sauvegardez, restaurez ou réinitialisez la base de données locale de Sanix AviNest Pro.</div>
@@ -3051,9 +3074,9 @@ function renderSettingsData(){
         L'application a été initialisée avec des lots, clients, fournisseurs et mouvements de stock fictifs (marqués <code>isDemo:true</code>).
         Avant de démarrer en production, purgez-les pour ne partir que de vos vraies données.
       </div>
-      <button class="btn btn-sm" style="background:#fef3c7;color:#b45309;border:1.5px solid #fbbf24;margin-top:8px" onclick="purgeDemo()">
+      ${isSuperAdmin?`<button class="btn btn-sm" style="background:#fef3c7;color:#b45309;border:1.5px solid #fbbf24;margin-top:8px" onclick="purgeDemo()">
         🧹 Purger les données démo (conserver utilisateurs & paramètres)
-      </button>
+      </button>`:''}
     </div>
   </div>
 
@@ -3066,7 +3089,7 @@ function renderSettingsData(){
         <button class="btn btn-p btn-sm" onclick="exportAllData()"><i class="fas fa-download"></i> Télécharger la sauvegarde</button>
       </div>
     </div>
-    <div class="card" style="margin-bottom:0">
+    ${isSuperAdmin?`<div class="card" style="margin-bottom:0">
       <div class="card-bd" style="text-align:center;padding:20px">
         <i class="fas fa-upload" style="font-size:28px;color:var(--blue);margin-bottom:10px;display:block"></i>
         <div style="font-weight:700;font-size:13px;margin-bottom:4px">Importer des données</div>
@@ -3084,7 +3107,9 @@ function renderSettingsData(){
         <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Effacer TOUTES les données et repartir à zéro</div>
         <button class="btn btn-r btn-sm" onclick="confirmHardReset()"><i class="fas fa-trash-alt"></i> Réinitialiser complètement</button>
       </div>
-    </div>
+    </div>`:`<div class="card" style="margin-bottom:0;grid-column:span 2;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:11px;padding:20px;text-align:center">
+      <div><i class="fas fa-lock" style="font-size:20px;display:block;margin-bottom:6px"></i>Import et réinitialisation réservés à l'Administrateur</div>
+    </div>`}
   </div>
 
   <div class="card">
@@ -3134,6 +3159,7 @@ window.exportAllData = async function(){
 };
 
 window.importData = async function(input){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const file = input.files[0];
   if(!file) return;
   if(!confirm('Importer et REMPLACER toutes les données actuelles par ce fichier ?')) return;
@@ -6408,6 +6434,7 @@ window.runDbDiagnostic = async function(){
 };
 
 window.confirmHardReset = async function(){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const confirmation = prompt(
     '⚠️ RÉINITIALISATION TOTALE\n\nToutes vos données (lots, stock, finance, clients, commandes…) seront effacées.\n\nTapez SUPPRIMER pour confirmer :'
   );
@@ -9777,6 +9804,7 @@ async function renderFab(ca) {
 
 // ── Purger les données démo (garde les vraies données) ──
 window.purgeDemo = async function(){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   if(!confirm('Supprimer TOUTES les données démo (lots, clients, fournisseurs, mouvements de stock, personnel démo) ?\n\nVos vraies données, utilisateurs et paramètres seront conservés.')) return;
   const btn = event?.target;
   if(btn){ btn.disabled=true; btn.textContent='⏳ Suppression…'; }
@@ -10342,6 +10370,7 @@ window.delOF=async function(id){
 <script>
 // ── Supprimer un utilisateur ──
 window.deleteUser = async function(id){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   if(currentUser?.id===id){ toast('Impossible de supprimer votre propre compte','err'); return; }
   if(!confirm('Supprimer définitivement cet utilisateur ? Cette action est irréversible.')) return;
   await delRec(S.USERS, id);
@@ -10351,6 +10380,7 @@ window.deleteUser = async function(id){
 };
 
 window.resetUserPassword = async function(id){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   if(!confirm('Réinitialiser le mot de passe de cet utilisateur → 1234 ?')) return;
   const users = await getAll(S.USERS);
   const u = users.find(x=>x.id===id);
@@ -10501,10 +10531,43 @@ function renderSettingsCloud(cfg){
   const cloudCfg   = JSON.parse(localStorage.getItem('sanixavi_cloud')||'{}');
   const lastBackup = localStorage.getItem('sanixavi_lastBackup');
   const lastStr    = lastBackup ? new Date(parseInt(lastBackup)).toLocaleString('fr-FR') : 'Jamais';
+  const supaCfg    = getSupaConfig();
+  const isSuperAdmin = currentUser?.role==='admin';
+  const isDefaultOrg = supaCfg.org==='default';
 
   return `
   <div class="settings-section-title">☁️ Cloud & Synchronisation</div>
   <div class="settings-section-sub">Sauvegarde automatique, webhook et partage des données.</div>
+
+  <!-- Connexion Supabase -->
+  <div class="card" style="margin-bottom:14px;border:1.5px solid ${isDefaultOrg?'#fbbf24':'var(--g3)'}">
+    <div class="card-hd" style="background:${isDefaultOrg?'#fffbeb':'#f0fdf4'}">
+      <span>${isDefaultOrg?'⚠️':'🔐'} Connexion Supabase (base partagée multi-utilisateurs)</span>
+    </div>
+    <div class="card-bd">
+      ${isDefaultOrg?`<div style="font-size:11px;color:#b45309;background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:8px 12px;margin-bottom:12px">
+        <strong>⚠️ org_id = "default"</strong> — identifiant de démo, partagé par toutes les copies non configurées de cet ERP. Avant mise en production chez ce client, définissez un <strong>org_id unique</strong> ci-dessous pour isoler ses données de celles des autres clients.
+      </div>`:''}
+      <div class="form-grid">
+        <div class="fg fg-full"><label>URL du projet Supabase</label>
+          <input id="supaUrlInput" value="${esc(supaCfg.url)}" placeholder="https://xxxx.supabase.co" ${isSuperAdmin?'':'readonly'}>
+        </div>
+        <div class="fg fg-full"><label>Clé anon / publishable</label>
+          <input id="supaKeyInput" value="${esc(supaCfg.key)}" type="password" placeholder="sb_publishable_…" ${isSuperAdmin?'':'readonly'}>
+        </div>
+        <div class="fg fg-full"><label>Identifiant d'exploitation (org_id) — unique par client</label>
+          <input id="supaOrgInput" value="${esc(supaCfg.org)}" placeholder="ex: sanix-ferme-abidjan-01" ${isSuperAdmin?'':'readonly'}>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-gh" style="min-height:40px" onclick="testSupaConnection()"><i class="fas fa-plug"></i> Tester la connexion</button>
+        <button class="btn btn-gh" style="min-height:40px" onclick="testSupaSync()"><i class="fas fa-sync"></i> Tester la synchronisation</button>
+        ${isSuperAdmin?`<button class="btn btn-p" style="min-height:40px" onclick="saveSupaConfig()"><i class="fas fa-save"></i> Enregistrer et recharger</button>`:''}
+      </div>
+      <div id="supaTestResult" style="margin-top:10px;font-size:11px"></div>
+      <div style="margin-top:10px;font-size:10px;color:var(--text3)">Client actuellement connecté : <strong>${supa?'✅ actif':'❌ non connecté'}</strong> · org_id en session : <code>${esc(SUPA_ORG)}</code>${!isSuperAdmin?' · <span style="color:#b45309">modification réservée à l\'Administrateur</span>':''}</div>
+    </div>
+  </div>
 
   <!-- Statut -->
   <div class="card" style="margin-bottom:14px;border:1.5px solid ${lastBackup?'var(--g3)':'#fbbf24'}">
@@ -10611,6 +10674,67 @@ window.doManualBackup = async function(){
     if(cloudCfg.webhookActif&&cloudCfg.webhookUrl) await sendWebhook(allData,cloudCfg).catch(()=>{});
     toast('✅ Sauvegarde téléchargée');
   }catch(e){toast('Erreur : '+e.message,'err');}
+};
+
+function supaResultBox(html, ok){
+  const el=document.getElementById('supaTestResult');
+  if(!el) return;
+  el.innerHTML = `<div style="padding:8px 12px;border-radius:8px;background:${ok?'#f0fdf4':'#fef2f2'};color:${ok?'#059669':'#dc2626'};border:1px solid ${ok?'#a7f3d0':'#fecaca'}">${html}</div>`;
+}
+
+window.testSupaConnection = async function(){
+  const url = document.getElementById('supaUrlInput')?.value.trim() || SUPA_URL;
+  const key = document.getElementById('supaKeyInput')?.value.trim() || SUPA_KEY;
+  supaResultBox('⏳ Test de connexion en cours…', true);
+  const t0 = performance.now();
+  try{
+    if(!window.supabase) throw new Error('Librairie Supabase non chargée');
+    const testClient = window.supabase.createClient(url, key);
+    const {error} = await testClient.from('avico_records').select('id', {count:'exact', head:true}).limit(1);
+    if(error) throw error;
+    const ms = Math.round(performance.now()-t0);
+    supaResultBox(`✅ Connexion réussie (${ms} ms) — l'URL et la clé anon sont valides et la table <code>avico_records</code> est accessible.`, true);
+  }catch(e){
+    supaResultBox(`❌ Échec de connexion : ${esc(e.message||String(e))}`, false);
+  }
+};
+
+window.testSupaSync = async function(){
+  const url = document.getElementById('supaUrlInput')?.value.trim() || SUPA_URL;
+  const key = document.getElementById('supaKeyInput')?.value.trim() || SUPA_KEY;
+  const org = document.getElementById('supaOrgInput')?.value.trim() || SUPA_ORG;
+  supaResultBox('⏳ Test de synchronisation en cours (écriture → lecture → suppression)…', true);
+  const t0 = performance.now();
+  try{
+    if(!window.supabase) throw new Error('Librairie Supabase non chargée');
+    const testClient = window.supabase.createClient(url, key);
+    const marker = 'ping_'+uid();
+    const {data:ins, error:errIns} = await testClient.from('avico_records')
+      .insert({store:'_test_ping', org_id:org, data:{marker, ts:Date.now()}}).select('id').single();
+    if(errIns) throw errIns;
+    const {data:sel, error:errSel} = await testClient.from('avico_records').select('id,data').eq('id',ins.id).maybeSingle();
+    if(errSel) throw errSel;
+    if(!sel || sel.data?.marker!==marker) throw new Error('Enregistrement relu introuvable ou corrompu');
+    await testClient.from('avico_records').delete().eq('id',ins.id);
+    const ms = Math.round(performance.now()-t0);
+    supaResultBox(`✅ Synchronisation OK (${ms} ms) — écriture, lecture et suppression validées sur org_id <code>${esc(org)}</code>.`, true);
+  }catch(e){
+    supaResultBox(`❌ Échec de synchronisation : ${esc(e.message||String(e))}`, false);
+  }
+};
+
+window.saveSupaConfig = function(){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
+  const url = document.getElementById('supaUrlInput')?.value.trim();
+  const key = document.getElementById('supaKeyInput')?.value.trim();
+  const org = document.getElementById('supaOrgInput')?.value.trim();
+  if(!url || !key || !org){ toast('URL, clé anon et org_id sont requis','err'); return; }
+  if(!/^https:\/\/.+\.supabase\.co$/.test(url)){ toast('URL Supabase invalide (attendu : https://xxxx.supabase.co)','err'); return; }
+  if(org==='default'){ if(!confirm('org_id="default" mélange les données avec les autres exploitations non configurées. Continuer quand même ?')) return; }
+  else if(!confirm('Changer l\'org_id masquera les données actuellement visibles (elles restent sur le serveur sous l\'ancien org_id). Continuer ?')) return;
+  localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url,key,org}));
+  toast('✅ Configuration enregistrée — rechargement…');
+  setTimeout(()=>location.reload(), 1200);
 };
 
 window.saveCloudConfig = function(){
