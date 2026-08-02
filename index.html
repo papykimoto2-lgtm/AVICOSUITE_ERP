@@ -6473,15 +6473,28 @@ window.confirmHardReset = async function(){
     if(confirmation !== null) toast('Annulé — saisissez exactement SUPPRIMER pour confirmer','err');
     return;
   }
-  await resetDB();
+  // Re-authentification : le mot de passe est revérifié côté serveur
+  // (Edge Function hard-reset) avant toute suppression — voir resetDB().
+  const password = prompt('Confirmez votre mot de passe administrateur pour continuer :');
+  if(!password){ toast('Annulé','err'); return; }
+  await resetDB(password);
 };
 
-window.resetDB=async()=>{
+window.resetDB=async(adminPassword)=>{
   if(!confirm('Dernière confirmation : supprimer TOUTES les données et repartir à zéro ?')) return;
-  clearSession(); // Déconnecter
   try{
-    if(supa) await supa.from('avico_records').delete().eq('org_id',SUPA_ORG);
-  }catch(e){ console.warn('Reset Supabase error (continue quand même) :', e.message); }
+    // La suppression n'est plus faite en direct par le client : elle passe par
+    // une Edge Function qui revérifie le mot de passe admin côté serveur avant
+    // d'utiliser service_role. Le client ne peut plus déclencher un DELETE seul.
+    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/hard-reset', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY},
+      body: JSON.stringify({ org_id: SUPA_ORG, email: currentUser?.email, password: adminPassword })
+    });
+    const result = await resp.json();
+    if(!resp.ok || result.error){ toast('⛔ '+(result.error||'Échec de la réinitialisation'),'err'); return; }
+  }catch(e){ toast('Erreur réseau lors de la réinitialisation : '+e.message,'err'); return; }
+  clearSession(); // Déconnecter
   db=null; supa=null;
   localStorage.removeItem(SESSION_KEY);
   localStorage.removeItem('sanixavi_last_email');
