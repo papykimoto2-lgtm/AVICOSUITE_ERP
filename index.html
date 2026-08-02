@@ -2105,8 +2105,16 @@ CREATE TRIGGER avico_force_org
   BEFORE INSERT OR UPDATE ON avico_records
   FOR EACH ROW EXECUTE FUNCTION avico_force_org_id();
 
--- 6. REALTIME (mises à jour temps réel entre utilisateurs)
-ALTER PUBLICATION supabase_realtime ADD TABLE avico_records;
+-- 6. REALTIME (idempotent — ignore si déjà membre)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='avico_records'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE avico_records;
+  END IF;
+END $$;
 
 -- 7. INDEXES ADDITIONNELS pour les filtres les plus courants
 CREATE INDEX IF NOT EXISTS idx_avico_data_flock
