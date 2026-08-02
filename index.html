@@ -3164,6 +3164,42 @@ window.saveUser = async function(id){
   settingsTab='users'; await switchSettingsTab('users');
 };
 
+// ── Fonctions utilitaires modal utilisateur ──
+
+window.buildUserAccessGrid = function(role){
+  const rp = ROLE_PERMS[role]||{pages:[]};
+  const pages = [
+    ['dash','📊 Dashboard'],['lots','🐔 Élevage'],['stocks','📦 Stocks'],
+    ['finance','💰 Finance'],['clients','👤 Clients'],['fab','🌾 Fabrication'],
+    ['gmao','🔧 GMAO'],['rapports','📋 Rapports'],['settings','⚙️ Paramétrage'],
+    ['reprocouvoir','🥚 Repro'],['reappro','🤖 Réappro'],
+  ];
+  return pages.map(([id,lbl])=>{
+    const ok = rp.pages==='all'||(rp.pages||[]).includes(id);
+    return '<div style="padding:5px 8px;border-radius:7px;background:'+(ok?'#f0fdf4':'#f8f9fa')+';border:1px solid '+(ok?'#86efac':'var(--border)')+';color:'+(ok?'#166534':'var(--text3)')+'"><span>'+(ok?'✅':'—')+'</span> <span style="font-size:11px;font-weight:'+(ok?'600':'400')+'">'+lbl+'</span></div>';
+  }).join('');
+};
+
+window.switchUserTab = function(t){
+  ['info','sec','access'].forEach(x=>{
+    const btn = document.getElementById('uTab-'+x);
+    const cont = document.getElementById('uTabContent-'+x);
+    if(btn)  btn.classList.toggle('on', x===t);
+    if(cont) cont.style.display = x===t ? '' : 'none';
+  });
+};
+
+window.updateUserRolePreview = function(){
+  const role = document.getElementById('uRole')?.value;
+  if(!role) return;
+  const rp = ROLE_PERMS[role]||{};
+  const prev = document.getElementById('uRolePreview');
+  if(prev) prev.innerHTML = '<span style="background:'+(rp.bg||'#eee')+';color:'+(rp.color||'#888')+';font-weight:700;padding:3px 10px;border-radius:6px;font-size:11px">'+(rp.label||role)+'</span>'
+    +'<span style="margin-left:8px;color:var(--text3)">— '+(rp.pages==='all'?'Accès complet':(rp.pages||[]).length+' modules')+'</span>';
+  const grid = document.getElementById('uAccessGrid');
+  if(grid && typeof buildUserAccessGrid==='function') grid.innerHTML = buildUserAccessGrid(role);
+};
+
 window.toggleUserActif = async function(id, currentlyActif){
   if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const users = await getAll(S.USERS);
@@ -10777,6 +10813,29 @@ async function renderSettingsProduction(cfg, users){
       <button class="btn btn-s" style="min-height:52px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px" onclick="doManualBackup()"><i class="fas fa-download" style="font-size:18px"></i><span style="font-size:11px">Sauvegarder</span></button>
       <button class="btn btn-s" style="min-height:52px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px" onclick="switchSettingsTab('diagnostic')"><i class="fas fa-stethoscope" style="font-size:18px"></i><span style="font-size:11px">Diagnostic DB</span></button>
       <button class="btn btn-p" style="min-height:52px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px" onclick="previewFactureTest()"><i class="fas fa-file-invoice" style="font-size:18px"></i><span style="font-size:11px">Test facture</span></button>
+    </div>
+  </div>
+
+  <!-- ══ SQL SUPABASE — toujours visible ══ -->
+  <div class="card" style="margin-bottom:12px;border:2px solid var(--g3)">
+    <div class="card-hd" style="background:linear-gradient(135deg,#f0fdf4,#fff)">
+      <span style="color:var(--g1);font-weight:800">🗄️ Script SQL Supabase — Table de production</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-p btn-sm" onclick="copyProdDDL()" style="min-height:34px;font-size:11px"><i class="fas fa-copy"></i> Copier</button>
+        <button class="btn btn-s btn-sm" onclick="this.closest('.card').querySelector('pre').style.display=this.closest('.card').querySelector('pre').style.display==='none'?'block':'none';this.innerHTML=this.innerHTML.includes('Masquer')?'<i class=\\'fas fa-eye\\'></i> Voir':'<i class=\\'fas fa-eye-slash\\'></i> Masquer'" style="min-height:34px;font-size:11px"><i class="fas fa-eye"></i> Voir</button>
+      </div>
+    </div>
+    <div class="card-bd" style="padding:10px 12px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.8">
+        <strong>1.</strong> Ouvrez <a href="https://supabase.com/dashboard" target="_blank" style="color:var(--g2)">supabase.com/dashboard</a><br>
+        <strong>2.</strong> Votre projet → <strong>SQL Editor</strong> → <strong>New query</strong><br>
+        <strong>3.</strong> Cliquez <strong>Copier</strong> ci-dessus → Collez → <strong>Run</strong>
+      </div>
+      <pre id="sqlDDLBlock" style="display:none;background:#1e1e1e;color:#d4d4d4;border-radius:8px;padding:12px;font-size:10px;line-height:1.7;overflow-x:auto;white-space:pre;font-family:monospace;max-height:320px;overflow-y:auto">${esc(typeof PROD_DDL!=='undefined'?PROD_DDL:'-- DDL non disponible, rechargez la page')}</pre>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-p" onclick="copyProdDDL()" style="min-height:44px;flex:1"><i class="fas fa-copy"></i> Copier le script SQL complet</button>
+        <button class="btn btn-s" onclick="document.getElementById('prodGuideOverlay').style.display='flex'" style="min-height:44px"><i class="fas fa-rocket"></i> Guide complet</button>
+      </div>
     </div>
   </div>
 
