@@ -3117,21 +3117,21 @@ function renderSettingsData(isSuperAdmin){
     <div class="card-bd" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
       <div style="font-size:11px;color:var(--text2)">
         <div style="font-weight:700;margin-bottom:4px">Base de données</div>
-        <div>Moteur : IndexedDB (local, offline)</div>
-        <div>Nom : SanixAviNest_v1</div>
-        <div>Version : ${DBV} (${STORES_DEF.length} stores)</div>
+        <div>Moteur : Supabase (cloud, partagé)</div>
+        <div>Organisation : <code>${esc(SUPA_ORG)}</code></div>
+        <div>Version schéma locale : ${DBV} (${STORES_DEF.length} stores)</div>
       </div>
       <div style="font-size:11px;color:var(--text2)">
         <div style="font-weight:700;margin-bottom:4px">Sécurité</div>
-        <div>✅ Données 100% locales</div>
-        <div>✅ Aucun envoi sur Internet</div>
-        <div>⚠️ Sauvegardes manuelles recommandées</div>
+        <div>☁️ Données hébergées sur Supabase (Internet)</div>
+        <div>👥 Partagées en temps réel par TOUS les utilisateurs de l'organisation <code>${esc(SUPA_ORG)}</code></div>
+        <div>⚠️ Toute suppression ici affecte tout le monde, pas seulement votre poste</div>
       </div>
       <div style="font-size:11px;color:var(--text2)">
         <div style="font-weight:700;margin-bottom:4px">Conseil production</div>
-        <div>Exportez la DB chaque semaine</div>
+        <div>Exportez une sauvegarde JSON chaque semaine</div>
         <div>Conservez 3 sauvegardes horodatées</div>
-        <div>Testez l'import avant de supprimer</div>
+        <div>Testez l'import avant toute suppression</div>
       </div>
     </div>
   </div>`;
@@ -6436,7 +6436,11 @@ window.runDbDiagnostic = async function(){
 window.confirmHardReset = async function(){
   if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const confirmation = prompt(
-    '⚠️ RÉINITIALISATION TOTALE\n\nToutes vos données (lots, stock, finance, clients, commandes…) seront effacées.\n\nTapez SUPPRIMER pour confirmer :'
+    '⚠️ RÉINITIALISATION TOTALE\n\n'
+    +'Ceci efface TOUTES les données CLOUD partagées de l\'organisation « '+SUPA_ORG+' »\n'
+    +'(lots, stock, finance, clients, commandes…) — pour VOUS et pour TOUS les autres utilisateurs connectés.\n'
+    +'Cette action est irréversible et n\'affecte pas qu\'un poste local.\n\n'
+    +'Tapez SUPPRIMER pour confirmer :'
   );
   if(confirmation !== 'SUPPRIMER'){
     if(confirmation !== null) toast('Annulé — saisissez exactement SUPPRIMER pour confirmer','err');
@@ -6454,6 +6458,7 @@ window.resetDB=async()=>{
   db=null; supa=null;
   localStorage.removeItem(SESSION_KEY);
   localStorage.removeItem('sanixavi_last_email');
+  localStorage.removeItem(PENDING_KEY); // purge des opérations hors-ligne en attente : sinon elles se resynchronisent après le reset et font réapparaître des données "supprimées"
   toast('✅ Base réinitialisée — rechargement…');
   setTimeout(()=>location.reload(), 1200);
 };
