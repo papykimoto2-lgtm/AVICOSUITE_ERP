@@ -10569,6 +10569,20 @@ function renderSettingsCloud(cfg){
     </div>
   </div>
 
+  <!-- État de la synchronisation détaillé -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">
+      <span>🔀 État de la synchronisation (envoi ↔ réception)</span>
+      <button class="btn btn-sm btn-gh" onclick="checkSyncStatus()"><i class="fas fa-search"></i> Vérifier</button>
+    </div>
+    <div class="card-bd">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:10px">
+        Compare, module par module, ce qui est confirmé sur le serveur (☁️ cloud) et ce qui reste en attente d'envoi depuis ce poste (file hors-ligne locale). Cette architecture ne conserve pas de copie locale complète : chaque écran lit directement le cloud, sauf les opérations pas encore synchronisées.
+      </div>
+      <div id="syncStatusResult"><div style="font-size:11px;color:var(--text3)">Clique sur « Vérifier » pour lancer le comparatif (peut prendre quelques secondes — un module par requête).</div></div>
+    </div>
+  </div>
+
   <!-- Statut -->
   <div class="card" style="margin-bottom:14px;border:1.5px solid ${lastBackup?'var(--g3)':'#fbbf24'}">
     <div class="card-hd" style="background:${lastBackup?'#f0fdf4':'#fffbeb'}">
@@ -10735,6 +10749,73 @@ window.saveSupaConfig = function(){
   localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url,key,org}));
   toast('✅ Configuration enregistrée — rechargement…');
   setTimeout(()=>location.reload(), 1200);
+};
+
+// ── État de la synchronisation : comparatif cloud ↔ file d'attente locale, module par module ──
+const STORE_LABELS = {
+  flocks:'Lots & Élevage', feeding:'Alimentation', health:'Santé',
+  egg_prod:'Production œufs', growth_prod:'Croissance', slaughter:'Abattage',
+  water_consumption:'Consommation eau', protocols:'Protocoles santé',
+  prophylaxis_tasks:'Tâches prophylaxie', nutrition_protocols:'Protocoles nutrition',
+  buildings:'Bâtiments', lines:'Lignes', staff:'Personnel', clients:'Clients', sales:'Commandes',
+  depots:'Dépôts', produits:'Produits & Matières', stock_mvts:'Mouvements stock',
+  fournisseurs:'Fournisseurs', bons_commande:'Bons de commande', receptions:'Réceptions',
+  activity_log:'Journal d\'activité', conditionnement:'Conditionnement', mortalite:'Mortalité',
+  charges_lot:'Charges par lot', tresorerie:'Trésorerie', budget_lignes:'Budget prévisionnel',
+  gmao_equipements:'Équipements GMAO', gmao_maintenances:'Maintenances', gmao_pannes:'Pannes',
+  reforme_lots:'Réforme', vente_vivant:'Ventes vif', fab_aliments:'Fabrication aliments',
+  fab_recettes:'Recettes fabrication', fab_norms:'Normes nutritionnelles',
+  reappro_rules:'Règles réappro', reappro_hist:'Historique réappro',
+  users:'Utilisateurs', app_settings:'Paramètres app',
+  repro_lots:'Lots reproducteurs', repro_collecte:'Collecte œufs à couver',
+  couvoir_incubation:'Incubation', couvoir_mirage:'Mirage', couvoir_eclosion:'Éclosion'
+};
+
+window.checkSyncStatus = async function(){
+  const el = document.getElementById('syncStatusResult');
+  if(!el) return;
+  if(!supa){ el.innerHTML = '<div style="color:#dc2626;font-size:11px">❌ Non connecté au cloud — impossible de comparer.</div>'; return; }
+  el.innerHTML = '<div style="font-size:11px;color:var(--text3)">⏳ Comparaison en cours…</div>';
+
+  const queue = loadQueue();
+  const storeNames = Object.values(S);
+  const rows = await Promise.all(storeNames.map(async st=>{
+    const pendAdd = queue.filter(o=>o.store===st && o.op==='add').length;
+    const pendUpd = queue.filter(o=>o.store===st && o.op==='upd').length;
+    const pendDel = queue.filter(o=>o.store===st && o.op==='del').length;
+    let cloudCount = null, err = null;
+    try{
+      const {count, error} = await supa.from('avico_records').select('id',{count:'exact',head:true}).eq('store',st).eq('org_id',SUPA_ORG);
+      if(error) throw error;
+      cloudCount = count||0;
+    }catch(e){ err = e.message; }
+    const localCount = cloudCount===null ? null : cloudCount + pendAdd - pendDel;
+    return {st, label: STORE_LABELS[st]||st, cloudCount, localCount, pendAdd, pendUpd, pendDel, err};
+  }));
+
+  const totalCloud   = rows.reduce((a,r)=>a+(r.cloudCount||0),0);
+  const totalPending = rows.reduce((a,r)=>a+r.pendAdd+r.pendUpd+r.pendDel,0);
+  const withIssues   = rows.filter(r=>r.err || r.pendAdd || r.pendUpd || r.pendDel).sort((a,b)=>a.label.localeCompare(b.label));
+  const inSync       = rows.filter(r=>!r.err && !r.pendAdd && !r.pendUpd && !r.pendDel).sort((a,b)=>a.label.localeCompare(b.label));
+
+  const rowHtml = r => `<tr>
+    <td>${esc(r.label)}</td>
+    <td style="text-align:center">${r.err?'—':r.cloudCount}</td>
+    <td style="text-align:center">${r.err?'—':r.localCount}</td>
+    <td style="text-align:center">${r.pendAdd?'+'+r.pendAdd:''}${r.pendUpd?' ✎'+r.pendUpd:''}${r.pendDel?' 🗑'+r.pendDel:''}</td>
+    <td>${r.err?'<span style="color:#dc2626">❌ '+esc(r.err)+'</span>':(r.pendAdd||r.pendUpd||r.pendDel?'<span style="color:#d97706">⏳ en attente d\'envoi</span>':'<span style="color:#059669">✅ synchronisé</span>')}</td>
+  </tr>`;
+
+  el.innerHTML = `
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:11px">
+      <div><strong>${totalCloud}</strong> enregistrement(s) confirmés côté cloud</div>
+      <div>${totalPending?`<strong style="color:#d97706">${totalPending}</strong> opération(s) en attente d'envoi`:'<strong style="color:#059669">✅ Tout est synchronisé</strong>'}</div>
+    </div>
+    ${withIssues.length?`<div class="tbl-wrap"><table class="tbl tbl-full"><thead><tr><th>Module</th><th>☁️ Cloud</th><th>Vu localement</th><th>En attente</th><th>Statut</th></tr></thead><tbody>${withIssues.map(rowHtml).join('')}</tbody></table></div>`:''}
+    <details style="margin-top:10px"><summary style="cursor:pointer;font-size:11px;color:var(--text3)">Voir les ${inSync.length} module(s) synchronisés sans écart</summary>
+      <div class="tbl-wrap" style="margin-top:6px"><table class="tbl tbl-full"><thead><tr><th>Module</th><th>☁️ Cloud</th><th>Vu localement</th><th>Statut</th></tr></thead><tbody>${inSync.map(r=>`<tr><td>${esc(r.label)}</td><td style="text-align:center">${r.cloudCount}</td><td style="text-align:center">${r.localCount}</td><td><span style="color:#059669">✅ synchronisé</span></td></tr>`).join('')}</tbody></table></div>
+    </details>
+    ${totalPending?`<button class="btn btn-s btn-sm" style="margin-top:10px" onclick="flushPendingOps().then(checkSyncStatus)"><i class="fas fa-cloud-upload-alt"></i> Forcer l'envoi des opérations en attente</button>`:''}`;
 };
 
 window.saveCloudConfig = function(){
