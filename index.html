@@ -990,61 +990,66 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     </div>
   </div>
 
-  <!-- 1. PILOTAGE -->
+  <!-- 1. PILOTAGE (point d'entrée, hors flux physique) -->
   <div class="nav-section">① Pilotage</div>
   <div class="nav-item" id="nav-dash"      onclick="goTo('dash')"><i class="fas fa-tachometer-alt"></i> Tableau de bord</div>
   <div class="nav-item" id="nav-rapports"  onclick="goTo('rapports')"><i class="fas fa-paper-plane"></i> Rapports &amp; Envoi</div>
 
-  <!-- 2. APPROVISIONNEMENT -->
-  <div class="nav-section">② Approvisionnement</div>
+  <!-- 2. REPRODUCTION & COUVOIR — origine du flux : géniteurs → œufs → poussins d'un jour -->
+  <div class="nav-section">② Reproduction &amp; Couvoir</div>
+  <div class="nav-item" id="nav-reprocouvoir" onclick="goTo('reprocouvoir')"><i class="fas fa-egg"></i> Repro. &amp; Couvoir</div>
+
+  <!-- 3. APPROVISIONNEMENT — intrants entrants (aliments, intrants vétérinaires…) -->
+  <div class="nav-section">③ Approvisionnement</div>
   <div class="nav-item" id="nav-fourns"  onclick="goTo('fourns')"><i class="fas fa-truck"></i> Fournisseurs</div>
   <div class="nav-item" id="nav-bcs"     onclick="goTo('bcs')"><i class="fas fa-file-invoice"></i> Bons de commande</div>
   <div class="nav-item" id="nav-reappro" onclick="goTo('reappro')"><i class="fas fa-robot"></i> Réappro. automatique</div>
   <div class="nav-item" id="nav-prods"   onclick="goTo('prods')"><i class="fas fa-tag"></i> Produits & Matières</div>
 
-  <!-- 3. FABRICATION -->
-  <div class="nav-section">③ Fabrication</div>
+  <!-- 4. FABRICATION — transformation des matières premières en aliments -->
+  <div class="nav-section">④ Fabrication</div>
   <div class="nav-item" id="nav-fab"     onclick="goTo('fab')"><i class="fas fa-mortar-pestle"></i> Fabrication aliments</div>
-  <div class="nav-item" id="nav-gmao"    onclick="goTo('gmao')"><i class="fas fa-tools"></i> GMAO Équipements</div>
 
-  <!-- 4. ÉLEVAGE -->
-  <div class="nav-section">④ Élevage</div>
+  <!-- 5. ÉLEVAGE — réception poussins + aliments, montée en bande -->
+  <div class="nav-section">⑤ Élevage</div>
   <div class="nav-item" id="nav-lots"    onclick="goTo('lots')"><i class="fas fa-egg"></i> Lots & Élevage</div>
 
-  <!-- 5. STOCK -->
-  <div class="nav-section">⑤ Stock</div>
+  <!-- 6. STOCK — flux intermédiaire (matières, aliments, produits finis) -->
+  <div class="nav-section">⑥ Stock</div>
   <div class="nav-item" id="nav-depots"  onclick="goTo('depots')"><i class="fas fa-warehouse"></i> Dépôts</div>
   <div class="nav-item" id="nav-stocks"  onclick="goTo('stocks')"><i class="fas fa-boxes-stacked"></i> État des stocks</div>
   <div class="nav-item" id="nav-mvts"    onclick="goTo('mvts')"><i class="fas fa-right-left"></i> Mouvements</div>
 
-  <!-- 6. CONDITIONNEMENT -->
-  <div class="nav-section">⑥ Conditionnement</div>
+  <!-- 7. CONDITIONNEMENT — rupture dirty→clean (abattage/emballage) : jamais de retour amont après ce point -->
+  <div class="nav-section">⑦ Conditionnement</div>
   <div class="nav-item" id="nav-cond"    onclick="goTo('cond')"><i class="fas fa-box-open"></i> Conditionnement</div>
 
-  <!-- 7. DISTRIBUTION -->
-  <div class="nav-section">⑦ Distribution</div>
+  <!-- 8. DISTRIBUTION — sortie vers le client -->
+  <div class="nav-section">⑧ Distribution</div>
   <div class="nav-item" id="nav-clients"   onclick="goTo('clients')"><i class="fas fa-user-tie"></i> Clients</div>
   <div class="nav-item" id="nav-commandes" onclick="goTo('commandes')"><i class="fas fa-shopping-cart"></i> Commandes</div>
   <div class="nav-item" id="nav-creances"  onclick="goTo('creances')"><i class="fas fa-hourglass-half"></i> Créances</div>
 
-  <!-- 8. FINANCE -->
-  <div class="nav-section">⑧ Finance</div>
+  <!-- 9. FINANCE — résultat économique du cycle complet -->
+  <div class="nav-section">⑨ Finance</div>
   <div class="nav-item" id="nav-finance"   onclick="goTo('finance')"><i class="fas fa-chart-line"></i> Finance &amp; Rentabilité</div>
 
-  <!-- 9. SIMULATION -->
-  <div class="nav-section">⑨ Simulation</div>
+  <!-- ── Fonctions transverses (hors flux physique, ne pas mélanger avec la marche en avant) ── -->
+
+  <!-- 10. SIMULATION -->
+  <div class="nav-section">⑩ Simulation</div>
   <div class="nav-item" id="nav-simubande" onclick="goTo('simubande')"><i class="fas fa-calculator"></i> Sim. Déploiement Bande</div>
 
-  <!-- ⑫. REPRODUCTION & COUVOIR -->
-  <div class="nav-section">⑫ Reproduction & Couvoir</div>
-  <div class="nav-item" id="nav-reprocouvoir" onclick="goTo('reprocouvoir')"><i class="fas fa-egg"></i> Repro. & Couvoir</div>
+  <!-- 11. SUPPORT TECHNIQUE (GMAO) — sorti de Fabrication : sert tous les stades, ne fait pas partie du flux produit -->
+  <div class="nav-section">⑪ Support technique</div>
+  <div class="nav-item" id="nav-gmao"    onclick="goTo('gmao')"><i class="fas fa-tools"></i> GMAO Équipements</div>
 
-  <!-- ⑩. RH -->
-  <div class="nav-section">⑩ Ressources humaines</div>
+  <!-- 12. RH -->
+  <div class="nav-section">⑫ Ressources humaines</div>
   <div class="nav-item" id="nav-staff"   onclick="goTo('staff')"><i class="fas fa-users"></i> Personnel</div>
 
-  <!-- 11. PARAMÉTRAGE -->
-  <div class="nav-section">⑪ Configuration</div>
+  <!-- 13. PARAMÉTRAGE -->
+  <div class="nav-section">⑬ Configuration</div>
   <div class="nav-item" id="nav-settings" onclick="goTo('settings')"><i class="fas fa-cog"></i> Paramétrage</div>
 
   <div style="margin-top:auto;border-top:1px solid rgba(255,255,255,.08)">
