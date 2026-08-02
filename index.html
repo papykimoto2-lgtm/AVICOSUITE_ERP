@@ -1371,6 +1371,25 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
+<!-- RÔLE MODAL (création / édition des accès) -->
+<div class="overlay" id="mRole">
+<div class="modal modal-lg">
+  <h3 id="mRoleTitle">Nouveau rôle</h3>
+  <input type="hidden" id="roleKeyOrig">
+  <div class="form-grid">
+    <div class="fg"><label>Identifiant technique * (unique, sans espace)</label><input id="roleKeyInput" placeholder="ex: superviseur"></div>
+    <div class="fg"><label>Libellé affiché *</label><input id="roleLabelInput" placeholder="ex: Superviseur"></div>
+    <div class="fg"><label>Icône (FontAwesome, sans le préfixe fa-)</label><input id="roleIconInput" placeholder="user-shield"></div>
+    <div class="fg"><label>Couleur</label><input id="roleColorInput" type="color" value="#1565c0"></div>
+  </div>
+  <div style="margin:14px 0 6px;font-weight:700;font-size:12px">Accès aux modules</div>
+  <div id="rolePagesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:260px;overflow:auto;padding:4px"></div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mRole')">Annuler</button>
+    <button class="btn btn-p" onclick="saveRoleModal()"><i class="fas fa-save"></i> Enregistrer</button>
+  </div>
+</div></div>
+
 
 <!-- CONDITIONNEMENT MODAL -->
 <div class="overlay" id="mCond">
@@ -2422,6 +2441,40 @@ const ROLE_PERMS = {
     pages:['lots','fab','gmao','rapports','prods','reprocouvoir'] }
 };
 
+// Liste des modules pilotables par rôle (partagée entre la matrice et le modal d'édition)
+const ROLE_MODULE_PAGES = [
+  {id:'dash',label:'Tableau de bord'}, {id:'lots',label:'Lots & Élevage'},
+  {id:'reprocouvoir',label:'Repro. & Couvoir'},
+  {id:'stocks',label:'Stocks'}, {id:'depots',label:'Dépôts'}, {id:'mvts',label:'Mouvements'},
+  {id:'prods',label:'Produits & Matières'}, {id:'fourns',label:'Fournisseurs'}, {id:'bcs',label:'Bons de commande'},
+  {id:'cond',label:'Conditionnement'},
+  {id:'clients',label:'Clients'}, {id:'commandes',label:'Commandes'}, {id:'creances',label:'Créances'},
+  {id:'finance',label:'Finance'}, {id:'fab',label:'Fabrication aliments'},
+  {id:'gmao',label:'GMAO'}, {id:'staff',label:'Personnel'}, {id:'rapports',label:'Rapports'},
+  {id:'reappro',label:'Réappro auto'}, {id:'simubande',label:'Simulation'},
+  {id:'settings',label:'Paramétrage'},
+];
+const ROLE_PROTECTED = ['admin']; // rôles non modifiables/supprimables
+
+// Charge les rôles personnalisés/édités depuis Supabase et les fusionne dans ROLE_PERMS (en mémoire)
+async function loadRoleOverrides(){
+  try{
+    const all = await getAll(S.SETTINGS_APP);
+    const rec = all.find(s=>s.key==='role_permissions');
+    if(rec && rec.roles){
+      Object.keys(rec.roles).forEach(k=>{ ROLE_PERMS[k] = rec.roles[k]; });
+    }
+  }catch(e){ console.warn('[Roles] chargement des surcharges impossible:', e); }
+}
+// Sauvegarde l'état courant de ROLE_PERMS (rôles ajoutés/modifiés/supprimés) dans Supabase
+async function saveRoleOverrides(){
+  const all = await getAll(S.SETTINGS_APP);
+  const rec = all.find(s=>s.key==='role_permissions');
+  const data = { key:'role_permissions', roles: ROLE_PERMS };
+  if(rec) await updRec(S.SETTINGS_APP, rec.id, data);
+  else await addRec(S.SETTINGS_APP, data);
+}
+
 const SESSION_KEY = 'sanixavi_session';
 let currentUser = null;
 
@@ -2760,7 +2813,7 @@ async function renderSettings(ca){
 async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='exploitation') return renderSettingsExploitation(cfg, isAdmin);
   if(tab==='users')        return await renderSettingsUsers(users, isSuperAdmin);
-  if(tab==='roles')        return renderSettingsRoles(isAdmin);
+  if(tab==='roles')        return renderSettingsRoles(isAdmin, isSuperAdmin);
   if(tab==='notifs')       return renderSettingsNotifs(cfg, isAdmin);
   if(tab==='production')   return await renderSettingsProduction(cfg, users);
   if(tab==='cloud')        return renderSettingsCloud(cfg);
@@ -3211,25 +3264,22 @@ window.toggleUserActif = async function(id, currentlyActif){
 };
 
 // ── Tab Rôles & Permissions ──
-function renderSettingsRoles(isAdmin){
-  const PAGES = [
-    {id:'dash',label:'Tableau de bord'}, {id:'lots',label:'Lots & Élevage'},
-    {id:'reprocouvoir',label:'Repro. & Couvoir'},
-    {id:'stocks',label:'Stocks'}, {id:'depots',label:'Dépôts'}, {id:'mvts',label:'Mouvements'},
-    {id:'prods',label:'Produits & Matières'}, {id:'fourns',label:'Fournisseurs'}, {id:'bcs',label:'Bons de commande'},
-    {id:'cond',label:'Conditionnement'},
-    {id:'clients',label:'Clients'}, {id:'commandes',label:'Commandes'}, {id:'creances',label:'Créances'},
-    {id:'finance',label:'Finance'}, {id:'fab',label:'Fabrication aliments'},
-    {id:'gmao',label:'GMAO'}, {id:'staff',label:'Personnel'}, {id:'rapports',label:'Rapports'},
-    {id:'reappro',label:'Réappro auto'}, {id:'simubande',label:'Simulation'},
-    {id:'settings',label:'Paramétrage'},
-  ];
+function renderSettingsRoles(isAdmin, isSuperAdmin){
+  const PAGES = ROLE_MODULE_PAGES;
   const roleKeys = Object.keys(ROLE_PERMS);
 
   const headerCols = roleKeys.map(r=>{
     const rp=ROLE_PERMS[r];
     return `<th style="text-align:center"><span class="user-role-badge" style="background:${rp.bg};color:${rp.color};font-size:10px"><i class="fas ${rp.icon}" style="font-size:9px"></i> ${rp.label}</span></th>`;
   }).join('');
+
+  const actionCols = isSuperAdmin ? roleKeys.map(r=>{
+    const locked = ROLE_PROTECTED.includes(r);
+    return `<td style="text-align:center;white-space:nowrap;padding:4px 2px">
+      <button class="btn btn-sm btn-gh" onclick="openRoleModal('${r}')" title="Modifier les accès"><i class="fas fa-edit"></i></button>
+      ${locked?'':`<button class="btn-del" onclick="deleteRole('${r}')" title="Supprimer ce rôle"><i class="fas fa-trash"></i></button>`}
+    </td>`;
+  }).join('') : '';
 
   const rows = PAGES.map(p=>{
     const cells = roleKeys.map(r=>{
@@ -3244,19 +3294,103 @@ function renderSettingsRoles(isAdmin){
 
   return `
   <div class="settings-section-title">🔐 Rôles & Accès aux modules</div>
-  <div class="settings-section-sub">Matrice des droits d'accès par rôle. ✅ = accès autorisé · ❌ = accès refusé.</div>
+  <div class="settings-section-sub">Matrice des droits d'accès par rôle. ✅ = accès autorisé · ❌ = accès refusé.${isSuperAdmin?' Utilisez ✏️ pour modifier les accès d\'un rôle, 🗑️ pour le supprimer.':''}</div>
+  ${isSuperAdmin?`<button class="btn btn-p btn-sm" style="margin-bottom:12px" onclick="openRoleModal()"><i class="fas fa-plus"></i> Nouveau rôle</button>`:''}
   <div class="card">
     <div class="card-bd tbl-wrap">
       <table class="perm-table">
-        <thead><tr><th style="text-align:left">Module</th>${headerCols}</tr></thead>
+        <thead>
+          <tr><th style="text-align:left">Module</th>${headerCols}</tr>
+          ${isSuperAdmin?`<tr><td style="font-weight:600;color:var(--text3);font-size:11px">Actions</td>${actionCols}</tr>`:''}
+        </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
   </div>
   <div style="margin-top:12px;padding:9px 13px;background:var(--blue-bg);color:var(--blue);border-radius:8px;font-size:11px">
-    <strong>ℹ️</strong> Les permissions sont prédéfinies. La modification des rôles personnalisés sera disponible dans une prochaine version.
+    <strong>ℹ️</strong> ${isSuperAdmin?'Le rôle Administrateur conserve toujours un accès complet et ne peut pas être modifié ni supprimé. Un rôle utilisé par au moins un utilisateur ne peut pas être supprimé.':'La modification et la suppression des rôles sont réservées à l\'Administrateur.'}
   </div>`;
 }
+
+// ── Modal Rôle : création / édition des accès ──
+window.openRoleModal = function(roleKey){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
+  const isNew = !roleKey;
+  const rp = !isNew ? ROLE_PERMS[roleKey] : null;
+  const locked = roleKey==='admin';
+
+  document.getElementById('mRoleTitle').textContent = isNew ? 'Nouveau rôle' : ('Modifier le rôle — '+(rp?.label||roleKey));
+  document.getElementById('roleKeyOrig').value = roleKey||'';
+  const keyInput = document.getElementById('roleKeyInput');
+  keyInput.value = roleKey||'';
+  keyInput.disabled = !isNew;
+  document.getElementById('roleLabelInput').value = rp?.label||'';
+  document.getElementById('roleLabelInput').disabled = locked;
+  document.getElementById('roleIconInput').value = (rp?.icon||'fa-user-shield').replace(/^fa-/,'');
+  document.getElementById('roleIconInput').disabled = locked;
+  document.getElementById('roleColorInput').value = rp?.color||'#1565c0';
+  document.getElementById('roleColorInput').disabled = locked;
+
+  const pagesAll = rp && rp.pages==='all';
+  const pagesSet = new Set(!pagesAll ? (rp?.pages||[]) : []);
+  const grid = document.getElementById('rolePagesGrid');
+  if(locked){
+    grid.innerHTML = `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Le rôle Administrateur a toujours accès à tous les modules.</div>`;
+  } else {
+    grid.innerHTML = ROLE_MODULE_PAGES.map(p=>{
+      const checked = pagesAll || pagesSet.has(p.id);
+      return `<label style="display:flex;align-items:center;gap:6px;font-size:11px;background:var(--bg);padding:5px 8px;border-radius:6px">
+        <input type="checkbox" class="rolePageChk" value="${p.id}" ${checked?'checked':''}> ${esc(p.label)}
+      </label>`;
+    }).join('');
+  }
+  openOverlay('mRole');
+};
+
+window.saveRoleModal = async function(){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
+  const orig = document.getElementById('roleKeyOrig').value;
+  const label = document.getElementById('roleLabelInput').value.trim();
+  let iconRaw = document.getElementById('roleIconInput').value.trim().replace(/^fa-/,'') || 'user-shield';
+  const color = document.getElementById('roleColorInput').value || '#1565c0';
+
+  if(!label){ toast('Le libellé du rôle est requis','err'); return; }
+
+  let key = orig;
+  if(!orig){
+    key = document.getElementById('roleKeyInput').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+    if(!key){ toast('Identifiant technique requis (lettres/chiffres/_ uniquement)','err'); return; }
+    if(ROLE_PERMS[key]){ toast('Cet identifiant de rôle existe déjà','err'); return; }
+  }
+
+  const pages = key==='admin' ? 'all' : Array.from(document.querySelectorAll('#rolePagesGrid .rolePageChk:checked')).map(c=>c.value);
+  const bg = color + '22'; // teinte claire dérivée de la couleur (alpha ~13%)
+
+  ROLE_PERMS[key] = { label, icon:'fa-'+iconRaw, color, bg, pages };
+  try{
+    await saveRoleOverrides();
+    closeOverlay('mRole');
+    toast('✅ Rôle enregistré');
+    const cont = document.getElementById('settingsContent');
+    if(cont) cont.innerHTML = renderSettingsRoles(true, true);
+  }catch(e){ toast('Erreur lors de l\'enregistrement : '+e.message,'err'); }
+};
+
+window.deleteRole = async function(key){
+  if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
+  if(ROLE_PROTECTED.includes(key)){ toast('⛔ Ce rôle ne peut pas être supprimé','err'); return; }
+  const users = await getAll(S.USERS);
+  const inUse = users.filter(u=>u.role===key);
+  if(inUse.length){ toast('⛔ Impossible : '+inUse.length+' utilisateur(s) ont encore ce rôle','err'); return; }
+  if(!confirm('Supprimer définitivement le rôle « '+(ROLE_PERMS[key]?.label||key)+' » ?')) return;
+  delete ROLE_PERMS[key];
+  try{
+    await saveRoleOverrides();
+    toast('🗑️ Rôle supprimé');
+    const cont = document.getElementById('settingsContent');
+    if(cont) cont.innerHTML = renderSettingsRoles(true, true);
+  }catch(e){ toast('Erreur lors de la suppression : '+e.message,'err'); }
+};
 
 // ── Tab Notifications ──
 function renderSettingsNotifs(cfg, isAdmin){
@@ -6760,6 +6894,9 @@ window.onload=async()=>{
 
     // ── Initialisation des données de base (idempotent) ──
     await initDemo();  // inclut initDemoUsers() — ne réinsère que si absent
+
+    // ── Charger les rôles personnalisés/modifiés (avant tout contrôle de permission) ──
+    await loadRoleOverrides();
 
     // ── Vérifier la session existante ──
     const savedSession = getSession();
