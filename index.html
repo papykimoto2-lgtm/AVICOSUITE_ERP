@@ -10811,9 +10811,14 @@ function hasCustomOrgConfig(){
   }catch{ return false; }
 }
 window.submitOrgSetup = function(){
-  const org = document.getElementById('orgSetupOrgId')?.value.trim();
+  let org = document.getElementById('orgSetupOrgId')?.value.trim();
   if(!org){ toast('Identifiant d\'organisation requis','err'); return; }
+  // Normalisation stricte : évite de créer des orgs "fantômes" par variation de casse/espaces
+  // (ex: "JOLAN FERME" vs "jolan-ferme" seraient deux organisations différentes sinon).
+  org = org.toLowerCase().trim().replace(/\s+/g,'-').replace(/[^a-z0-9\-_]/g,'');
+  if(!org){ toast('Identifiant invalide après normalisation, réessayez avec des lettres/chiffres','err'); return; }
   if(org==='default'){ toast('Choisissez un identifiant différent de "default"','err'); return; }
+  if(!confirm('Organisation « '+org+' » — cette base sera VIDE au démarrage (nouvelles données uniquement, pas celles de "default"). Continuer ?')) return;
   localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url:SUPA_DEFAULTS.url,key:SUPA_DEFAULTS.key,org}));
   toast('✅ Organisation configurée — démarrage…');
   setTimeout(()=>location.reload(), 800);
