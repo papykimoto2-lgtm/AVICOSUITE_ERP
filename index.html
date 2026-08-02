@@ -885,15 +885,6 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
       <div id="loginError" class="login-error" style="display:none"><i class="fas fa-exclamation-circle" style="margin-right:6px"></i><span id="loginErrorMsg">Email ou mot de passe incorrect.</span></div>
 
-      <!-- Lien de récupération d'urgence (affiché seulement si aucun compte trouvé) -->
-      <div id="loginRecoveryLink" style="display:none;background:#fff8e1;border:1px solid #fcd34d;border-radius:8px;padding:10px 13px;font-size:11px;margin-bottom:10px;color:#7c4b00">
-        <strong>🆘 Accès d'urgence</strong><br>
-        <button onclick="emergencyResetUsers()" style="margin-top:6px;background:#e08c10;color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-family:inherit">
-          <i class="fas fa-user-plus"></i> Recréer les comptes démo (Admin@2025)
-        </button>
-        <div style="margin-top:5px;color:#888">Cette action recrée les utilisateurs par défaut sans supprimer vos données.</div>
-      </div>
-
       <div class="login-field-wrap">
         <label class="login-field-label" for="loginEmail">Email / Identifiant</label>
         <div class="login-field">
@@ -921,13 +912,6 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <button class="login-btn" id="loginBtn" onclick="doLogin()">
         <i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter
       </button>
-
-      <div class="login-divider">accès démo rapide</div>
-      <div class="login-demo-btns">
-        <button class="login-demo-btn" onclick="demoLogin('admin')">👑 Admin</button>
-        <button class="login-demo-btn" onclick="demoLogin('operateur')">🐔 Opérateur</button>
-        <button class="login-demo-btn" onclick="demoLogin('commercial')">💼 Commercial</button>
-      </div>
 
       <div class="login-copyright">© 2025 Sanix Africa Technologies · Tous droits réservés</div>
     </div>
@@ -2610,22 +2594,6 @@ window.togglePwdVis = function(){
   else { inp.type='password'; ico.className='fas fa-eye'; }
 };
 
-window.emergencyResetUsers = async function(){
-  try{
-    // Supprimer les utilisateurs existants et recréer les comptes démo
-    const existing = await getAll(S.USERS);
-    for(const u of existing) await delRec(S.USERS, u.id);
-    await initDemoUsers(true);
-    document.getElementById('loginRecoveryLink').style.display='none';
-    document.getElementById('loginError').style.display='none';
-    document.getElementById('loginEmail').value = 'admin@avicosuite.ci';
-    document.getElementById('loginPwd').value   = 'Admin@2025';
-    toast('✅ Comptes recréés — admin@avicosuite.ci / Admin@2025');
-    setTimeout(doLogin, 500);
-  }catch(e){
-    toast('Erreur récupération : '+e.message,'err');
-  }
-};
 
 window.doLogin = async function(){
   const email   = (document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
@@ -2658,9 +2626,6 @@ window.doLogin = async function(){
       errMsg.textContent = resp.status===401 ? 'Email ou mot de passe incorrect.' : ('Erreur : '+(result.error||'connexion impossible'));
       errDiv.style.display='block';
       if(resp.status===401) document.getElementById('loginPwd').classList.add('err');
-      if(email.includes('avicosuite.ci')){
-        errMsg.innerHTML += '<br><small>Mot de passe démo admin : <strong>Admin@2025</strong></small>';
-      }
       btn.disabled=false;
       btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
       return;
@@ -2680,22 +2645,6 @@ window.doLogin = async function(){
   }
   btn.disabled=false;
   btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
-};
-
-window.demoLogin = function(role){
-  const demos = {
-    admin:     { email:'admin@avicosuite.ci',  pwd:'Admin@2025' },
-    operateur: { email:'jean@avicosuite.ci',   pwd:'1234' },
-    commercial:{ email:'kofi@avicosuite.ci',   pwd:'1234' },
-    veterinaire:{ email:'brice@avicosuite.ci', pwd:'1234' },
-  };
-  const d = demos[role];
-  if(!d) return;
-  document.getElementById('loginEmail').value = d.email;
-  document.getElementById('loginPwd').value   = d.pwd;
-  document.getElementById('loginError').style.display='none';
-  document.getElementById('loginPwd').classList.remove('err');
-  doLogin();
 };
 
 window.doLogout = function(){
@@ -3041,10 +2990,6 @@ async function renderSettingsUsers(users, isAdmin){
         <tbody>${rows}</tbody>
       </table>
     </div>
-  </div>
-
-  <div style="margin-top:12px;padding:9px 13px;background:var(--amber-bg);color:var(--amber-d);border-radius:8px;font-size:11px;border:1px solid #fcd34d">
-    <strong>ℹ️ Mots de passe par défaut :</strong> Admin = <code>Admin@2025</code> · Autres = <code>1234</code>
   </div>`;
 }
 
@@ -15023,8 +14968,7 @@ window.addEventListener('resize', ()=>{ if(!isMobile()) mobCloseAll(); });
           '<button onclick="copyProdDDL()" style="background:#1a4731;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit"><i class=\\"fas fa-copy\\"></i> Copier le script SQL</button>'],
         ['2','Identifiant d\'organisation unique','Cet ID isole vos données. <strong>Notez-le</strong> — il ne peut pas changer sans perte de données.',
           '<div style=\\"display:flex;gap:8px\\"><input id=\\"prodGuideOrgId\\" placeholder=\\"ex: ferme-koffi-abidjan-2025\\" style=\\"flex:1;padding:8px 10px;border:1.5px solid #ccc;border-radius:8px;font-size:12px;font-family:inherit\\"><button onclick=\\"prodGuideSetOrg()\\" style=\\"background:#1a4731;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit\\">Valider</button></div><div id=\\"prodGuideOrgStatus\\" style=\\"margin-top:5px;font-size:11px;color:#888\\"></div>'],
-        ['3','Changer le mot de passe Admin','Connectez-vous avec <code>admin@avicosuite.ci / Admin@2025</code> puis Paramétrage → Utilisateurs → Sécurité.',
-          '<div style=\\"background:#fff3e0;border:1px solid #f4a261;border-radius:7px;padding:7px 10px;font-size:10px;color:#b45309\\">⚠️ Ne laissez jamais <code>Admin@2025</code> en production</div>'],
+        ['3','Créer le premier compte admin','Le compte administrateur se crée via l\\'Edge Function <code>bootstrap-org</code> (voir edge-functions/bootstrap-org) — aucun compte par défaut n\\'existe.',''],
         ['4','Héberger sur https://','Pour accès multi-appareils et installation PWA (gratuit).',
           '<div style=\\"display:flex;gap:6px;flex-wrap:wrap\\"><a href=\\"https://vercel.com/new\\" target=\\"_blank\\" style=\\"background:#000;color:#fff;border-radius:7px;padding:7px 12px;text-decoration:none;font-size:11px;font-weight:700\\">▲ Vercel</a><a href=\\"https://app.netlify.com/drop\\" target=\\"_blank\\" style=\\"background:#00ad9f;color:#fff;border-radius:7px;padding:7px 12px;text-decoration:none;font-size:11px;font-weight:700\\">⬡ Netlify Drop</a></div><div style=\\"margin-top:5px;font-size:10px;color:#888\\">Glissez le fichier HTML → URL https:// instantanée</div>'],
         ['5','Configurer l\'exploitation','Paramétrage → Mon Exploitation : NIF, RCCM, logo, adresse, banque — apparaissent sur les factures.',''],
