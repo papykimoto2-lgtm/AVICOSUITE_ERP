@@ -64,7 +64,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 .chip{background:rgba(255,255,255,.15);border-radius:20px;padding:3px 10px;font-size:11px}
 .hdr-actions{display:flex;gap:6px}
 .btn-hdr{padding:6px 12px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;border:none}
-.btn-hdr-edit{background:rgba(255,255,255,.2);color:#fff}.btn-hdr-csv{background:var(--amber);color:#fff}
+.btn-hdr-edit{background:rgba(255,255,255,.2);color:#fff}.btn-hdr-csv{background:var(--amber);color:#fff}.btn-hdr-del{background:var(--red);color:#fff}
 
 /* ── TAB NAV ── */
 .tab-nav{display:flex;overflow-x:auto;background:#fff;border-bottom:3px solid var(--g2);flex-shrink:0;box-shadow:0 3px 10px rgba(0,0,0,.1)}
@@ -1805,9 +1805,27 @@ function openDB(){
       db = supa; // conserve la variable globale `db` utilisée comme test de disponibilité ailleurs
       console.log('Supabase connecté — stockage partagé multi-utilisateur, org=', SUPA_ORG);
       flushPendingOps();
+      setupRealtimeSync();
       res(db);
     }catch(e){ console.error('DB open error', e); rej('DB error'); }
   });
+}
+
+// ── Mise à jour live des tableaux de bord : quand un autre utilisateur modifie une donnée,
+//    on rafraîchit automatiquement les vues de synthèse (dashboard, vue d'ensemble d'un lot). ──
+let lastSyncTime = null;
+function setupRealtimeSync(){
+  if(!supa) return;
+  supa.channel('avico_dash_sync')
+    .on('postgres_changes', {event:'*', schema:'public', table:'avico_records', filter:'org_id=eq.'+SUPA_ORG}, ()=>{
+      clearTimeout(window._rtDebounce);
+      window._rtDebounce=setTimeout(async ()=>{
+        lastSyncTime = new Date();
+        if(curPage==='dash') await render();
+        else if(curPage==='lots' && activeLotTab==='overview'){ await refreshLot(); }
+      }, 800);
+    })
+    .subscribe();
 }
 
 function getAll(st){return new Promise(async res=>{
@@ -3242,6 +3260,7 @@ async function renderLotView(ca){
           <div class="hdr-actions">
             <button class="btn-hdr btn-hdr-edit" onclick="openLotModal(${lot.id})"><i class="fas fa-edit"></i> Modifier</button>
             <button class="btn-hdr btn-hdr-csv" onclick="exportCSV()"><i class="fas fa-download"></i> CSV</button>
+            <button class="btn-hdr btn-hdr-del" onclick="deleteLot(${lot.id})"><i class="fas fa-trash"></i> Supprimer</button>
           </div>
         </div>
       </div>
@@ -4725,12 +4744,55 @@ document.getElementById('saveLotBtn').onclick=async()=>{
 };
 document.getElementById('btnNewLot').onclick=()=>openLotModal();
 
+// ── SUPPRESSION D'UN LOT (actif ou non), avec purge en cascade des données liées ──
+window.deleteLot = async (id) => {
+  const lots = await getAll(S.FLOCKS);
+  const lot = lots.find(f=>f.id===id);
+  if(!lot){ toast('Lot introuvable','err'); return; }
+
+  const childStores = [S.FEEDING,S.HEALTH,S.EGG_PROD,S.GROWTH_PROD,S.SLAUGHTER,S.WATER,S.PROPHY,S.COND,S.MORTALITE,S.CHARGES,S.BUDGET,S.REFORME,S.VENTE_VIVANT];
+  const childRecords = {};
+  let totalChild = 0;
+  for(const st of childStores){
+    const recs = await getByIdx(st,'flockId',id);
+    childRecords[st] = recs;
+    totalChild += recs.length;
+  }
+
+  const age = getAge(lot.startDate);
+  const ph  = getPhase(lot.type, age);
+  const isActive = ph.cls !== 'phase-end';
+
+  const msg = (isActive ? `⚠️ Ce lot est ACTIF (phase : ${ph.label}).\n\n` : '')+
+    `Supprimer définitivement le lot "${lot.nom}" ?\n\n`+
+    (totalChild>0 ? `${totalChild} enregistrement(s) lié(s) (alimentation, santé, mortalité, finances, conditionnement…) seront aussi supprimés définitivement.\n\n` : '')+
+    `Tapez SUPPRIMER pour confirmer :`;
+  const confirmation = prompt(msg);
+  if(confirmation !== 'SUPPRIMER'){
+    if(confirmation !== null) toast('Annulé — saisissez exactement SUPPRIMER pour confirmer','err');
+    return;
+  }
+
+  for(const st of childStores){ for(const rec of childRecords[st]) await delRec(st, rec.id); }
+  await delRec(S.FLOCKS, id);
+
+  if(curLotId === id){
+    const remaining = await getAll(S.FLOCKS);
+    curLotId = remaining.length ? remaining[0].id : null;
+    activeLotTab = 'overview';
+  }
+  toast('🗑️ Lot supprimé'+(totalChild>0?` (+ ${totalChild} enregistrement(s) lié(s))`:''));
+  await renderLotSidebar();
+  await render();
+};
+
 
 // ════════════════════════════════════════════════════════
 //  STOCKS — DASHBOARD
 // ════════════════════════════════════════════════════════
 let dashChart=null;
 async function renderDash(ca){
+  lastSyncTime = new Date();
   const[prods,deps,mvts,fourns,bcs,settingsAll]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.MVTS),getAll(S.FOURNISSEURS),getAll(S.BCS),getAll(S.SETTINGS_APP)]);
   const stockTot=await getStockTotal();const bal=await getBalance();
   const cfg = settingsAll.find(s=>s.key==='exploitation')||{};
@@ -4761,6 +4823,7 @@ async function renderDash(ca){
           <div style="font-size:11px;color:rgba(255,255,255,.5)">${new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
           <div style="font-size:10px;color:rgba(82,183,136,.7);margin-top:2px">Tableau de bord</div>
           <div style="font-size:9px;color:rgba(255,255,255,.3);margin-top:2px">Connecté : ${esc(currentUser?.nom||'—')}</div>
+          <div style="font-size:9px;color:${supa?'rgba(82,183,136,.9)':'rgba(252,165,165,.9)'};margin-top:2px">${supa?'🟢 Live':'🔴 Hors-ligne'}${lastSyncTime?' · maj '+lastSyncTime.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):''}</div>
         </div>
       </div>
     </div>
