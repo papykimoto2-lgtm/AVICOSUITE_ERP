@@ -906,6 +906,33 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
 </div>
 
+<!-- ══ Écran bloquant : configuration obligatoire de l'organisation ══
+     Tant qu'aucun org_id personnalisé n'est enregistré en local, l'app utiliserait
+     silencieusement org="default" et partagerait les données avec toute autre
+     instance non configurée. On bloque donc l'accès jusqu'à saisie d'un org_id. ── -->
+<div id="orgSetupScreen" style="display:none;position:fixed;inset:0;z-index:5000;background:#0d3320;display:flex;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:16px;max-width:460px;width:100%;padding:32px 28px;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+    <div style="text-align:center;margin-bottom:18px">
+      <i class="fas fa-shield-alt" style="font-size:32px;color:#e08c10"></i>
+      <h2 style="margin:10px 0 4px;font-size:18px;color:#0d3320">Configuration initiale requise</h2>
+      <div style="font-size:12px;color:#555;line-height:1.6">
+        Cette installation n'a pas encore d'identifiant d'organisation propre.<br>
+        Sans cela, vos données seraient <strong>partagées avec toute autre exploitation</strong>
+        n'ayant pas non plus configuré son organisation.
+      </div>
+    </div>
+    <div class="fg" style="margin-bottom:10px">
+      <label style="font-size:12px;font-weight:700;color:#0d3320">Identifiant de votre organisation *</label>
+      <input id="orgSetupOrgId" type="text" placeholder="ex: ferme-koffi-abidjan-01" style="width:100%;padding:10px;border:1.5px solid #ccc;border-radius:8px;margin-top:4px">
+      <div style="font-size:10px;color:#888;margin-top:4px">Unique à votre exploitation. Notez-le précieusement : il isole vos données de celles des autres.</div>
+    </div>
+    <button class="btn btn-p" style="width:100%;min-height:42px;margin-top:8px" onclick="submitOrgSetup()"><i class="fas fa-check"></i> Valider et démarrer</button>
+    <div style="text-align:center;margin-top:14px">
+      <a href="javascript:void(0)" onclick="dismissOrgSetupAsDefault()" style="font-size:11px;color:#b45309">Je comprends les risques, continuer avec l'organisation partagée "default" →</a>
+    </div>
+  </div>
+</div>
+
 <div class="app">
 
 <!-- ══ MOBILE : Hamburger + Titre + Overlay ══ -->
@@ -6464,6 +6491,11 @@ window.resetDB=async()=>{
 };
 
 window.onload=async()=>{
+  // ── Gate obligatoire : bloquer avant d'utiliser org="default" ──
+  if(!hasCustomOrgConfig()){
+    document.getElementById('orgSetupScreen').style.display='flex';
+    return;
+  }
   document.getElementById('loginScreen').style.display='flex';
 
   try{
@@ -10754,6 +10786,29 @@ window.saveSupaConfig = function(){
   localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url,key,org}));
   toast('✅ Configuration enregistrée — rechargement…');
   setTimeout(()=>location.reload(), 1200);
+};
+
+// ── Gate de configuration obligatoire au premier lancement ──
+// Tant qu'aucune config personnalisée n'existe en local, on est sur SUPA_DEFAULTS
+// (org="default", clé/URL de démo partagées) : on bloque avant d'ouvrir la session.
+function hasCustomOrgConfig(){
+  try{
+    const stored = JSON.parse(localStorage.getItem('sanixavi_supabase_config')||'null');
+    return !!(stored && stored.url && stored.key && stored.org);
+  }catch{ return false; }
+}
+window.submitOrgSetup = function(){
+  const org = document.getElementById('orgSetupOrgId')?.value.trim();
+  if(!org){ toast('Identifiant d\'organisation requis','err'); return; }
+  if(org==='default'){ toast('Choisissez un identifiant différent de "default"','err'); return; }
+  localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url:SUPA_DEFAULTS.url,key:SUPA_DEFAULTS.key,org}));
+  toast('✅ Organisation configurée — démarrage…');
+  setTimeout(()=>location.reload(), 800);
+};
+window.dismissOrgSetupAsDefault = function(){
+  if(!confirm('⚠️ En continuant avec "default", vos données seront visibles et modifiables par toute autre personne utilisant cette même application sans organisation configurée. Continuer quand même ?')) return;
+  localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url:SUPA_DEFAULTS.url,key:SUPA_DEFAULTS.key,org:'default'}));
+  location.reload();
 };
 
 // ── État de la synchronisation : comparatif cloud ↔ file d'attente locale, module par module ──
