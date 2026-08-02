@@ -1918,26 +1918,77 @@ function setupRealtimeSync(){
     .subscribe();
 }
 
+// ── Cache local IndexedDB — snapshot dernier connu, lu quand Supabase est injoignable ──
+// Sans cette couche, getAll() renvoyait un tableau vide hors-ligne : les données déjà
+// synchronisées disparaissaient de l'écran dès la coupure réseau (seules les nouvelles
+// saisies en file d'attente restaient visibles). Le mode "hors-ligne" n'était en réalité
+// qu'une file d'écriture différée, pas une vraie lecture hors-ligne.
+let _cacheDB=null;
+function openCache(){
+  return new Promise(res=>{
+    if(_cacheDB){res(_cacheDB);return;}
+    try{
+      const rq=indexedDB.open('avico_cache_v1',1);
+      rq.onupgradeneeded=()=>{ if(!rq.result.objectStoreNames.contains('stores')) rq.result.createObjectStore('stores'); };
+      rq.onsuccess=()=>{ _cacheDB=rq.result; res(_cacheDB); };
+      rq.onerror=()=>res(null);
+    }catch(e){ res(null); }
+  });
+}
+async function cacheWrite(st,rows){
+  try{ const d=await openCache(); if(!d)return; d.transaction('stores','readwrite').objectStore('stores').put(rows, st); }catch(e){}
+}
+async function cacheRead(st){
+  try{
+    const d=await openCache(); if(!d) return [];
+    return await new Promise(r=>{
+      const rq=d.transaction('stores','readonly').objectStore('stores').get(st);
+      rq.onsuccess=()=>r(rq.result||[]); rq.onerror=()=>r([]);
+    });
+  }catch(e){ return []; }
+}
+async function cacheUpsert(st,row){
+  const rows=await cacheRead(st);
+  const i=rows.findIndex(r=>r.id===row.id);
+  if(i>=0) rows[i]=row; else rows.push(row);
+  cacheWrite(st,rows);
+}
+async function cacheRemove(st,id){
+  const rows=await cacheRead(st);
+  cacheWrite(st, rows.filter(r=>r.id!==id));
+}
+
 function getAll(st){return new Promise(async res=>{
   let serverRows=[];
   if(supa){
     try{
-      const PAGE=1000; let from=0; let page;
+      const PAGE=1000; let from=0; let page; const fetched=[];
       do{
         const {data,error}=await supa.from('avico_records').select('id,data,version')
           .eq('store',st).eq('org_id',SUPA_ORG).is('deleted_at',null)
           .order('id',{ascending:true}).range(from,from+PAGE-1);
         if(error) throw error;
         page=data||[];
-        page.forEach(r=>{ _recVersions[st+':'+r.id]=r.version; serverRows.push({...r.data,id:r.id}); });
+        page.forEach(r=>{ _recVersions[st+':'+r.id]=r.version; fetched.push({...r.data,id:r.id}); });
         from+=PAGE;
       }while(page.length===PAGE);
-    }catch(e){ console.warn('getAll hors-ligne pour store ['+st+'] :',e.message); }
+      serverRows=fetched;
+      cacheWrite(st,serverRows); // snapshot rafraîchi pour la prochaine lecture hors-ligne
+    }catch(e){
+      console.warn('getAll hors-ligne pour store ['+st+'] — lecture du cache local :',e.message);
+      serverRows=await cacheRead(st);
+    }
+  }else{
+    serverRows=await cacheRead(st);
   }
-  // Les créations pas encore synchronisées restent visibles (id temporaire négatif, marquées _pending)
-  const pendingAdds = loadQueue().filter(op=>op.op==='add'&&op.store===st).map(op=>({...op.data,id:op.tempId,_pending:true}));
-  const deletedIds = new Set(loadQueue().filter(op=>op.op==='del'&&op.store===st).map(op=>op.id));
-  res([...serverRows.filter(r=>!deletedIds.has(r.id)), ...pendingAdds]);
+  // Modifications pas encore synchronisées : appliquées par-dessus le dernier snapshot connu
+  const q=loadQueue().filter(op=>op.store===st);
+  const pendingAdds = q.filter(op=>op.op==='add').map(op=>({...op.data,id:op.tempId,_pending:true}));
+  const pendingUpds = {}; q.filter(op=>op.op==='upd').forEach(op=>{ pendingUpds[op.id]=op.data; });
+  const deletedIds  = new Set(q.filter(op=>op.op==='del').map(op=>op.id));
+  const merged = serverRows.filter(r=>!deletedIds.has(r.id))
+    .map(r=> pendingUpds[r.id] ? {...pendingUpds[r.id], id:r.id, _pending:true} : r);
+  res([...merged, ...pendingAdds]);
 });}
 function getByIdx(st,idx,val){return new Promise(async res=>{
   try{ const all=await getAll(st); res(all.filter(rec=>rec[idx]===val)); }
@@ -1956,6 +2007,7 @@ function addRec(st,d){return new Promise(async res=>{
     const {data,error}=await supa.from('avico_records').insert({store:st,org_id:SUPA_ORG,data:_rec}).select('id,version').single();
     if(error) throw error;
     _recVersions[st+':'+data.id]=data.version;
+    cacheUpsert(st,{..._rec,id:data.id});
     res(data.id);
   }
   catch(e){ console.warn('addRec hors-ligne :',e.message); goOffline(); }
@@ -1982,13 +2034,14 @@ function updRec(st,id,d){return new Promise(async res=>{
       const retry=await supa.from('avico_records').update({data:_rec,updated_at:new Date().toISOString()}).eq('id',id).eq('store',st).select('id,version');
       if(retry.data && retry.data[0]) _recVersions[st+':'+id]=retry.data[0].version;
     }else if(data && data[0]){ _recVersions[st+':'+id]=data[0].version; }
+    cacheUpsert(st,{..._rec,id});
     res();
   }
   catch(e){ console.warn('updRec hors-ligne :',e.message); goOffline(); }
 });}
 function delRec(st,id){return new Promise(async res=>{
   if(!supa || id<0){ queueOp({op:'del',store:st,id,ts:Date.now()}); res(); return; }
-  try{ await supa.from('avico_records').update({deleted_at:new Date().toISOString()}).eq('id',id).eq('store',st).eq('org_id',SUPA_ORG); delete _recVersions[st+':'+id]; res(); }
+  try{ await supa.from('avico_records').update({deleted_at:new Date().toISOString()}).eq('id',id).eq('store',st).eq('org_id',SUPA_ORG); delete _recVersions[st+':'+id]; cacheRemove(st,id); res(); }
   catch(e){ console.warn('delRec hors-ligne :',e.message); queueOp({op:'del',store:st,id,ts:Date.now()}); toast('📶 Hors-ligne — suppression mise en attente de synchronisation','err'); res(); }
 });}
 
@@ -2302,11 +2355,24 @@ async function scheduleTasks(flockId,type,startDate){
   }
 }
 
+// ── Flags de seed persistants — distinguent "jamais initialisé" de "vidé volontairement" ──
+// Sans ça, toute fonction initDemoXxx() qui teste juste "store vide ?" réinjecte les données
+// factices dès que l'utilisateur supprime tout son contenu réel (soft-delete → store vide).
+async function wasSeeded(flag){
+  const s = await getAll(S.SETTINGS_APP);
+  return s.some(r=>r.key==='seed_'+flag);
+}
+async function markSeeded(flag){
+  const s = await getAll(S.SETTINGS_APP);
+  if(!s.some(r=>r.key==='seed_'+flag)) await addRec(S.SETTINGS_APP,{key:'seed_'+flag, at:new Date().toISOString()});
+}
+
 async function initDemo(){
-  const existing=await getAll(S.FLOCKS);
   // Toujours créer les utilisateurs et paramètres — indépendamment des autres données
   await initDemoUsers();
-  if(existing.length){console.log('Demo data already exists, skipping.');return;}
+  if(await wasSeeded('main')) return;
+  const existing=await getAll(S.FLOCKS);
+  if(existing.length){await markSeeded('main');console.log('Demo data already exists, skipping.');return;}
   console.log('Initializing demo data...');
 
   try{
@@ -2490,6 +2556,7 @@ async function initDemo(){
   ];
   for(const n of defaultNut) await addRec(S.NUTRITION,n);
 
+  await markSeeded('main');
   }catch(e){console.error('initDemo error:',e.message||e);}
 }
 
@@ -2650,9 +2717,16 @@ function updateNavUser(){
 }
 
 // Créer les utilisateurs démo au premier lancement
-async function initDemoUsers(){
+async function initDemoUsers(force){
   const ex = await getAll(S.USERS);
   if(ex.length) return;
+  if(!force){
+    // ⚠️ Ne PAS se fier à "0 utilisateur" pour décider de réinjecter : après suppression
+    // volontaire de tous les comptes démo (soft-delete), getAll(S.USERS) renvoie aussi [].
+    // On distingue "jamais initialisé" de "vidé exprès" via un flag persistant dédié.
+    const settings = await getAll(S.SETTINGS_APP);
+    if(settings.some(s=>s.key==='users_seeded')) return;
+  }
   const [adminHash, userHash] = await Promise.all([hashPwd('Admin@2025'), hashPwd('1234')]);
   const users = [
     { nom:'Administrateur',  email:'admin@avicosuite.ci',   pwd:adminHash, role:'admin',       actif:true, dernierAcces:null },
@@ -2662,6 +2736,8 @@ async function initDemoUsers(){
     { nom:'Dr. Brice Assi',  email:'brice@avicosuite.ci',   pwd:userHash,  role:'veterinaire', actif:true, dernierAcces:null },
   ];
   for(const u of users) await addRec(S.USERS, u);
+  const seededFlag = (await getAll(S.SETTINGS_APP)).find(s=>s.key==='users_seeded');
+  if(!seededFlag) await addRec(S.SETTINGS_APP, {key:'users_seeded', at:new Date().toISOString()});
 
   // Paramètres par défaut de l'exploitation
   const exSettings = await getAll(S.SETTINGS_APP);
@@ -2731,7 +2807,7 @@ window.emergencyResetUsers = async function(){
     // Supprimer les utilisateurs existants et recréer les comptes démo
     const existing = await getAll(S.USERS);
     for(const u of existing) await delRec(S.USERS, u.id);
-    await initDemoUsers();
+    await initDemoUsers(true);
     document.getElementById('loginRecoveryLink').style.display='none';
     document.getElementById('loginError').style.display='none';
     document.getElementById('loginEmail').value = 'admin@avicosuite.ci';
@@ -3714,10 +3790,20 @@ async function renderLotSidebar(){
   const el=document.getElementById('lotListWrap');
   if(!el) return;
   if(!lots.length){el.innerHTML='<div style="padding:12px;font-size:11px;color:rgba(255,255,255,.4)">Aucun lot. Créez-en un.</div>';return;}
-  el.innerHTML=lots.map(f=>{
+  // Cheptel sorti (mortalité + réforme + vente vivante) par lot, calculé en une passe
+  const [mortAll,reformeAll,venteAll]=await Promise.all([getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT)]);
+  const sorties={};
+  const add=(id,n)=>{ sorties[id]=(sorties[id]||0)+(n||0); };
+  mortAll.forEach(m=>add(m.flockId,m.nbMorts));
+  reformeAll.forEach(r=>add(r.flockId,r.nbTetes));
+  venteAll.forEach(v=>add(v.flockId,v.nbTetes));
+  const isClos=f=>f.initialStock>0 && (sorties[f.id]||0)>=f.initialStock;
+  const sorted=[...lots].sort((a,b)=>(isClos(a)===isClos(b))?0:(isClos(a)?1:-1));
+  el.innerHTML=sorted.map(f=>{
     const age=getAge(f.startDate);const ph=getPhase(f.type,age);
-    return `<div class="lot-card ${f.id===curLotId?'active':''}" onclick="selectLot(${f.id})">
-      <div class="lot-card-name">${esc(f.nom||'')} <span class="${f.type==='layer'?'badge-layer':'badge-broiler'}">${f.type==='layer'?'Ponte':'Chair'}</span></div>
+    const clos=isClos(f);
+    return `<div class="lot-card ${f.id===curLotId?'active':''}" style="${clos?'opacity:.55':''}" onclick="selectLot(${f.id})">
+      <div class="lot-card-name">${esc(f.nom||'')} <span class="${f.type==='layer'?'badge-layer':'badge-broiler'}">${f.type==='layer'?'Ponte':'Chair'}</span>${clos?' <span style="font-size:9px;padding:1px 6px;border-radius:8px;background:#374151;color:#fff">Clôturé</span>':''}</div>
       <div class="lot-card-meta"><span class="lot-phase ${ph.cls}" style="font-size:9px;padding:1px 6px;border-radius:8px">${ph.label}</span><br>🐣 ${f.initialStock} · J${age} · ${f.breed||'—'}</div>
     </div>`;
   }).join('');
@@ -3817,8 +3903,14 @@ async function computeKPIs(lot){
   // Mortalité — source principale : store MORTALITE dédié
   const mortRecords=(await getAll(S.MORTALITE)).filter(m=>m.flockId===lot.id).sort((a,b)=>a.date>b.date?1:-1);
   const mortCum=mortRecords.reduce((a,m)=>a+(m.nbMorts||0),0);
-  const vivants=Math.max(0,lot.initialStock-mortCum);
+  // ⚠️ Réforme (abattage) et vente vivante sortent aussi des têtes du cheptel — jamais
+  // déduites avant : un lot totalement réformé restait affiché avec un effectif vivant
+  // fantôme, un taux de ponte calculé sur cheptel inexistant, et jamais marqué "clos".
+  const sortiesReforme=reformes.reduce((a,r)=>a+(r.nbTetes||0),0);
+  const sortiesVente=ventesVivantes.reduce((a,v)=>a+(v.nbTetes||0),0);
+  const vivants=Math.max(0,lot.initialStock-mortCum-sortiesReforme-sortiesVente);
   const mortPct=lot.initialStock>0?mortCum/lot.initialStock*100:0;
+  const clos = lot.initialStock>0 && (mortCum+sortiesReforme+sortiesVente)>=lot.initialStock;
 
   // Mortalité par jour sur 7 derniers jours
   const mortJ7=mortRecords.slice(-7).map(m=>({date:m.date,mort:m.nbMorts||0,cause:m.cause||''}));
@@ -3887,7 +3979,7 @@ async function computeKPIs(lot){
   // Alertes casse élevée
   if(lot.type==='layer'&&tauxCasse>5) alertes.unshift({type:'amber',msg:`Taux de casse élevé: ${tauxCasse.toFixed(1)}% (collecte+cond.)`});
 
-  return{vivants,mortCum,mortPct,mortJ7,mortMoy7,tauxPonte7,poidsActuel,
+  return{vivants,mortCum,mortPct,clos,mortJ7,mortMoy7,tauxPonte7,poidsActuel,
     totalFeedKg,totalEggs,IC,alimentParOeuf,
     mortRecords,mortAujourdhui,cassesCollecte,cassesCond,totalCasses,tauxCasse,
     vaccEnRetard,vaccAVenir,score,totalCharges,totalRecettes,marge,coutPinit,coutAliment,
@@ -7681,8 +7773,9 @@ var PANNE_GRAVITE_CLS = {mineure:'b-a', majeure:'b-a', critique:'b-r'};
 
 // ── Demo data GMAO ──
 async function initDemoGmao() {
+  if (await wasSeeded('gmao')) return;
   var existing = await getAll(S.EQUIPEMENTS);
-  if (existing.length) return;
+  if (existing.length) { await markSeeded('gmao'); return; }
   var today = new Date();
   function daysAgo(n) { var d=new Date(today); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
   function daysLater(n) { var d=new Date(today); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
@@ -7706,6 +7799,7 @@ async function initDemoGmao() {
   await addRec(S.PANNES,{equipementId:e5,dateDeb:daysAgo(3),dateFin:null,gravite:'critique',description:'Arrêt total compresseur chambre froide — T° montée à +18°C',cause:'Défaillance bobine moteur compresseur',actions:'Mise en place glace sèche d\'urgence — technicien commandé',cout:0,ts:Date.now()-3*86400000});
   await addRec(S.PANNES,{equipementId:e1,dateDeb:daysAgo(45),dateFin:daysAgo(44),gravite:'majeure',description:'Démarrage difficile — fumée noire à l\'échappement',cause:'Filtre à air obstrué + injecteur encrassé',actions:'Nettoyage filtre air, nettoyage injecteur',cout:18000,ts:Date.now()-45*86400000});
   await addRec(S.PANNES,{equipementId:e3,dateDeb:daysAgo(20),dateFin:daysAgo(19),gravite:'mineure',description:'Vibrations anormales lors du fonctionnement',cause:'Boulon de fixation desserré',actions:'Resserrage visserie + contrôle alignement moteur',cout:0,ts:Date.now()-20*86400000});
+  await markSeeded('gmao');
 }
 
 // ── Rendu principal GMAO ──
@@ -9858,8 +9952,9 @@ window.fabAnalyseChange = async function(){
 };
 
 async function initDemoNorms(){
+  if(await wasSeeded('norms')) return;
   const ex = await getAll(S.FAB_NORMS);
-  if(ex.length) return;
+  if(ex.length) { await markSeeded('norms'); return; }
 
   const norms = [
     // ═══ PONDEUSES (Gallus gallus — ISA Brown / Hy-Line W-36 / Lohmann) ═══
@@ -9988,13 +10083,15 @@ async function initDemoNorms(){
 
   for(const n of norms) await addRec(S.FAB_NORMS, n);
   console.log('Normes nutritionnelles initialisées : '+norms.length+' fiches');
+  await markSeeded('norms');
 }
 
 
 // ── Demo data Fabrication Aliments ──
 async function initDemoFab() {
+  if (await wasSeeded('fab')) return;
   var existing = await getAll(S.FAB_RECETTES);
-  if (existing.length) return;
+  if (existing.length) { await markSeeded('fab'); return; }
   function daysAgo(n) { var d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
 
   // ── Récupérer les produits existants (créés par initDemo) ──
@@ -10068,6 +10165,7 @@ async function initDemoFab() {
   await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-006',date:daysAgo(7),recetteId:r2,qteProduite:200,statut:'termine',depotId:null,responsable:'Koné Mariam',notes:'Complément démarrage — lot chair en croissance rapide.',ts:Date.now()-7*86400000});
   await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-007',date:daysAgo(2),recetteId:r1,qteProduite:500,statut:'en_cours',depotId:null,responsable:'Kouamé Jean',notes:'En cours — livraison maïs reçue ce matin.',ts:Date.now()-2*86400000});
   await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-008',date:daysAgo(0),recetteId:r3,qteProduite:300,statut:'planifie',depotId:null,responsable:'Koné Mariam',notes:'Planifié pour demain matin — attente réception tourteau.',ts:Date.now()});
+  await markSeeded('fab');
 }
 
 async function renderFab(ca) {
@@ -11515,11 +11613,11 @@ async function collectRapportData(type, customMin=null, customMax=null){
   }
 
   const [flocks,eggProd,growthProd,sales,mvts,prods,staff,
-         pannes,maints,ordres,tresorerie,mortalite] = await Promise.all([
+         pannes,maints,ordres,tresorerie,mortalite,reformeAll,venteAll] = await Promise.all([
     getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.GROWTH_PROD),
     getAll(S.SALES), getAll(S.MVTS), getAll(S.PRODUITS), getAll(S.STAFF),
     getAll(S.PANNES), getAll(S.MAINTENANCES), getAll(S.FAB_ALIMENTS),
-    getAll(S.TRESORERIE), getAll(S.MORTALITE)
+    getAll(S.TRESORERIE), getAll(S.MORTALITE), getAll(S.REFORME), getAll(S.VENTE_VIVANT)
   ]);
 
   const inPeriod = (d) => d && d >= dateMin && d <= dateMax;
@@ -11589,8 +11687,16 @@ async function collectRapportData(type, customMin=null, customMax=null){
   }));
 
   const nbPersonnel = staff.length;
-  const lotsLayer = flocks.filter(f=>f.type==='layer');
-  const lotsBroiler = flocks.filter(f=>f.type==='broiler');
+  // Lots "actifs" = cheptel non épuisé (mortalité totale + réforme + vente vivante < effectif initial).
+  // Sans ce filtre, un lot réformé il y a un an restait compté indéfiniment.
+  const sortiesParLot={};
+  const addSortie=(id,n)=>{ sortiesParLot[id]=(sortiesParLot[id]||0)+(n||0); };
+  mortalite.forEach(m=>addSortie(m.flockId,m.nbMorts));
+  reformeAll.forEach(r=>addSortie(r.flockId,r.nbTetes));
+  venteAll.forEach(v=>addSortie(v.flockId,v.nbTetes));
+  const flocksActifs = flocks.filter(f=>!(f.initialStock>0 && (sortiesParLot[f.id]||0)>=f.initialStock));
+  const lotsLayer = flocksActifs.filter(f=>f.type==='layer');
+  const lotsBroiler = flocksActifs.filter(f=>f.type==='broiler');
 
   return {
     type, dateMin, dateMax, todayStr: dateMax, today,
@@ -15556,184 +15662,6 @@ const _origInitAppAfterLogin = typeof initAppAfterLogin !== 'undefined' ? initAp
 
 // ── Init au chargement de la page ──
 window.addEventListener('load', () => setTimeout(refreshPwaSettingsUi, 1500));
-</script>
-
-</body>
-
-<!-- Bannière d'installation -->
-<div id="pwaInstallBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:8000;background:linear-gradient(135deg,#0a2818,#1a4731);color:#fff;padding:14px 16px;box-shadow:0 -4px 20px rgba(0,0,0,.3);border-top:2px solid rgba(82,183,136,.4)">
-  <div style="max-width:600px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <div style="width:42px;height:42px;border-radius:10px;background:rgba(82,183,136,.2);flex-shrink:0;display:flex;align-items:center;justify-content:center">
-      <svg width="28" height="28" viewBox="0 0 44 44" aria-hidden="true">
-        <rect width="44" height="44" rx="10" fill="rgba(0,0,0,.4)"/>
-        <path d="M7 32 Q22 39 37 32" stroke="#52b788" stroke-width="3" fill="none" stroke-linecap="round"/>
-        <ellipse cx="22" cy="21" rx="7" ry="8.5" fill="rgba(61,186,124,.2)" stroke="#52b788" stroke-width="2"/>
-        <path d="M18 13 Q15 7 19.5 7 Q19.5 10.5 18 13Z" fill="#52b788"/>
-        <circle cx="22" cy="21" r="2.5" fill="#52b788"/>
-      </svg>
-    </div>
-    <div style="flex:1;min-width:0">
-      <div style="font-weight:700;font-size:13px">Installer AviNest Pro</div>
-      <div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:1px">Accédez à votre ERP depuis l'écran d'accueil, même sans internet</div>
-    </div>
-    <div style="display:flex;gap:8px;flex-shrink:0">
-      <button onclick="pwaInstall()" style="background:#52b788;color:#0a2818;border:none;border-radius:8px;padding:9px 16px;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;min-height:40px">
-        <i class="fas fa-download"></i> Installer
-      </button>
-      <button onclick="pwaDismiss()" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;border-radius:8px;padding:9px 12px;cursor:pointer;font-family:inherit;min-height:40px;font-size:12px">Plus tard</button>
-    </div>
-  </div>
-</div>
-
-<!-- Instructions iOS (Safari ne supporte pas beforeinstallprompt) -->
-<div id="pwaIosBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:8000;background:linear-gradient(135deg,#0a2818,#1a4731);color:#fff;padding:14px 16px;box-shadow:0 -4px 20px rgba(0,0,0,.3);border-top:2px solid rgba(82,183,136,.4)">
-  <div style="max-width:600px;margin:0 auto">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start">
-      <div style="font-weight:700;font-size:13px;margin-bottom:6px">📱 Installer AviNest Pro sur votre iPhone / iPad</div>
-      <button onclick="document.getElementById('pwaIosBanner').style.display='none'" style="background:none;border:none;color:rgba(255,255,255,.5);font-size:18px;cursor:pointer;padding:0 4px">×</button>
-    </div>
-    <div style="font-size:12px;color:rgba(255,255,255,.8);line-height:2">
-      1. Appuyez sur <strong style="background:rgba(255,255,255,.15);padding:1px 6px;border-radius:4px"><i class="fas fa-share-square"></i> Partager</strong> en bas de Safari<br>
-      2. Faites défiler et appuyez sur <strong style="background:rgba(255,255,255,.15);padding:1px 6px;border-radius:4px">Sur l'écran d'accueil</strong><br>
-      3. Confirmez avec <strong style="background:rgba(255,255,255,.15);padding:1px 6px;border-radius:4px">Ajouter</strong>
-    </div>
-  </div>
-</div>
-
-<script>
-// ════════════════════════════════════════════════════════
-//  PWA — SERVICE WORKER (blob URL, compatible single-file)
-// ════════════════════════════════════════════════════════
-
-// Contenu du Service Worker
-const SW_VERSION = 'avinest-v12-1';
-const SW_CODE = `
-const CACHE = '${SW_VERSION}';
-const ASSETS = [self.location.href.split('?')[0]]; // cache le fichier HTML lui-même
-
-self.addEventListener('install', e => {
-  self.skipWaiting();
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS).catch(()=>{}))
-  );
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))
-    ).then(()=> self.clients.claim())
-  );
-});
-
-self.addEventListener('fetch', e => {
-  const url = e.request.url;
-  // Stratégie network-first pour Supabase, cache-first pour le reste
-  if(url.includes('supabase.co') || url.includes('cdnjs.cloudflare.com') || url.includes('jsdelivr.net')){
-    e.respondWith(
-      fetch(e.request)
-        .then(r=>{ const clone=r.clone(); caches.open(CACHE).then(c=>c.put(e.request,clone)); return r; })
-        .catch(()=> caches.match(e.request))
-    );
-  } else {
-    e.respondWith(
-      caches.match(e.request).then(r => r || fetch(e.request)
-        .then(nr=>{ const clone=nr.clone(); caches.open(CACHE).then(c=>c.put(e.request,clone)); return nr; })
-      )
-    );
-  }
-});
-`;
-
-// Enregistrer le SW via blob URL (fonctionne sur http/https)
-if('serviceWorker' in navigator && location.protocol !== 'file:'){
-  try{
-    const blob = new Blob([SW_CODE.replace('${SW_VERSION}', SW_VERSION)], {type:'application/javascript'});
-    const swUrl = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(swUrl)
-      .then(reg => {
-        console.log('[PWA] Service Worker enregistré ✅', reg.scope);
-        URL.revokeObjectURL(swUrl);
-      })
-      .catch(err => console.warn('[PWA] SW registration failed:', err.message));
-  }catch(e){ console.warn('[PWA] SW setup error:', e.message); }
-}
-
-// ════════════════════════════════════════════════════════
-//  PWA — PROMPT D'INSTALLATION (Android/Chrome/Edge)
-// ════════════════════════════════════════════════════════
-
-let _pwaPrompt = null;
-
-// Détecter si déjà installé
-const isInstalled = window.matchMedia('(display-mode: standalone)').matches
-  || window.navigator.standalone  // iOS Safari
-  || document.referrer.includes('android-app://');
-
-if(!isInstalled){
-  // Android/Chrome/Edge : intercepter le prompt d'installation
-  window.addEventListener('beforeinstallprompt', e => {
-    e.preventDefault();
-    _pwaPrompt = e;
-    // Attendre 3s avant d'afficher (pour ne pas gêner le login)
-    setTimeout(() => {
-      const banner = document.getElementById('pwaInstallBanner');
-      if(banner) banner.style.display = 'block';
-    }, 3000);
-  });
-
-  // iOS Safari : détecter et afficher les instructions manuelles
-  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-  if(isIos && isSafari){
-    const dismissed = localStorage.getItem('pwaIosDismissed');
-    if(!dismissed){
-      setTimeout(() => {
-        const banner = document.getElementById('pwaIosBanner');
-        if(banner) banner.style.display = 'block';
-      }, 3000);
-    }
-  }
-
-  // Masquer la bannière si l'app est installée depuis
-  window.matchMedia('(display-mode: standalone)').addEventListener('change', e => {
-    if(e.matches){
-      document.getElementById('pwaInstallBanner').style.display = 'none';
-      document.getElementById('pwaIosBanner').style.display = 'none';
-    }
-  });
-}
-
-window.pwaInstall = async function(){
-  if(!_pwaPrompt) return;
-  _pwaPrompt.prompt();
-  const {outcome} = await _pwaPrompt.userChoice;
-  _pwaPrompt = null;
-  document.getElementById('pwaInstallBanner').style.display = 'none';
-  if(outcome === 'accepted'){
-    localStorage.setItem('pwaInstalled', '1');
-    if(typeof toast === 'function') toast('✅ AviNest Pro installé avec succès !');
-  }
-};
-
-window.pwaDismiss = function(){
-  document.getElementById('pwaInstallBanner').style.display = 'none';
-  // Réafficher dans 7 jours
-  localStorage.setItem('pwaDismissed', Date.now());
-};
-
-// ════════════════════════════════════════════════════════
-//  PWA — BOUTON D'INSTALLATION DANS LES PARAMÈTRES
-// ════════════════════════════════════════════════════════
-
-// Exposer l'état d'installation pour l'UI settings
-window.getPwaStatus = function(){
-  return {
-    installed: isInstalled || !!localStorage.getItem('pwaInstalled'),
-    canInstall: !!_pwaPrompt,
-    swReady: 'serviceWorker' in navigator && location.protocol !== 'file:',
-  };
-};
 </script>
 
 </body>
