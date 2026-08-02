@@ -2418,196 +2418,10 @@ async function markSeeded(flag){
 }
 
 async function initDemo(){
-  // Toujours créer les utilisateurs et paramètres — indépendamment des autres données
-  await initDemoUsers();
-  if(await wasSeeded('main')) return;
-  const existing=await getAll(S.FLOCKS);
-  if(existing.length){await markSeeded('main');console.log('Demo data already exists, skipping.');return;}
-  console.log('Initializing demo data...');
-
-  try{
-  // Staff
-  await addRec(S.STAFF,{nom:'Administrateur',role:'Administrateur',tel:'',email:'admin@avicosuite.ci',isDemo:true});
-  await addRec(S.STAFF,{nom:'Kouamé Jean',role:'Éleveur',tel:'+225 07 00 00 00 01',email:'jean@avicosuite.ci',isDemo:true});
-  await addRec(S.STAFF,{nom:'Dr. Assi Brice',role:'Vétérinaire',tel:'+225 07 00 00 00 02',email:'brice@avicosuite.ci',isDemo:true});
-
-  // Fournisseurs
-  const f1=await addRec(S.FOURNISSEURS,{nom:'CIPREL Nutrition',specialite:'aliment',contact:'M. Diallo',tel:'+225 27 21 45 67 89',email:'diallo@ciprel.ci',ville:'Abidjan',adresse:'Zone industrielle Yopougon',delai:3,paie:'comptant',note:5,notes:'Livraison sous 72h garantie.',isDemo:true});
-  const f2=await addRec(S.FOURNISSEURS,{nom:'VetPharma CI',specialite:'medicament',contact:'Dr. Bamba',tel:'+225 27 22 34 56 78',email:'bamba@vetpharma.ci',ville:'Abidjan',adresse:'Plateau, Rue du Commerce',delai:2,paie:'30j',note:4,notes:'Chaîne du froid respectée.',isDemo:true});
-  const f3=await addRec(S.FOURNISSEURS,{nom:'Couvoir AGRI-CI',specialite:'poussin',contact:'Mme Coulibaly',tel:'+225 07 89 01 23 45',email:'coulibaly@agrici.ci',ville:'Bouaké',adresse:'Route de Yamoussoukro',delai:5,paie:'avance',note:4,notes:'Commander 2 semaines à l\'avance.',isDemo:true});
-
-  // Dépôts
-  const d1=await addRec(S.DEPOTS,{nom:'Magasin aliment',type:'aliment',responsable:'Kouamé Jean',localisation:'Bâtiment A',capacite:5000,description:'Aliment pondeuses et chair'});
-  const d2=await addRec(S.DEPOTS,{nom:'Pharmacie vétérinaire',type:'medicament',responsable:'Dr. Assi',localisation:'Bureau vétérinaire',capacite:500,description:'Vaccins et médicaments'});
-  const d3=await addRec(S.DEPOTS,{nom:'Produits finis',type:'produit_fini',responsable:'Koné Mariam',localisation:'Bâtiment C',capacite:10000,description:'Œufs et viande'});
-
-  // Produits
-  const p1=await addRec(S.PRODUITS,{nom:'Aliment ponte 116',categorie:'aliment',unite:'kg',prix:185,seuil:500,fournId:f1,ref:'ALI-001',description:'Pondeuses en production'});
-  const p2=await addRec(S.PRODUITS,{nom:'Aliment démarrage F1',categorie:'aliment',unite:'kg',prix:210,seuil:200,fournId:f1,ref:'ALI-002',description:'Chair 0-21 jours'});
-  const p3=await addRec(S.PRODUITS,{nom:'Aliment finition F3',categorie:'aliment',unite:'kg',prix:175,seuil:200,fournId:f1,ref:'ALI-003',description:'Finition chair'});
-  const p4=await addRec(S.PRODUITS,{nom:'Vaccin Gumboro',categorie:'medicament',unite:'dose',prix:450,seuil:500,fournId:f2,ref:'VAC-001',description:'IBD Gumboro'});
-  const p5=await addRec(S.PRODUITS,{nom:'Vaccin ND/IB',categorie:'medicament',unite:'dose',prix:380,seuil:300,fournId:f2,ref:'VAC-002',description:'Newcastle + Bronchite'});
-  const p6=await addRec(S.PRODUITS,{nom:'Anticoccidien Amprol',categorie:'medicament',unite:'mL',prix:2200,seuil:1000,fournId:f2,ref:'MED-001',description:'Anti-coccidiose'});
-  const p7=await addRec(S.PRODUITS,{nom:'Vaccin EDS',categorie:'medicament',unite:'dose',prix:520,seuil:200,fournId:f2,ref:'VAC-003',description:'Egg Drop Syndrome'});
-  const p8=await addRec(S.PRODUITS,{nom:'Vaccin Marek',categorie:'medicament',unite:'dose',prix:380,seuil:200,fournId:f2,ref:'VAC-004',description:'Maladie de Marek'});
-  const p9=await addRec(S.PRODUITS,{nom:'Œufs bruts',categorie:'oeuf',unite:'unité',prix:75,seuil:300,fournId:null,ref:'PRO-000',description:'Œufs frais non conditionnés'});
-  const p10=await addRec(S.PRODUITS,{nom:'Alvéole carton',categorie:'intrant',unite:'unité',prix:25,seuil:500,fournId:null,ref:'EMB-001',description:'Alvéole pour 30 œufs'});
-  const p11=await addRec(S.PRODUITS,{nom:'Plateau 30 œufs',categorie:'oeuf',unite:'plateau',prix:2250,seuil:50,fournId:null,ref:'PRO-001',description:'Plateau conditionné 30 œufs'});
-  const p12=await addRec(S.PRODUITS,{nom:'Carton 12 plateaux',categorie:'oeuf',unite:'carton',prix:27000,seuil:10,fournId:null,ref:'PRO-002',description:'Carton de 360 œufs (12 plateaux) — unité de vente'});
-  // Produits calibres - plateaux
-  await addRec(S.PRODUITS,{nom:'Plateau Petit <53g',categorie:'oeuf',unite:'plateau',prix:1800,seuil:20,fournId:null,ref:'CAL-PLT-P',description:'Plateau 30 oeufs calibre Petit (moins de 53g)'});
-  await addRec(S.PRODUITS,{nom:'Plateau Moyen 53-63g',categorie:'oeuf',unite:'plateau',prix:2250,seuil:20,fournId:null,ref:'CAL-PLT-M',description:'Plateau 30 oeufs calibre Moyen (53 a 63g)'});
-  await addRec(S.PRODUITS,{nom:'Plateau Gros 63-73g',categorie:'oeuf',unite:'plateau',prix:2700,seuil:20,fournId:null,ref:'CAL-PLT-G',description:'Plateau 30 oeufs calibre Gros (63 a 73g)'});
-  await addRec(S.PRODUITS,{nom:'Plateau Tres Gros 73g+',categorie:'oeuf',unite:'plateau',prix:3200,seuil:20,fournId:null,ref:'CAL-PLT-TG',description:'Plateau 30 oeufs calibre Tres Gros (73g et plus)'});
-  // Produits calibres - cartons
-  await addRec(S.PRODUITS,{nom:'Carton Petit <53g',categorie:'oeuf',unite:'carton',prix:21600,seuil:5,fournId:null,ref:'CAL-CAR-P',description:'Carton 12 plateaux calibre Petit'});
-  await addRec(S.PRODUITS,{nom:'Carton Moyen 53-63g',categorie:'oeuf',unite:'carton',prix:27000,seuil:5,fournId:null,ref:'CAL-CAR-M',description:'Carton 12 plateaux calibre Moyen'});
-  await addRec(S.PRODUITS,{nom:'Carton Gros 63-73g',categorie:'oeuf',unite:'carton',prix:32400,seuil:5,fournId:null,ref:'CAL-CAR-G',description:'Carton 12 plateaux calibre Gros'});
-  await addRec(S.PRODUITS,{nom:'Carton Tres Gros 73g+',categorie:'oeuf',unite:'carton',prix:38400,seuil:5,fournId:null,ref:'CAL-CAR-TG',description:'Carton 12 plateaux calibre Tres Gros'});
-
-  // Clients
-  await addRec(S.CLIENTS,{nom:'Marché central Abidjan',contact:'M. Koffi',tel:'+225 05 11 22 33',adresse:'Treichville',isDemo:true});
-  await addRec(S.CLIENTS,{nom:'Hôtel Ivoire',contact:'Service achat',tel:'+225 27 20 00 00',adresse:'Cocody',isDemo:true});
-
-  // Stocks initiaux (mouvements d'entrée)
-  const today=new Date().toISOString().slice(0,10);
-  const initMvts=[
-    [p1,d1,2400],[p2,d1,850],[p3,d1,1200],
-    [p4,d2,1500],[p5,d2,800],[p6,d2,4500],[p7,d2,400],[p8,d2,600],
-    [p11,d3,280],[p12,d3,24]
-  ];
-  // Alvéoles en stock dépôt aliment
-  for(const[prod,dep,qty] of initMvts){
-    await addRec(S.MVTS,{type:'entree',produitId:prod,depotDestId:dep,depotSrcId:null,quantite:qty,unite:'',prixUnit:0,fournId:null,ref:'INIT',motif:'Stock initial',date:today,ts:Date.now()-90*86400000});
-  }
-  // Sorties simulées
-  await addRec(S.MVTS,{type:'entree',produitId:p10,depotDestId:d1,depotSrcId:null,quantite:5000,unite:'unité',prixUnit:25,fournId:null,ref:'INIT',motif:'Stock initial alvéoles',date:today,ts:Date.now()-89*86400000});
-  await addRec(S.MVTS,{type:'sortie',produitId:p1,depotSrcId:d1,depotDestId:null,quantite:980,unite:'kg',prixUnit:185,fournId:null,ref:'',motif:'Distribution pondeuses Bat.A',date:today,ts:Date.now()-1000});
-  await addRec(S.MVTS,{type:'sortie',produitId:p2,depotSrcId:d1,depotDestId:null,quantite:320,unite:'kg',prixUnit:210,fournId:null,ref:'',motif:'Distribution chair Bat.B',date:today,ts:Date.now()-2000});
-  await addRec(S.MVTS,{type:'sortie',produitId:p4,depotSrcId:d2,depotDestId:null,quantite:600,unite:'dose',prixUnit:450,fournId:null,ref:'',motif:'Vaccination Gumboro J7',date:today,ts:Date.now()-3000});
-  await addRec(S.MVTS,{type:'sortie',produitId:p12,depotSrcId:d3,depotDestId:null,quantite:10,unite:'carton',prixUnit:27000,fournId:null,ref:'',motif:'Vente marché central',date:today,ts:Date.now()-4000});
-
-  // BC exemple
-  await addRec(S.BCS,{fournId:f1,ref:'BC-2026-001',date:today,dateLiv:'',statut:'sent',lignes:[{produitId:p1,designation:'Aliment ponte 116',qte:1000,unite:'kg',prixUnit:185,qteLivree:0},{produitId:p2,designation:'Aliment démarrage F1',qte:500,unite:'kg',prixUnit:210,qteLivree:0}],commentaire:'Commande mensuelle',totalHT:1000*185+500*210});
-
-  // Lots avec historique
-  const startLayer=new Date();startLayer.setDate(startLayer.getDate()-180);
-  const startBroiler=new Date();startBroiler.setDate(startBroiler.getDate()-35);
-
-  const layerId=await addRec(S.FLOCKS,{nom:'Pondeuses Isa Brown — Bat.A',type:'layer',breed:'Isa Brown',startDate:startLayer.toISOString().slice(0,10),initialStock:500,costPerChick:850,line:'Bâtiment A – Batterie 1',fournId:f3,isDemo:true});
-  const chairId=await addRec(S.FLOCKS,{nom:'Chair Ross 308 — Bat.B',type:'broiler',breed:'Ross 308',startDate:startBroiler.toISOString().slice(0,10),initialStock:300,costPerChick:650,line:'Bâtiment B – Sol',fournId:f3,isDemo:true});
-
-  let vivants=500,mortCum=0;
-  for(let i=29;i>=0;i--){
-    const d=new Date();d.setDate(d.getDate()-i);
-    const ds=d.toISOString().slice(0,10);
-    const sem=Math.floor((180-i)/7);
-    const tauxT=sem<26?Math.min(92,sem*4+30):Math.max(70,92-(sem-26)*1.2);
-    const taux=Math.max(40,Math.min(96,tauxT+(Math.random()-0.5)*5));
-    const oeufs=Math.round(vivants*taux/100);
-    const mort=Math.round(Math.random()<0.25?1:0);
-    vivants=Math.max(0,vivants-mort);mortCum+=mort;
-    await addRec(S.EGG_PROD,{flockId:layerId,date:ds,eggCount:oeufs,mortality:mort,operatorId:1});
-    const nut=getNut('layer',180-i);
-    if(nut) await addRec(S.FEEDING,{flockId:layerId,date:ds,quantityKg:+(nut.feedGPD*vivants/1000).toFixed(1),feedType:'Aliment ponte 116',operatorId:1});
-    await addRec(S.WATER,{flockId:layerId,date:ds,waterLiters:Math.round(vivants*230/1000),remarks:'',operatorId:1});
-  }
-
-  const poids=[0,28,55,95,145,210,290,385,490,610,740,880,1020,1170,1330,1490,1650,1810,1970,2130,2290,2440,2600,2755,2890,3020,3150,3270,3380,3480,3570,3650,3720,3780,3830,3870];
-  let vivantsB=300;
-  for(let i=34;i>=0;i--){
-    const d=new Date();d.setDate(d.getDate()-i);
-    const ds=d.toISOString().slice(0,10);
-    const age=35-i;
-    const mort=age<7&&Math.random()<0.15?1:0;vivantsB=Math.max(0,vivantsB-mort);
-    const pw=(poids[Math.min(age,36)]||3870)+(Math.random()-0.5)*80;
-    await addRec(S.GROWTH_PROD,{flockId:chairId,date:ds,avgWeight:Math.round(pw),mortality:mort,operatorId:1});
-    if(age>0){const nut=getNut('broiler',age);if(nut) await addRec(S.FEEDING,{flockId:chairId,date:ds,quantityKg:+(nut.feedGPD*vivantsB/1000).toFixed(1),feedType:'Aliment finition F3',operatorId:1});}
-  }
-
-  // Ventes pondeuses
-  for(let i=0;i<5;i++){
-    const d=new Date();d.setDate(d.getDate()-i*6);
-    await addRec(S.SALES,{flockId:layerId,produit:'Œufs plateau 30',quantite:360,prixUnit:2500,total:360*2500,date:d.toISOString().slice(0,10),clientId:1,clientNom:'Marché central Abidjan'});
-  }
-
-  await scheduleTasks(layerId,'layer',startLayer.toISOString().slice(0,10));
-  await scheduleTasks(chairId,'broiler',startBroiler.toISOString().slice(0,10));
-
-  // Marquer tâches passées réalisées (pondeuses)
-  const layerTasks=await getByIdx(S.PROPHY,'flockId',layerId);
-  for(const t of layerTasks){if(new Date(t.plannedDate)<new Date()) await updRec(S.PROPHY,t.id,{...t,realizedDate:t.plannedDate});}
-  // Premières tâches chair réalisées
-  const chairTasks=await getByIdx(S.PROPHY,'flockId',chairId);
-  for(const t of chairTasks.slice(0,2)){if(new Date(t.plannedDate)<new Date()) await updRec(S.PROPHY,t.id,{...t,realizedDate:t.plannedDate});}
-  // === Mortalités demo ===
-  const mortCauses2=['maladie','inconnu','accident','inconnu','maladie'];
-  for(let mi=4;mi>=0;mi--){
-    const dm=new Date();dm.setDate(dm.getDate()-mi*12);
-    await addRec(S.MORTALITE,{flockId:layerId,date:dm.toISOString().slice(0,10),nbMorts:mi===0?2:1,cause:mortCauses2[mi],observations:'',operatorId:1,ts:Date.now()-mi*12*86400000});
-  }
-  await addRec(S.MORTALITE,{flockId:chairId,date:new Date().toISOString().slice(0,10),nbMorts:1,cause:'inconnu',observations:'',operatorId:1,ts:Date.now()});
-
-  // Programmes nutritionnels de référence — par souche
-  const defaultNut=[
-    // ── PONDEUSES : Général ──
-    {type:'layer',breed:'Général',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:12,waterMlPD:25,proteinPct:20,energyKcal:2900,notes:'Aliment starter riche en protéines'},
-    {type:'layer',breed:'Général',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:35,waterMlPD:70,proteinPct:18,energyKcal:2800,notes:'Croissance osseuse et musculaire'},
-    {type:'layer',breed:'Général',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:55,waterMlPD:110,proteinPct:16,energyKcal:2750,notes:'Préparer l\'appareil reproducteur'},
-    {type:'layer',breed:'Général',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:115,waterMlPD:230,proteinPct:17,energyKcal:2700,notes:'Pic de ponte — surveiller consommation eau'},
-    {type:'layer',breed:'Général',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:115,waterMlPD:235,proteinPct:16.5,energyKcal:2700,notes:'Maintenir taux de ponte > 80%'},
-    {type:'layer',breed:'Général',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:112,waterMlPD:224,proteinPct:16,energyKcal:2650,notes:'Réduire légèrement la ration si prise de poids'},
-    // ── PONDEUSES : Isa Brown ──
-    {type:'layer',breed:'Isa Brown',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:14,waterMlPD:28,proteinPct:20,energyKcal:2900,notes:'Starter Isa Brown — broyat fin, température 32°C'},
-    {type:'layer',breed:'Isa Brown',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:36,waterMlPD:72,proteinPct:18,energyKcal:2800,notes:'Croissance régulière — contrôle poids hebdo (cible 750g J56)'},
-    {type:'layer',breed:'Isa Brown',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:57,waterMlPD:114,proteinPct:16.5,energyKcal:2750,notes:'Augmenter Ca progressivement à 3,5g/j — photostimulation J112'},
-    {type:'layer',breed:'Isa Brown',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:118,waterMlPD:236,proteinPct:17,energyKcal:2700,notes:'Pic attendu 95%+ — Ca 4g/j — ajuster si consommation < standard'},
-    {type:'layer',breed:'Isa Brown',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:116,waterMlPD:232,proteinPct:16.5,energyKcal:2700,notes:'Taux de ponte cible > 90% — surveiller qualité coquille'},
-    {type:'layer',breed:'Isa Brown',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:113,waterMlPD:226,proteinPct:16,energyKcal:2650,notes:'Qualité oeuf prioritaire — supplémenter Vit D3 et Mn si coquille molle'},
-    // ── PONDEUSES : Lohmann Brown ──
-    {type:'layer',breed:'Lohmann Brown',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:13,waterMlPD:26,proteinPct:20,energyKcal:2900,notes:'Aliment LB starter — méthionine 0,45% minimum'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:34,waterMlPD:68,proteinPct:17.5,energyKcal:2780,notes:'Croissance homogène — éviter surpoids (cible J63 : 560g)'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:56,waterMlPD:112,proteinPct:16,energyKcal:2750,notes:'Transition aliment ponte — Ca à 3g/j minimum'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:112,waterMlPD:224,proteinPct:16.5,energyKcal:2700,notes:'Pic de ponte attendu 93-96% — ratio Ca:P = 12:1'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:112,waterMlPD:224,proteinPct:16,energyKcal:2680,notes:'Souche robuste — résistante stress thermique'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:110,waterMlPD:220,proteinPct:15.5,energyKcal:2650,notes:'Réduire si prise de poids — maintenir Ca 4,2g/j'},
-    // ── PONDEUSES : Hy-Line Brown ──
-    {type:'layer',breed:'Hy-Line Brown',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:13,waterMlPD:26,proteinPct:20.5,energyKcal:2950,notes:'Hy-Line starter — densité élevée requise, lysine 1,1%'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:36,waterMlPD:72,proteinPct:18,energyKcal:2820,notes:'Contrôle homogénéité du lot — cible J70 : 650g ± 50g'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:58,waterMlPD:116,proteinPct:16.5,energyKcal:2750,notes:'Photostimulation 15h lumière — Ca monter à 4g/j avant ponte'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:114,waterMlPD:228,proteinPct:17,energyKcal:2700,notes:'Pic ponte 96%+ possible — surveiller eau/aliment ratio = 2:1'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:114,waterMlPD:228,proteinPct:16.5,energyKcal:2680,notes:'Persistance ponte exceptionnelle — bonne résistance chaleur'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:111,waterMlPD:222,proteinPct:16,energyKcal:2650,notes:'Hy-Line guide: réduire 2g/sujet si T° > 30°C — Ca maintenu'},
-    // ── CHAIR : Général ──
-    {type:'broiler',breed:'Général',ageMin:0,ageMax:9,phase:'Démarrage',feedGPD:22,waterMlPD:44,proteinPct:22,energyKcal:3000,notes:'Température brooding 32-35°C'},
-    {type:'broiler',breed:'Général',ageMin:10,ageMax:21,phase:'Croissance',feedGPD:68,waterMlPD:136,proteinPct:20,energyKcal:3100,notes:'Croissance rapide — accès eau ad libitum'},
-    {type:'broiler',breed:'Général',ageMin:22,ageMax:35,phase:'Finition',feedGPD:120,waterMlPD:240,proteinPct:18,energyKcal:3200,notes:'Aliment finition sans anticoccidien'},
-    {type:'broiler',breed:'Général',ageMin:36,ageMax:49,phase:'Finition tardive',feedGPD:155,waterMlPD:310,proteinPct:16,energyKcal:3300,notes:'Surveiller IC — abattage à 42-49j'},
-    // ── CHAIR : Ross 308 ──
-    {type:'broiler',breed:'Ross 308',ageMin:0,ageMax:10,phase:'Démarrage',feedGPD:24,waterMlPD:48,proteinPct:23,energyKcal:3050,notes:'Ross 308 — Starter pré-mélangé, brooding 33°C J1, -0,5°C/j — accès eau dès arrivée'},
-    {type:'broiler',breed:'Ross 308',ageMin:11,ageMax:24,phase:'Croissance',feedGPD:75,waterMlPD:150,proteinPct:21,energyKcal:3150,notes:'IC cible : 1,55-1,65 — contrôle poids J21 (cible 850g) — ventilation renforcée'},
-    {type:'broiler',breed:'Ross 308',ageMin:25,ageMax:35,phase:'Finition',feedGPD:130,waterMlPD:260,proteinPct:18.5,energyKcal:3250,notes:'Retrait anticoccidien 5j avant abattage — cible poids J35 : 2,0kg'},
-    {type:'broiler',breed:'Ross 308',ageMin:36,ageMax:42,phase:'Finition tardive',feedGPD:165,waterMlPD:330,proteinPct:16,energyKcal:3350,notes:'Abattage optimal J38-42 — poids vif cible 2,5-2,8kg — IC global 1,70-1,85'},
-    // ── CHAIR : Cobb 500 ──
-    {type:'broiler',breed:'Cobb 500',ageMin:0,ageMax:10,phase:'Démarrage',feedGPD:25,waterMlPD:50,proteinPct:23,energyKcal:3050,notes:'Cobb 500 — appétit élevé dès J1 — miettes fines, lysine 1,32% min'},
-    {type:'broiler',breed:'Cobb 500',ageMin:11,ageMax:24,phase:'Croissance',feedGPD:80,waterMlPD:160,proteinPct:21,energyKcal:3200,notes:'Croissance très rapide — poids J21 cible 900g — surveiller litière (ammoniaque)'},
-    {type:'broiler',breed:'Cobb 500',ageMin:25,ageMax:35,phase:'Finition',feedGPD:135,waterMlPD:270,proteinPct:19,energyKcal:3300,notes:'Aliment finition dense — IC cible 1,60 — éviter surpoids (ascite)'},
-    {type:'broiler',breed:'Cobb 500',ageMin:36,ageMax:42,phase:'Finition tardive',feedGPD:170,waterMlPD:340,proteinPct:16,energyKcal:3400,notes:'Abattage J38-42 — poids 2,7-3,0kg — Cobb guide: jeûne 8h avant transport'},
-    // ── CHAIR : Arbor Acres ──
-    {type:'broiler',breed:'Arbor Acres',ageMin:0,ageMax:10,phase:'Démarrage',feedGPD:23,waterMlPD:46,proteinPct:22,energyKcal:3000,notes:'Arbor Acres — bonne rusticité — adapté conditions chaleur Afrique'},
-    {type:'broiler',breed:'Arbor Acres',ageMin:11,ageMax:24,phase:'Croissance',feedGPD:72,waterMlPD:144,proteinPct:20,energyKcal:3100,notes:'IC correct 1,75-1,85 — moins exigeant que Ross/Cobb — homogénéité bonne'},
-    {type:'broiler',breed:'Arbor Acres',ageMin:25,ageMax:35,phase:'Finition',feedGPD:125,waterMlPD:250,proteinPct:18,energyKcal:3200,notes:'Bonne tolérance stress thermique — recommandé zones sans climatisation'},
-    {type:'broiler',breed:'Arbor Acres',ageMin:36,ageMax:42,phase:'Finition tardive',feedGPD:160,waterMlPD:320,proteinPct:16,energyKcal:3300,notes:'Poids abattage 2,3-2,6kg J42 — rendement carcasse 73-74%'},
-    // ── CHAIR : Hubbard Classic ──
-    {type:'broiler',breed:'Hubbard Classic',ageMin:0,ageMax:10,phase:'Démarrage',feedGPD:23,waterMlPD:46,proteinPct:22,energyKcal:3000,notes:'Hubbard Classic — résistance maladies respiratoires — bon démarrage sous chaleur'},
-    {type:'broiler',breed:'Hubbard Classic',ageMin:11,ageMax:24,phase:'Croissance',feedGPD:70,waterMlPD:140,proteinPct:20,energyKcal:3100,notes:'Croissance régulière — poids J21 cible 800g — moins sensible à la chaleur'},
-    {type:'broiler',breed:'Hubbard Classic',ageMin:25,ageMax:35,phase:'Finition',feedGPD:122,waterMlPD:244,proteinPct:18,energyKcal:3200,notes:'Bon indice de conversion — recommandé si T° moyenne > 28°C'},
-    {type:'broiler',breed:'Hubbard Classic',ageMin:36,ageMax:42,phase:'Finition tardive',feedGPD:158,waterMlPD:316,proteinPct:16,energyKcal:3300,notes:'Abattage J42-46 — poids cible 2,2-2,5kg — robuste pour distribution terrain'},
-  ];
-  for(const n of defaultNut) await addRec(S.NUTRITION,n);
-
-  await markSeeded('main');
-  }catch(e){console.error('initDemo error:',e.message||e);}
+  // Toute génération de données factices (staff/fournisseurs/dépôts/produits/clients/
+  // mouvements/BC/lots/nutrition d'exemple) a été retirée. Aucune donnée "démo" n'est
+  // plus jamais injectée dans une organisation, même vide. Le premier compte admin se
+  // crée via l'Edge Function bootstrap-org (voir edge-functions/bootstrap-org).
 }
 
 
@@ -2767,64 +2581,9 @@ function updateNavUser(){
 
 // Créer les utilisateurs démo au premier lancement
 async function initDemoUsers(force){
-  const ex = await getAll(S.USERS);
-  if(ex.length) return;
-  if(!force){
-    // ⚠️ Ne PAS se fier à "0 utilisateur" pour décider de réinjecter : après suppression
-    // volontaire de tous les comptes démo (soft-delete), getAll(S.USERS) renvoie aussi [].
-    // On distingue "jamais initialisé" de "vidé exprès" via un flag persistant dédié.
-    const settings = await getAll(S.SETTINGS_APP);
-    if(settings.some(s=>s.key==='users_seeded')) return;
-  }
-  const [adminHash, userHash] = await Promise.all([hashPwd('Admin@2025'), hashPwd('1234')]);
-  const users = [
-    { nom:'Administrateur',  email:'admin@avicosuite.ci',   pwd:adminHash, role:'admin',       actif:true, dernierAcces:null },
-    { nom:'Cyrille Kessié',  email:'cyrille@avicosuite.ci', pwd:adminHash, role:'admin',       actif:true, dernierAcces:null },
-    { nom:'Kouamé Jean',     email:'jean@avicosuite.ci',    pwd:userHash,  role:'operateur',   actif:true, dernierAcces:null },
-    { nom:'Kofi Assi',       email:'kofi@avicosuite.ci',    pwd:userHash,  role:'commercial',  actif:true, dernierAcces:null },
-    { nom:'Dr. Brice Assi',  email:'brice@avicosuite.ci',   pwd:userHash,  role:'veterinaire', actif:true, dernierAcces:null },
-  ];
-  for(const u of users) await addRec(S.USERS, u);
-  const seededFlag = (await getAll(S.SETTINGS_APP)).find(s=>s.key==='users_seeded');
-  if(!seededFlag) await addRec(S.SETTINGS_APP, {key:'users_seeded', at:new Date().toISOString()});
-
-  // Paramètres par défaut de l'exploitation
-  const exSettings = await getAll(S.SETTINGS_APP);
-  if(!exSettings.length){
-    await addRec(S.SETTINGS_APP, {
-      key:'exploitation',
-      nomExploitation:'Mon Élevage Avicole',
-      slogan:'Qualité · Fraîcheur · Proximité',
-      formeJuridique:'SARL',
-      capitalSocial:'1 000 000',
-      adresse:'Zone industrielle, Yopougon',
-      ville:'Abidjan',
-      codePostal:'',
-      pays:'Côte d\'Ivoire',
-      telephone:'+225 07 79 18 10 75',
-      telephone2:'',
-      email:'contact@avicosuite.ci',
-      siteWeb:'',
-      responsable:'Cyrille Kessié',
-      nif:'',
-      rccm:'',
-      nomBanque:'',
-      numeroCompte:'',
-      codeBic:'',
-      tvaApplicable:true,
-      tauxTva:18,
-      mentionExoneration:'',
-      mentionLegale:'Tout paiement tardif entraîne des pénalités de retard légales.',
-      logoBase64:'',
-      devise:'FCFA',
-      whatsapp:'+225 07 79 18 10 75',
-      emailRapports:'',
-      alertesStock:true,
-      alertesPannes:true,
-      alertesPonte:true,
-      rapportAuto:false,
-    });
-  }
+  // Comptes démo (Administrateur/Cyrille/Jean/Kofi/Brice) et paramètres d'exploitation
+  // factices ("Mon Élevage Avicole", NIF/RCCM bidons) retirés. Le premier compte admin
+  // se crée exclusivement via l'Edge Function bootstrap-org, jamais côté client.
 }
 
 // Helper pour lire les paramètres exploitation
@@ -7798,33 +7557,8 @@ var PANNE_GRAVITE_CLS = {mineure:'b-a', majeure:'b-a', critique:'b-r'};
 
 // ── Demo data GMAO ──
 async function initDemoGmao() {
-  if (await wasSeeded('gmao')) return;
-  var existing = await getAll(S.EQUIPEMENTS);
-  if (existing.length) { await markSeeded('gmao'); return; }
-  var today = new Date();
-  function daysAgo(n) { var d=new Date(today); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
-  function daysLater(n) { var d=new Date(today); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
-
-  var e1 = await addRec(S.EQUIPEMENTS,{nom:'Groupe électrogène 6 kVA',categorie:'energie',modele:'Kipor KDE6700T',serie:'KDE-2021-0045',dateMES:daysAgo(730),lieu:'Salle des machines',responsable:'Kouamé Jean',statut:'operationnel',valeur:850000,freqEntretien:90,notes:'Entretien vidange tous les 90j — carburant diesel'});
-  var e2 = await addRec(S.EQUIPEMENTS,{nom:'Forage & Pompe immergée',categorie:'eau',modele:'Grundfos SP5A-18',serie:'GF-2020-0112',dateMES:daysAgo(900),lieu:'Puits forage Nord',responsable:'Kouamé Jean',statut:'operationnel',valeur:1200000,freqEntretien:180,notes:'Profondeur 45m — débit 3 m³/h'});
-  var e3 = await addRec(S.EQUIPEMENTS,{nom:'Moulin à grains',categorie:'production',modele:'Lister LM-300',serie:'LM-2022-0078',dateMES:daysAgo(400),lieu:'Atelier production',responsable:'Koné Mariam',statut:'operationnel',valeur:650000,freqEntretien:60,notes:'Mouture aliment volailles — tamis 3mm'});
-  var e4 = await addRec(S.EQUIPEMENTS,{nom:'Tricycle de livraison',categorie:'transport',modele:'Bajaj RE Compact',serie:'BAJ-2023-0156',dateMES:daysAgo(180),lieu:'Parking extérieur',responsable:'Diallo Mamadou',statut:'operationnel',valeur:950000,freqEntretien:45,notes:'Distribution terrain — 3 zones'});
-  var e5 = await addRec(S.EQUIPEMENTS,{nom:'Chambre froide 10 m³',categorie:'froid',modele:'Techno CF-10',serie:'TCF-2021-0033',dateMES:daysAgo(600),lieu:'Bâtiment C',responsable:'Dr. Assi Brice',statut:'maintenance',valeur:2100000,freqEntretien:120,notes:'Conservation œufs et vaccins — T° 4-8°C'});
-
-  // Plannings de maintenance
-  await addRec(S.MAINTENANCES,{equipementId:e1,type:'preventive',titre:'Vidange + filtre à huile',datePlan:daysLater(5),priorite:'normale',intervenant:'Technicien interne',description:'Vidange moteur diesel, remplacement filtre huile et air',coutEst:45000,statut:'planifie',dateReal:null,coutReal:null,observations:''});
-  await addRec(S.MAINTENANCES,{equipementId:e1,type:'preventive',titre:'Révision générale annuelle',datePlan:daysLater(30),priorite:'haute',intervenant:'Kipor Service CI',description:'Révision complète 500h : bougies, injecteurs, courroie alternateur, batterie',coutEst:180000,statut:'planifie',dateReal:null,coutReal:null,observations:''});
-  await addRec(S.MAINTENANCES,{equipementId:e1,type:'preventive',titre:'Vidange précédente',datePlan:daysAgo(85),priorite:'normale',intervenant:'Technicien interne',description:'Vidange moteur + remplacement filtre',coutEst:45000,statut:'realise',dateReal:daysAgo(84),coutReal:42000,observations:'RAS — huile propre, pas de fuite'});
-  await addRec(S.MAINTENANCES,{equipementId:e2,type:'preventive',titre:'Nettoyage crépine pompe',datePlan:daysLater(15),priorite:'normale',intervenant:'Technicien interne',description:'Descente pompe pour nettoyage crépine et contrôle câble électrique',coutEst:25000,statut:'planifie',dateReal:null,coutReal:null,observations:''});
-  await addRec(S.MAINTENANCES,{equipementId:e3,type:'preventive',titre:'Remplacement meules broyeur',datePlan:daysAgo(5),priorite:'haute',intervenant:'Koné Mariam',description:'Contrôle usure meules — remplacement si < 60%',coutEst:75000,statut:'en_cours',dateReal:null,coutReal:null,observations:'Meules commandées, en attente livraison'});
-  await addRec(S.MAINTENANCES,{equipementId:e4,type:'preventive',titre:'Vidange + pneus tricycle',datePlan:daysAgo(10),priorite:'normale',intervenant:'Garage Songon',description:'Vidange moteur 3 roues, vérif. freins, pression pneus',coutEst:35000,statut:'realise',dateReal:daysAgo(9),coutReal:32000,observations:'Frein arrière réglé — pneus OK'});
-  await addRec(S.MAINTENANCES,{equipementId:e5,type:'corrective',titre:'Réparation compresseur',datePlan:daysAgo(2),priorite:'urgente',intervenant:'Techno Service Abidjan',description:'Compresseur en panne — chute température +15°C',coutEst:250000,statut:'en_cours',dateReal:null,coutReal:null,observations:'Technicien sur site depuis hier'});
-
-  // Pannes
-  await addRec(S.PANNES,{equipementId:e5,dateDeb:daysAgo(3),dateFin:null,gravite:'critique',description:'Arrêt total compresseur chambre froide — T° montée à +18°C',cause:'Défaillance bobine moteur compresseur',actions:'Mise en place glace sèche d\'urgence — technicien commandé',cout:0,ts:Date.now()-3*86400000});
-  await addRec(S.PANNES,{equipementId:e1,dateDeb:daysAgo(45),dateFin:daysAgo(44),gravite:'majeure',description:'Démarrage difficile — fumée noire à l\'échappement',cause:'Filtre à air obstrué + injecteur encrassé',actions:'Nettoyage filtre air, nettoyage injecteur',cout:18000,ts:Date.now()-45*86400000});
-  await addRec(S.PANNES,{equipementId:e3,dateDeb:daysAgo(20),dateFin:daysAgo(19),gravite:'mineure',description:'Vibrations anormales lors du fonctionnement',cause:'Boulon de fixation desserré',actions:'Resserrage visserie + contrôle alignement moteur',cout:0,ts:Date.now()-20*86400000});
-  await markSeeded('gmao');
+  // Équipements/maintenances/pannes de démonstration retirés — aucune donnée factice
+  // n'est plus injectée dans le module GMAO.
 }
 
 // ── Rendu principal GMAO ──
@@ -10112,85 +9846,9 @@ async function initDemoNorms(){
 }
 
 
-// ── Demo data Fabrication Aliments ──
 async function initDemoFab() {
-  if (await wasSeeded('fab')) return;
-  var existing = await getAll(S.FAB_RECETTES);
-  if (existing.length) { await markSeeded('fab'); return; }
-  function daysAgo(n) { var d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
-
-  // ── Récupérer les produits existants (créés par initDemo) ──
-  var prods = await getAll(S.PRODUITS);
-  function pid(ref){ var p=prods.find(function(x){return x.ref===ref;}); return p?p.id:null; }
-
-  // ── RECETTES ──
-  var r1 = await addRec(S.FAB_RECETTES,{
-    nom:'Aliment ponte 116 — Standard',
-    type:'layer',
-    qteCible:100,
-    depotDestId:null,
-    notes:'Ordre de mélange : maïs → tourteau → son → prémix. Humidité cible < 13%.',
-    ingredients:[
-      {produitId:pid('ALI-001'),designation:'Maïs grain concassé',qte:60,unite:'kg'},
-      {produitId:pid('ALI-002'),designation:'Tourteau de soja 48%',qte:18,unite:'kg'},
-      {produitId:pid('ALI-003'),designation:'Son de blé',qte:10,unite:'kg'},
-      {produitId:null,designation:'Farine de poisson 65%',qte:4,unite:'kg'},
-      {produitId:null,designation:'Carbonate de calcium',qte:5,unite:'kg'},
-      {produitId:null,designation:'Prémix ponte (vit+min)',qte:2,unite:'kg'},
-      {produitId:null,designation:'Sel iodé',qte:0.5,unite:'kg'},
-      {produitId:null,designation:'DL-Méthionine',qte:0.3,unite:'kg'},
-      {produitId:null,designation:'Phosphate bicalcique',qte:0.2,unite:'kg'}
-    ]
-  });
-
-  var r2 = await addRec(S.FAB_RECETTES,{
-    nom:'Aliment démarrage chair F1',
-    type:'broiler',
-    qteCible:100,
-    depotDestId:null,
-    notes:'Broyat fin 2mm. Température eau de mélange 25°C max. Protéine cible 22%.',
-    ingredients:[
-      {produitId:null,designation:'Maïs grain fin',qte:55,unite:'kg'},
-      {produitId:null,designation:'Tourteau de soja 48%',qte:28,unite:'kg'},
-      {produitId:null,designation:'Farine de poisson 65%',qte:6,unite:'kg'},
-      {produitId:null,designation:'Huile de palme',qte:4,unite:'kg'},
-      {produitId:null,designation:'Prémix démarrage chair',qte:3,unite:'kg'},
-      {produitId:null,designation:'Carbonate de calcium',qte:2,unite:'kg'},
-      {produitId:null,designation:'Phosphate bicalcique',qte:1.5,unite:'kg'},
-      {produitId:null,designation:'DL-Méthionine',qte:0.3,unite:'kg'},
-      {produitId:null,designation:'Sel iodé',qte:0.2,unite:'kg'}
-    ]
-  });
-
-  var r3 = await addRec(S.FAB_RECETTES,{
-    nom:'Aliment finition chair F3',
-    type:'broiler',
-    qteCible:100,
-    depotDestId:null,
-    notes:'Granulé 3mm. Retirer anticoccidien 5 jours avant abattage. IC cible 1,85.',
-    ingredients:[
-      {produitId:null,designation:'Maïs grain concassé',qte:65,unite:'kg'},
-      {produitId:null,designation:'Tourteau de soja 44%',qte:20,unite:'kg'},
-      {produitId:null,designation:'Son de blé',qte:5,unite:'kg'},
-      {produitId:null,designation:'Huile de palme',qte:4,unite:'kg'},
-      {produitId:null,designation:'Farine de poisson 65%',qte:3,unite:'kg'},
-      {produitId:null,designation:'Prémix finition chair',qte:2,unite:'kg'},
-      {produitId:null,designation:'Carbonate de calcium',qte:0.7,unite:'kg'},
-      {produitId:null,designation:'Sel iodé',qte:0.2,unite:'kg'},
-      {produitId:null,designation:'Bicarbonate de soude',qte:0.1,unite:'kg'}
-    ]
-  });
-
-  // ── ORDRES DE FABRICATION ──
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-001',date:daysAgo(45),recetteId:r1,qteProduite:500,statut:'termine',depotId:null,responsable:'Kouamé Jean',notes:'Lot 1 — production normale. Humidité 12,4%. Granulométrie conforme.',ts:Date.now()-45*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-002',date:daysAgo(38),recetteId:r2,qteProduite:300,statut:'termine',depotId:null,responsable:'Kouamé Jean',notes:'Démarrage poulets de chair Bat.B. Broyat fin validé.',ts:Date.now()-38*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-003',date:daysAgo(30),recetteId:r1,qteProduite:500,statut:'termine',depotId:null,responsable:'Kouamé Jean',notes:'Production mensuelle pondeuses. RAS.',ts:Date.now()-30*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-004',date:daysAgo(22),recetteId:r3,qteProduite:250,statut:'termine',depotId:null,responsable:'Koné Mariam',notes:'Passage en finition chair — retrait anticoccidien confirmé.',ts:Date.now()-22*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-005',date:daysAgo(15),recetteId:r1,qteProduite:500,statut:'termine',depotId:null,responsable:'Kouamé Jean',notes:'Lot 3 ponte. Carbonate de calcium augmenté de 0,3kg (coquilles molles observées).',ts:Date.now()-15*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-006',date:daysAgo(7),recetteId:r2,qteProduite:200,statut:'termine',depotId:null,responsable:'Koné Mariam',notes:'Complément démarrage — lot chair en croissance rapide.',ts:Date.now()-7*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-007',date:daysAgo(2),recetteId:r1,qteProduite:500,statut:'en_cours',depotId:null,responsable:'Kouamé Jean',notes:'En cours — livraison maïs reçue ce matin.',ts:Date.now()-2*86400000});
-  await addRec(S.FAB_ALIMENTS,{ref:'OF-2026-008',date:daysAgo(0),recetteId:r3,qteProduite:300,statut:'planifie',depotId:null,responsable:'Koné Mariam',notes:'Planifié pour demain matin — attente réception tourteau.',ts:Date.now()});
-  await markSeeded('fab');
+  // Recettes/ordres de fabrication de démonstration retirés — aucune donnée factice
+  // n'est plus injectée dans le module Fabrication.
 }
 
 async function renderFab(ca) {
