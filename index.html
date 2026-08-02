@@ -1876,7 +1876,13 @@ async function flushPendingOps(){
         const {error}=await supa.from('avico_records').update({data:op.data,updated_at:new Date().toISOString()}).eq('id',op.id).eq('store',op.store).eq('org_id',SUPA_ORG);
         if(error) throw error;
       }else if(op.op==='del'){
-        await supa.from('avico_records').update({deleted_at:new Date().toISOString()}).eq('id',op.id).eq('store',op.store).eq('org_id',SUPA_ORG);
+        if(_deletedAtSupported){
+          const {error}=await supa.from('avico_records').update({deleted_at:new Date().toISOString()}).eq('id',op.id).eq('store',op.store).eq('org_id',SUPA_ORG);
+          if(error && /deleted_at/i.test(error.message||'')) _deletedAtSupported=false; else if(error) throw error;
+        }
+        if(!_deletedAtSupported){
+          await supa.from('avico_records').delete().eq('id',op.id).eq('store',op.store).eq('org_id',SUPA_ORG);
+        }
       }
       okCount++;
     }catch(e){ console.warn('Sync différée : nouvelle tentative plus tard pour', op.op, op.store, e.message); remaining.push(op); }
@@ -1893,12 +1899,27 @@ function openDB(){
     try{
       supa = window.supabase.createClient(SUPA_URL, SUPA_KEY, {realtime:{params:{eventsPerSecond:5}}});
       db = supa; // conserve la variable globale `db` utilisée comme test de disponibilité ailleurs
-      console.log('Supabase connecté — stockage partagé multi-utilisateur, org=', SUPA_ORG);
-      flushPendingOps();
-      setupRealtimeSync();
+      console.log('Supabase connecté (anon) — org=', SUPA_ORG);
       res(db);
     }catch(e){ console.error('DB open error', e); rej('DB error'); }
   });
+}
+
+// ── Bascule vers un client authentifié (JWT signé par l'Edge Function staff-login) ──
+// RLS n'accorde plus rien à anon depuis migration_v13.sql : sans ce client, aucune
+// lecture ni écriture n'est possible une fois connecté.
+function setAuthedClient(token){
+  try{
+    supa = token
+      ? window.supabase.createClient(SUPA_URL, SUPA_KEY, {
+          global:{ headers:{ Authorization:'Bearer '+token } },
+          realtime:{ params:{ eventsPerSecond:5 } }
+        })
+      : window.supabase.createClient(SUPA_URL, SUPA_KEY, {realtime:{params:{eventsPerSecond:5}}});
+    db = supa;
+    flushPendingOps();
+    setupRealtimeSync();
+  }catch(e){ console.error('setAuthedClient error:', e.message); }
 }
 
 // ── Mise à jour live des tableaux de bord : quand un autre utilisateur modifie une donnée,
@@ -1958,19 +1979,35 @@ async function cacheRemove(st,id){
   cacheWrite(st, rows.filter(r=>r.id!==id));
 }
 
+// ⚠️ Si migration_v13.sql pas encore exécutée, la colonne deleted_at n'existe pas :
+// TOUTE lecture échouait silencieusement, retombait sur cache vide, et initDemo()
+// croyait la base vierge à CHAQUE chargement → réinjection systématique des démos,
+// même sans suppression. Détection dynamique + repli automatique.
+let _deletedAtSupported = true;
+async function _fetchStorePage(st, from, PAGE){
+  let q = supa.from('avico_records').select('id,data,version').eq('store',st).eq('org_id',SUPA_ORG);
+  if(_deletedAtSupported) q = q.is('deleted_at', null);
+  const { data, error } = await q.order('id',{ascending:true}).range(from, from+PAGE-1);
+  if(error){
+    if(_deletedAtSupported && /deleted_at/i.test(error.message||'')){
+      _deletedAtSupported = false;
+      console.warn('⚠️ Colonne deleted_at absente — exécutez migration_v13.sql. Suppression définitive en attendant (pas de soft-delete).');
+      return _fetchStorePage(st, from, PAGE);
+    }
+    throw error;
+  }
+  return data || [];
+}
+
 function getAll(st){return new Promise(async res=>{
   let serverRows=[];
   if(supa){
     try{
       const PAGE=1000; let from=0; let page; const fetched=[];
       do{
-        const {data,error}=await supa.from('avico_records').select('id,data,version')
-          .eq('store',st).eq('org_id',SUPA_ORG).is('deleted_at',null)
-          .order('id',{ascending:true}).range(from,from+PAGE-1);
-        if(error) throw error;
-        page=data||[];
+        page = await _fetchStorePage(st, from, PAGE);
         page.forEach(r=>{ _recVersions[st+':'+r.id]=r.version; fetched.push({...r.data,id:r.id}); });
-        from+=PAGE;
+        from += PAGE;
       }while(page.length===PAGE);
       serverRows=fetched;
       cacheWrite(st,serverRows); // snapshot rafraîchi pour la prochaine lecture hors-ligne
@@ -2041,7 +2078,20 @@ function updRec(st,id,d){return new Promise(async res=>{
 });}
 function delRec(st,id){return new Promise(async res=>{
   if(!supa || id<0){ queueOp({op:'del',store:st,id,ts:Date.now()}); res(); return; }
-  try{ await supa.from('avico_records').update({deleted_at:new Date().toISOString()}).eq('id',id).eq('store',st).eq('org_id',SUPA_ORG); delete _recVersions[st+':'+id]; cacheRemove(st,id); res(); }
+  try{
+    if(_deletedAtSupported){
+      const {error}=await supa.from('avico_records').update({deleted_at:new Date().toISOString()}).eq('id',id).eq('store',st).eq('org_id',SUPA_ORG);
+      if(error){
+        if(/deleted_at/i.test(error.message||'')) _deletedAtSupported=false;
+        else throw error;
+      }
+    }
+    if(!_deletedAtSupported){
+      const {error}=await supa.from('avico_records').delete().eq('id',id).eq('store',st).eq('org_id',SUPA_ORG);
+      if(error) throw error;
+    }
+    delete _recVersions[st+':'+id]; cacheRemove(st,id); res();
+  }
   catch(e){ console.warn('delRec hors-ligne :',e.message); queueOp({op:'del',store:st,id,ts:Date.now()}); toast('📶 Hors-ligne — suppression mise en attente de synchronisation','err'); res(); }
 });}
 
@@ -2675,14 +2725,13 @@ function simpleHash(str){ return DJB2_LEGACY_PFX + simpleHashLegacy(str); }
 function getSession(){
   try{
     const s = JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
-    if(!s) return null;
-    if(s.expires && Date.now()>s.expires){ localStorage.removeItem(SESSION_KEY); return null; }
-    return s.user||null;
+    if(!s || !s.token) return null;
+    if(s.expires_at && Date.now()>s.expires_at){ localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
   }catch{ return null; }
 }
-function setSession(user, remember){
-  const expires = remember ? Date.now()+30*24*3600000 : Date.now()+10*3600000;
-  localStorage.setItem(SESSION_KEY, JSON.stringify({user, expires}));
+function setSession(token, user, expires_at){
+  localStorage.setItem(SESSION_KEY, JSON.stringify({token, user, expires_at}));
 }
 function clearSession(){ localStorage.removeItem(SESSION_KEY); }
 
@@ -2836,31 +2885,20 @@ window.doLogin = async function(){
   btn.innerHTML='<i class="fas fa-spinner fa-spin" style="margin-right:7px"></i>Connexion…';
 
   try{
-    const users = await getAll(S.USERS);
+    // Vérification du mot de passe déportée côté serveur (Edge Function staff-login,
+    // service_role) — le client anonyme n'a plus aucun accès direct depuis la RLS stricte.
+    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/staff-login', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY},
+      body: JSON.stringify({email,password:pwd,org_id:SUPA_ORG,remember})
+    });
+    let result;
+    try{ result = await resp.json(); }catch{ result = {error:'Réponse serveur invalide'}; }
 
-    // Diagnostic : si aucun utilisateur, la table Supabase n'est probablement pas créée
-    if(!users.length){
-      await initDemoUsers();
-      const retryUsers = await getAll(S.USERS);
-      if(!retryUsers.length){
-        errMsg.innerHTML = 'Aucun compte trouvé.<br>'
-          +'<small style="color:#888">Vérifiez que la table <code>avico_records</code> existe dans Supabase '
-          +'(Paramétrage → Sync), ou utilisez le lien de récupération ci-dessous.</small>';
-        errDiv.style.display='block';
-        document.getElementById('loginRecoveryLink').style.display='block';
-        btn.disabled=false;
-        btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
-        return;
-      }
-    }
-
-    const user = users.find(u=>u.email.toLowerCase()===email && u.actif!==false);
-    const pwdOk = user ? await verifyPwd(pwd, user.pwd) : false;
-
-    if(!user || !pwdOk){
-      errMsg.textContent='Email ou mot de passe incorrect.';
+    if(!resp.ok || result.error){
+      errMsg.textContent = resp.status===401 ? 'Email ou mot de passe incorrect.' : ('Erreur : '+(result.error||'connexion impossible'));
       errDiv.style.display='block';
-      document.getElementById('loginPwd').classList.add('err');
+      if(resp.status===401) document.getElementById('loginPwd').classList.add('err');
       if(email.includes('avicosuite.ci')){
         errMsg.innerHTML += '<br><small>Mot de passe démo admin : <strong>Admin@2025</strong></small>';
       }
@@ -2869,17 +2907,10 @@ window.doLogin = async function(){
       return;
     }
 
-    // ── Auto-migration djb2 → PBKDF2 en arrière-plan ──
-    if(user.pwd && !/^[0-9a-f]{64}$/.test(user.pwd)){
-      hashPwd(pwd).then(newHash => {
-        updRec(S.USERS, user.id, {...user, pwd:newHash, dernierAcces:new Date().toISOString()});
-      }).catch(()=>{});
-    }
-
     // Succès
-    currentUser = { id:user.id, nom:user.nom, email:user.email, role:user.role };
-    setSession(currentUser, remember);
-    await updRec(S.USERS, user.id, {...user, dernierAcces:new Date().toISOString()});
+    currentUser = result.user;
+    setAuthedClient(result.token);
+    setSession(result.token, currentUser, result.expires_at);
     document.getElementById('loginScreen').style.display='none';
     updateNavUser();
     goTo('dash');
@@ -2912,6 +2943,7 @@ window.doLogout = function(){
   if(!confirm('Se déconnecter de Sanix AviNest Pro ?')) return;
   clearSession();
   currentUser = null;
+  setAuthedClient(null);
   document.getElementById('loginEmail').value='';
   document.getElementById('loginPwd').value='';
   document.getElementById('loginError').style.display='none';
@@ -7051,34 +7083,25 @@ window.onload=async()=>{
   document.getElementById('loginScreen').style.display='flex';
 
   try{
-    // ── Ouverture sûre de la DB — PAS de suppression automatique ──
-    // On ouvre directement avec la version cible. onupgradeneeded crée
-    // les stores manquants sans toucher aux données existantes.
-    // La suppression ne se fait QUE via le bouton explicite dans Paramétrage > Données.
+    // ── Client anonyme — sert uniquement à joindre l'Edge Function staff-login.
+    //    RLS stricte depuis migration_v13.sql : aucune lecture/écriture directe possible
+    //    avant authentification. initDemo()/loadRoleOverrides() sont donc déplacés
+    //    après connexion réussie (voir initAppAfterLogin). ──
     await openDB();
 
-    // ── Initialisation des données de base (idempotent) ──
-    await initDemo();  // inclut initDemoUsers() — ne réinsère que si absent
-
-    // ── Charger les rôles personnalisés/modifiés (avant tout contrôle de permission) ──
-    await loadRoleOverrides();
-
-    // ── Vérifier la session existante ──
+    // ── Session existante (JWT) — reconnexion silencieuse si encore valide ──
     const savedSession = getSession();
     if(savedSession){
-      const users = await getAll(S.USERS);
-      const userRecord = users.find(u=>u.id===savedSession.id && u.actif!==false);
-      if(userRecord){
-        currentUser = { id:userRecord.id, nom:userRecord.nom, email:userRecord.email, role:userRecord.role };
-        setSession(currentUser, true);
-        document.getElementById('loginScreen').style.display='none';
-        updateNavUser();
-        document.getElementById('lotsPanel').classList.remove('hidden');
-        await renderLotSidebar();
-        const lots=await getAll(S.FLOCKS); if(lots.length) curLotId=lots[0].id;
-        await render();
-        return;
-      }
+      currentUser = savedSession.user;
+      setAuthedClient(savedSession.token);
+      document.getElementById('loginScreen').style.display='none';
+      updateNavUser();
+      document.getElementById('lotsPanel').classList.remove('hidden');
+      await loadRoleOverrides();
+      await renderLotSidebar();
+      const lots=await getAll(S.FLOCKS); if(lots.length) curLotId=lots[0].id;
+      await render();
+      return;
     }
 
     // ── Pas de session valide → écran login ──
@@ -7100,6 +7123,8 @@ window.onload=async()=>{
 // ── Post-login app initialization ──
 async function initAppAfterLogin(){
   try{
+    await loadRoleOverrides();
+    await initDemo(); // idempotent (flags seed_*) — sans effet si l'org a déjà des données
     document.getElementById('lotsPanel').classList.remove('hidden');
     await renderLotSidebar();
     const lots=await getAll(S.FLOCKS);if(lots.length) curLotId=lots[0].id;
