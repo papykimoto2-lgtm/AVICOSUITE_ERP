@@ -1967,7 +1967,88 @@ function delRec(st,id){return new Promise(async res=>{
 });}
 
 // ════════════════════════════════════════════════════════
-//  STOCK BALANCE
+//  DDL SQL PRODUCTION — Supabase
+// ════════════════════════════════════════════════════════
+const PROD_DDL = `-- ═══════════════════════════════════════════════════════════
+--  SANIX AVINEST PRO — Script SQL de mise en production
+--  À exécuter dans : Supabase Dashboard → SQL Editor
+-- ═══════════════════════════════════════════════════════════
+
+-- 1. TABLE PRINCIPALE
+CREATE TABLE IF NOT EXISTS avico_records (
+  id          BIGSERIAL    PRIMARY KEY,
+  store       TEXT         NOT NULL,
+  org_id      TEXT         NOT NULL DEFAULT 'default',
+  data        JSONB        NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  version     INTEGER      NOT NULL DEFAULT 1,
+  CONSTRAINT avico_store_nonempty CHECK (length(trim(store)) > 0),
+  CONSTRAINT avico_org_nonempty   CHECK (length(trim(org_id)) > 0)
+);
+
+-- 2. INDEX (performance)
+CREATE INDEX IF NOT EXISTS idx_avico_store_org
+  ON avico_records(store, org_id);
+
+CREATE INDEX IF NOT EXISTS idx_avico_org_updated
+  ON avico_records(org_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_avico_data_gin
+  ON avico_records USING GIN(data jsonb_path_ops);
+
+-- 3. TRIGGER auto-incrémentation de version
+CREATE OR REPLACE FUNCTION avico_bump_version()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  NEW.version    = COALESCE(OLD.version, 0) + 1;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS avico_versioned ON avico_records;
+CREATE TRIGGER avico_versioned
+  BEFORE UPDATE ON avico_records
+  FOR EACH ROW EXECUTE FUNCTION avico_bump_version();
+
+-- 4. ROW LEVEL SECURITY (isolation par org_id)
+ALTER TABLE avico_records ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "avico_anon_access" ON avico_records;
+CREATE POLICY "avico_anon_access" ON avico_records
+  FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+-- 5. REALTIME (mises à jour temps réel entre utilisateurs)
+ALTER PUBLICATION supabase_realtime ADD TABLE avico_records;
+
+-- 6. INDEXES ADDITIONNELS pour les filtres les plus courants
+CREATE INDEX IF NOT EXISTS idx_avico_data_flock
+  ON avico_records ((data->>'flockId'))
+  WHERE store IN ('feeding','egg_prod','growth_prod','health','mortalite');
+
+CREATE INDEX IF NOT EXISTS idx_avico_data_date
+  ON avico_records ((data->>'date'))
+  WHERE store IN ('feeding','egg_prod','sales','tresorerie','charges');
+
+-- VÉRIFICATION : doit retourner la table et ses indexes
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_name = 'avico_records';
+
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'avico_records';`;
+
+window.copyProdDDL = function(){
+  navigator.clipboard?.writeText(PROD_DDL)
+    .then(()=>{ if(typeof toast==='function') toast('✅ SQL copié — collez-le dans Supabase → SQL Editor'); })
+    .catch(()=>{ if(typeof toast==='function') toast('Copiez le texte manuellement','err'); });
+};
+
+
 // ════════════════════════════════════════════════════════
 async function getBalance(){
   const mvts=await getAll(S.MVTS);
@@ -2345,11 +2426,58 @@ const SESSION_KEY = 'sanixavi_session';
 let currentUser = null;
 
 // Hash simple (non-crypto, usage démo)
-function simpleHash(str){
-  let h = 5381;
-  for(let i=0;i<str.length;i++){ h=((h<<5)+h)+str.charCodeAt(i); h=h&h; }
+// ════════════════════════════════════════════════════════
+//  SÉCURITÉ — PBKDF2-SHA256 (Web Crypto API, natif)
+//  Migration transparente depuis djb2 (anciens comptes)
+// ════════════════════════════════════════════════════════
+
+const PBKDF2_SALT    = 'SanixAviNest_PBKDF2_2025';
+const PBKDF2_ITER    = 100000;
+const DJB2_LEGACY_PFX = 'djb2:'; // préfixe pour identifier les anciens hashes
+
+// PBKDF2-SHA256 asynchrone (production)
+async function hashPwd(password){
+  try{
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits(
+      {name:'PBKDF2', hash:'SHA-256', salt:enc.encode(PBKDF2_SALT), iterations:PBKDF2_ITER},
+      key, 256
+    );
+    return Array.from(new Uint8Array(bits)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }catch(e){
+    // Fallback si Web Crypto non disponible (file:// dans certains navigateurs)
+    console.warn('[Auth] crypto.subtle indisponible, fallback djb2');
+    return DJB2_LEGACY_PFX + simpleHashLegacy(password);
+  }
+}
+
+// djb2 conservé UNIQUEMENT pour migration
+function simpleHashLegacy(str){
+  let h=5381;
+  for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
   return Math.abs(h).toString(36);
 }
+
+// Vérifie un mot de passe contre le hash stocké (gère PBKDF2 et djb2 legacy)
+async function verifyPwd(password, storedHash){
+  if(!storedHash) return false;
+  // Hash PBKDF2 (64 chars hex)
+  if(/^[0-9a-f]{64}$/.test(storedHash)){
+    const computed = await hashPwd(password);
+    return computed === storedHash;
+  }
+  // Hash djb2 legacy (préfixé ou non)
+  const legacyHash = storedHash.startsWith(DJB2_LEGACY_PFX)
+    ? storedHash.slice(DJB2_LEGACY_PFX.length)
+    : storedHash;
+  return simpleHashLegacy(password) === legacyHash;
+}
+
+// Alias synchrone pour les rares cas restants (non-critique)
+function simpleHash(str){ return DJB2_LEGACY_PFX + simpleHashLegacy(str); }
+
+
 
 function getSession(){
   try{
@@ -2399,17 +2527,13 @@ function updateNavUser(){
 async function initDemoUsers(){
   const ex = await getAll(S.USERS);
   if(ex.length) return;
+  const [adminHash, userHash] = await Promise.all([hashPwd('Admin@2025'), hashPwd('1234')]);
   const users = [
-    { nom:'Administrateur', email:'admin@avicosuite.ci',
-      pwd: simpleHash('Admin@2025'), role:'admin', actif:true, dernierAcces:null },
-    { nom:'Cyrille Kessié', email:'cyrille@avicosuite.ci',
-      pwd: simpleHash('Admin@2025'), role:'admin', actif:true, dernierAcces:null },
-    { nom:'Kouamé Jean', email:'jean@avicosuite.ci',
-      pwd: simpleHash('1234'), role:'operateur', actif:true, dernierAcces:null },
-    { nom:'Kofi Assi', email:'kofi@avicosuite.ci',
-      pwd: simpleHash('1234'), role:'commercial', actif:true, dernierAcces:null },
-    { nom:'Dr. Brice Assi', email:'brice@avicosuite.ci',
-      pwd: simpleHash('1234'), role:'veterinaire', actif:true, dernierAcces:null },
+    { nom:'Administrateur',  email:'admin@avicosuite.ci',   pwd:adminHash, role:'admin',       actif:true, dernierAcces:null },
+    { nom:'Cyrille Kessié',  email:'cyrille@avicosuite.ci', pwd:adminHash, role:'admin',       actif:true, dernierAcces:null },
+    { nom:'Kouamé Jean',     email:'jean@avicosuite.ci',    pwd:userHash,  role:'operateur',   actif:true, dernierAcces:null },
+    { nom:'Kofi Assi',       email:'kofi@avicosuite.ci',    pwd:userHash,  role:'commercial',  actif:true, dernierAcces:null },
+    { nom:'Dr. Brice Assi',  email:'brice@avicosuite.ci',   pwd:userHash,  role:'veterinaire', actif:true, dernierAcces:null },
   ];
   for(const u of users) await addRec(S.USERS, u);
 
@@ -2514,7 +2638,6 @@ window.doLogin = async function(){
 
     // Diagnostic : si aucun utilisateur, la table Supabase n'est probablement pas créée
     if(!users.length){
-      // Tenter une réinitialisation d'urgence des utilisateurs démo
       await initDemoUsers();
       const retryUsers = await getAll(S.USERS);
       if(!retryUsers.length){
@@ -2530,17 +2653,25 @@ window.doLogin = async function(){
     }
 
     const user = users.find(u=>u.email.toLowerCase()===email && u.actif!==false);
-    if(!user || user.pwd!==simpleHash(pwd)){
+    const pwdOk = user ? await verifyPwd(pwd, user.pwd) : false;
+
+    if(!user || !pwdOk){
       errMsg.textContent='Email ou mot de passe incorrect.';
       errDiv.style.display='block';
       document.getElementById('loginPwd').classList.add('err');
-      // Suggérer les comptes démo si l'email ressemble à avicosuite.ci
       if(email.includes('avicosuite.ci')){
         errMsg.innerHTML += '<br><small>Mot de passe démo admin : <strong>Admin@2025</strong></small>';
       }
       btn.disabled=false;
       btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
       return;
+    }
+
+    // ── Auto-migration djb2 → PBKDF2 en arrière-plan ──
+    if(user.pwd && !/^[0-9a-f]{64}$/.test(user.pwd)){
+      hashPwd(pwd).then(newHash => {
+        updRec(S.USERS, user.id, {...user, pwd:newHash, dernierAcces:new Date().toISOString()});
+      }).catch(()=>{});
     }
 
     // Succès
@@ -2659,6 +2790,11 @@ window.switchSettingsTab = async function(tab){
   const sidebar = document.querySelector('.settings-sidebar');
   const activeItem = sidebar?.querySelector('.settings-nav-item.active');
   if(activeItem) activeItem.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+
+  // Rafraîchir l'UI PWA quand on arrive sur l'onglet production
+  if(tab === 'production'){
+    setTimeout(() => { if(typeof refreshPwaSettingsUi === 'function') refreshPwaSettingsUi(); }, 250);
+  }
 };
 
 // ── Tab Exploitation ──
@@ -3012,13 +3148,13 @@ window.saveUser = async function(id){
   let data = { nom, email, tel, role, actif, forceChangePwd };
   if(id){
     const existing = users.find(u=>u.id===parseInt(id));
-    data.pwd = pwd1 ? simpleHash(pwd1) : existing?.pwd;
+    data.pwd = pwd1 ? await hashPwd(pwd1) : existing?.pwd;
     data.dernierAcces = existing?.dernierAcces||null;
     await updRec(S.USERS, parseInt(id), data);
     toast('✅ Utilisateur mis à jour');
   } else {
     if(!pwd1){ toast('Mot de passe requis pour le nouvel utilisateur','err'); return; }
-    data.pwd = simpleHash(pwd1);
+    data.pwd = await hashPwd(pwd1);
     data.dernierAcces = null;
     await addRec(S.USERS, data);
     toast('✅ Utilisateur créé');
@@ -6635,6 +6771,9 @@ async function initAppAfterLogin(){
     const users = await getAll(S.USERS);
     const userRecord = users.find(u=>u.id===currentUser?.id);
     if(userRecord) checkForceChangePwd(userRecord);
+    // Afficher le guide de mise en production si première connexion
+    const shown = localStorage.getItem('prodGuideShown');
+    if(!shown && typeof maybeShowProdGuide==='function') setTimeout(maybeShowProdGuide, 1200);
   }catch(e){ console.error('Post-login init error:',e); }
 }
 
@@ -10503,7 +10642,7 @@ window.resetUserPassword = async function(id){
   const users = await getAll(S.USERS);
   const u = users.find(x=>x.id===id);
   if(!u) return;
-  await updRec(S.USERS, id, {...u, pwd:simpleHash('1234'), forceChangePwd:true});
+  await updRec(S.USERS, id, {...u, pwd:await hashPwd('1234'), forceChangePwd:true});
   toast('✅ Mot de passe → 1234 · Changement forcé activé');
 };
 
@@ -10515,7 +10654,7 @@ window.saveForcePwd = async function(id){
   const users = await getAll(S.USERS);
   const u = users.find(x=>x.id===id);
   if(!u) return;
-  await updRec(S.USERS, id, {...u, pwd:simpleHash(p1), forceChangePwd:false});
+  await updRec(S.USERS, id, {...u, pwd:await hashPwd(p1), forceChangePwd:false});
   document.getElementById('ovForcePwd')?.remove();
   toast('✅ Mot de passe mis à jour');
 };
@@ -10548,7 +10687,7 @@ async function renderSettingsProduction(cfg, users){
   ]);
   const demoFlocks  = flocks.filter(f=>f.isDemo);
   const demoClients = clients.filter(c=>c.isDemo);
-  const defaultPwdUsers = users.filter(u=>u.pwd===simpleHash('Admin@2025')||u.pwd===simpleHash('1234'));
+  const defaultPwdUsers = users.filter(u=>!u.pwd || !/^[0-9a-f]{64}$/.test(u.pwd));
   const lastBackup  = localStorage.getItem('sanixavi_lastBackup');
   const cloudCfg    = JSON.parse(localStorage.getItem('sanixavi_cloud')||'{}');
 
@@ -10688,7 +10827,7 @@ function initPwaSettingsUi(){
     grid.innerHTML='<button onclick="document.getElementById(\'pwaIosBanner\').style.display=\'block\'" class="btn btn-s" style="min-height:44px"><i class="fas fa-info-circle"></i> Voir les instructions iOS</button>';
   }
 }
-window.addEventListener('load', ()=>setTimeout(initPwaSettingsUi, 1000));
+window.addEventListener('load', () => setTimeout(refreshPwaSettingsUi, 1500));
 
 // ════════════════════════════════════════════════════════
 //  TAB — CLOUD & SYNCHRONISATION
@@ -14812,9 +14951,345 @@ window.addEventListener('resize', ()=>{ if(!isMobile()) mobCloseAll(); });
 
 </script>
 
-<!-- ════════════════════════════════════════════════════════════════
-     PWA — SERVICE WORKER + BANNIÈRE D'INSTALLATION
-     ════════════════════════════════════════════════════════════════ -->
+<!-- ══ GUIDE MISE EN PRODUCTION ══ -->
+<div id="prodGuideOverlay" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.7);align-items:center;justify-content:center;padding:16px">
+  <div style="background:#fff;border-radius:18px;max-width:620px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.4)">
+    <div style="background:linear-gradient(135deg,#0a2818,#1a4731);color:#fff;padding:24px;border-radius:18px 18px 0 0;text-align:center">
+      <div style="font-size:36px;margin-bottom:8px">🚀</div>
+      <div style="font-size:20px;font-weight:800;margin-bottom:4px">Mise en production</div>
+      <div style="font-size:12px;color:rgba(255,255,255,.6)">5 étapes pour un démarrage sécurisé</div>
+    </div>
+    <div style="padding:20px 22px">
+      ${[
+        ['1','Créer la table Supabase','Supabase → SQL Editor : collez et exécutez le script SQL de production.',
+          '<button onclick="copyProdDDL()" style="background:#1a4731;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit"><i class=\\"fas fa-copy\\"></i> Copier le script SQL</button>'],
+        ['2','Identifiant d\'organisation unique','Cet ID isole vos données. <strong>Notez-le</strong> — il ne peut pas changer sans perte de données.',
+          '<div style=\\"display:flex;gap:8px\\"><input id=\\"prodGuideOrgId\\" placeholder=\\"ex: ferme-koffi-abidjan-2025\\" style=\\"flex:1;padding:8px 10px;border:1.5px solid #ccc;border-radius:8px;font-size:12px;font-family:inherit\\"><button onclick=\\"prodGuideSetOrg()\\" style=\\"background:#1a4731;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit\\">Valider</button></div><div id=\\"prodGuideOrgStatus\\" style=\\"margin-top:5px;font-size:11px;color:#888\\"></div>'],
+        ['3','Changer le mot de passe Admin','Connectez-vous avec <code>admin@avicosuite.ci / Admin@2025</code> puis Paramétrage → Utilisateurs → Sécurité.',
+          '<div style=\\"background:#fff3e0;border:1px solid #f4a261;border-radius:7px;padding:7px 10px;font-size:10px;color:#b45309\\">⚠️ Ne laissez jamais <code>Admin@2025</code> en production</div>'],
+        ['4','Héberger sur https://','Pour accès multi-appareils et installation PWA (gratuit).',
+          '<div style=\\"display:flex;gap:6px;flex-wrap:wrap\\"><a href=\\"https://vercel.com/new\\" target=\\"_blank\\" style=\\"background:#000;color:#fff;border-radius:7px;padding:7px 12px;text-decoration:none;font-size:11px;font-weight:700\\">▲ Vercel</a><a href=\\"https://app.netlify.com/drop\\" target=\\"_blank\\" style=\\"background:#00ad9f;color:#fff;border-radius:7px;padding:7px 12px;text-decoration:none;font-size:11px;font-weight:700\\">⬡ Netlify Drop</a></div><div style=\\"margin-top:5px;font-size:10px;color:#888\\">Glissez le fichier HTML → URL https:// instantanée</div>'],
+        ['5','Configurer l\'exploitation','Paramétrage → Mon Exploitation : NIF, RCCM, logo, adresse, banque — apparaissent sur les factures.',''],
+      ].map(([n,title,desc,action])=>`
+      <div style="display:flex;gap:12px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #f0f4f0;last-child:border-bottom:none">
+        <div style="width:30px;height:30px;border-radius:50%;background:#0a2818;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;flex-shrink:0">${n}</div>
+        <div style="flex:1"><div style="font-weight:700;font-size:13px;margin-bottom:3px">${title}</div>
+        <div style="font-size:11px;color:#666;margin-bottom:${action?'8px':'0'};line-height:1.7">${desc}</div>
+        ${action}</div></div>`).join('')}
+
+      <button onclick="closeProdGuide()" style="width:100%;background:#1a4731;color:#fff;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;margin-top:6px">
+        <i class="fas fa-check"></i> Compris — Démarrer AviNest Pro
+      </button>
+      <div style="text-align:center;margin-top:10px">
+        <a href="javascript:void(0)" onclick="closeProdGuide(true)" style="font-size:10px;color:#aaa">Ne plus afficher</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PWA BANNIERES ══ -->
+
+<!-- Bannière installation Android/Chrome/Edge -->
+<div id="pwaInstallBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:8000;background:linear-gradient(135deg,#0a2818,#1a4731);color:#fff;padding:14px 16px;box-shadow:0 -4px 20px rgba(0,0,0,.3);border-top:2px solid rgba(82,183,136,.4)">
+  <div style="max-width:600px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="width:42px;height:42px;border-radius:10px;background:rgba(82,183,136,.2);flex-shrink:0;display:flex;align-items:center;justify-content:center">
+      <svg width="28" height="28" viewBox="0 0 44 44" aria-hidden="true">
+        <rect width="44" height="44" rx="10" fill="rgba(0,0,0,.4)"/>
+        <path d="M7 32 Q22 39 37 32" stroke="#52b788" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <ellipse cx="22" cy="21" rx="7" ry="8.5" fill="rgba(61,186,124,.2)" stroke="#52b788" stroke-width="2"/>
+        <path d="M18 13 Q15 7 19.5 7 Q19.5 10.5 18 13Z" fill="#52b788"/>
+        <circle cx="22" cy="21" r="2.5" fill="#52b788"/>
+      </svg>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;font-size:13px">Installer AviNest Pro</div>
+      <div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:1px">Accès depuis l'écran d'accueil, même sans internet</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-shrink:0">
+      <button onclick="pwaInstall()" id="pwaInstallBtn" style="background:#52b788;color:#0a2818;border:none;border-radius:8px;padding:9px 16px;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;min-height:40px">
+        <i class="fas fa-download"></i> Installer
+      </button>
+      <button onclick="pwaDismiss()" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;border-radius:8px;padding:9px 12px;cursor:pointer;font-family:inherit;min-height:40px;font-size:12px">Plus tard</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bannière iOS Safari (instructions manuelles) -->
+<div id="pwaIosBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:8000;background:linear-gradient(135deg,#0a2818,#1a4731);color:#fff;padding:14px 16px;box-shadow:0 -4px 20px rgba(0,0,0,.3);border-top:2px solid rgba(82,183,136,.4)">
+  <div style="max-width:600px;margin:0 auto">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+      <div style="font-weight:700;font-size:13px">📱 Installer AviNest Pro sur iPhone / iPad</div>
+      <button onclick="pwaIosDismiss()" style="background:none;border:none;color:rgba(255,255,255,.5);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">×</button>
+    </div>
+    <div style="font-size:12px;color:rgba(255,255,255,.85);line-height:2.2">
+      1. Appuyez sur <span style="background:rgba(255,255,255,.15);padding:2px 7px;border-radius:5px;font-size:11px"><i class="fas fa-share-square"></i> Partager</span> en bas de Safari<br>
+      2. Faites défiler → <span style="background:rgba(255,255,255,.15);padding:2px 7px;border-radius:5px;font-size:11px"><i class="fas fa-plus-square"></i> Sur l'écran d'accueil</span><br>
+      3. Appuyez sur <span style="background:rgba(255,255,255,.15);padding:2px 7px;border-radius:5px;font-size:11px">Ajouter</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  PWA — SERVICE WORKER (contenu inline, scope correct)
+// ════════════════════════════════════════════════════════
+
+const SW_VERSION = 'avinest-v12-2';
+
+const SW_CODE = [
+  "const CACHE='"+SW_VERSION+"';",
+  "const CDN=['https://cdnjs.cloudflare.com','https://cdn.jsdelivr.net'];",
+  "self.addEventListener('install',e=>{self.skipWaiting();",
+  "  e.waitUntil(caches.open(CACHE).then(c=>{",
+  "    try{return c.add(self.registration.scope);}catch{return Promise.resolve();}",
+  "  }));});",
+  "self.addEventListener('activate',e=>{",
+  "  e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});",
+  "self.addEventListener('fetch',e=>{",
+  "  const u=e.request.url;",
+  "  if(CDN.some(d=>u.startsWith(d))){",
+  "    e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(nr=>{",
+  "      const c=nr.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));return nr;",
+  "    }).catch(()=>new Response('',{status:503}))));",
+  "    return;",
+  "  }",
+  "  if(e.request.mode==='navigate'){",
+  "    e.respondWith(fetch(e.request).then(r=>{",
+  "      const c=r.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));return r;",
+  "    }).catch(()=>caches.match(e.request).then(r=>r||caches.match(self.registration.scope))));",
+  "    return;",
+  "  }",
+  "  e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));",
+  "});"
+].join('\n');
+
+// Enregistrer le SW — nécessite http:// ou https://
+if('serviceWorker' in navigator && location.protocol !== 'file:'){
+  try{
+    // Utiliser un blob URL avec passage du scope explicite
+    const blob = new Blob([SW_CODE], {type:'application/javascript'});
+    const swUrl = URL.createObjectURL(blob);
+    // Le scope est le répertoire du fichier HTML courant
+    const swScope = location.href.replace(/[#?].*$/, '').replace(/\/[^/]*$/, '/') || '/';
+    navigator.serviceWorker.register(swUrl, {scope: swScope})
+      .then(reg => {
+        console.log('[PWA] ✅ Service Worker actif — scope:', reg.scope);
+        URL.revokeObjectURL(swUrl);
+      })
+      .catch(err => {
+        // Blob URL scope trop large — tentative sans scope (portée par défaut)
+        const blob2 = new Blob([SW_CODE], {type:'application/javascript'});
+        const swUrl2 = URL.createObjectURL(blob2);
+        navigator.serviceWorker.register(swUrl2)
+          .then(reg => { console.log('[PWA] ✅ SW enregistré (scope par défaut):', reg.scope); URL.revokeObjectURL(swUrl2); })
+          .catch(e2 => console.warn('[PWA] SW non disponible:', e2.message));
+      });
+  }catch(e){ console.warn('[PWA] SW setup error:', e.message); }
+}
+
+// ════════════════════════════════════════════════════════
+//  PWA — LOGIQUE D'INSTALLATION
+// ════════════════════════════════════════════════════════
+
+let _pwaPrompt = null;
+
+// Détecter si déjà installé en mode standalone
+const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
+  || window.navigator.standalone === true
+  || document.referrer.startsWith('android-app://');
+
+// Vérifier si la bannière a été récemment ignorée (7 jours)
+function _pwaDismissedRecently(){
+  const ts = localStorage.getItem('pwaDismissed');
+  if(!ts) return false;
+  return (Date.now() - parseInt(ts)) < 7 * 24 * 3600000;
+}
+
+if(!_isStandalone){
+
+  // ── Android / Chrome / Edge : prompt natif ──
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    _pwaPrompt = e;
+
+    // Rafraîchir la section settings si elle est visible
+    if(typeof refreshPwaSettingsUi === 'function') refreshPwaSettingsUi();
+
+    // Afficher la bannière si pas récemment ignorée
+    if(!_pwaDismissedRecently()){
+      setTimeout(() => {
+        const banner = document.getElementById('pwaInstallBanner');
+        if(banner) banner.style.display = 'block';
+      }, 2500);
+    }
+  });
+
+  // ── Suivi de l'installation réussie ──
+  window.addEventListener('appinstalled', () => {
+    _pwaPrompt = null;
+    localStorage.setItem('pwaInstalled', '1');
+    document.getElementById('pwaInstallBanner').style.display = 'none';
+    if(typeof toast === 'function') toast('🎉 AviNest Pro installé avec succès !');
+    if(typeof refreshPwaSettingsUi === 'function') refreshPwaSettingsUi();
+  });
+
+  // ── iOS Safari ──
+  const _isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const _isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  if(_isIos && _isSafari && !localStorage.getItem('pwaIosDismissed')){
+    setTimeout(() => {
+      const banner = document.getElementById('pwaIosBanner');
+      if(banner) banner.style.display = 'block';
+    }, 2500);
+  }
+
+  // Masquer les bannières si passage en standalone
+  window.matchMedia('(display-mode: standalone)').addEventListener('change', e => {
+    if(e.matches){
+      document.getElementById('pwaInstallBanner').style.display = 'none';
+      document.getElementById('pwaIosBanner').style.display = 'none';
+      if(typeof refreshPwaSettingsUi === 'function') refreshPwaSettingsUi();
+    }
+  });
+}
+
+// ── Actions boutons ──
+window.pwaInstall = async function(){
+  if(!_pwaPrompt){
+    // Prompt non disponible : guider l'utilisateur vers le bouton natif du navigateur
+    if(typeof toast === 'function')
+      toast('Cliquez sur l\'icône ➕ dans la barre d\'adresse de votre navigateur', 'info');
+    return;
+  }
+  const btn = document.getElementById('pwaInstallBtn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Installation…'; }
+  try{
+    await _pwaPrompt.prompt();
+    const { outcome } = await _pwaPrompt.userChoice;
+    _pwaPrompt = null;
+    document.getElementById('pwaInstallBanner').style.display = 'none';
+    if(outcome === 'accepted'){
+      localStorage.setItem('pwaInstalled', '1');
+      if(typeof toast === 'function') toast('🎉 AviNest Pro installé avec succès !');
+    }
+  }catch(err){
+    console.warn('[PWA] Install error:', err.message);
+  }
+  if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-download"></i> Installer'; }
+  if(typeof refreshPwaSettingsUi === 'function') refreshPwaSettingsUi();
+};
+
+window.pwaDismiss = function(){
+  document.getElementById('pwaInstallBanner').style.display = 'none';
+  localStorage.setItem('pwaDismissed', Date.now().toString());
+};
+
+window.pwaIosDismiss = function(){
+  document.getElementById('pwaIosBanner').style.display = 'none';
+  localStorage.setItem('pwaIosDismissed', '1');
+};
+
+// ── Exposer l'état PWA ──
+window.getPwaStatus = function(){
+  const installed = _isStandalone || !!localStorage.getItem('pwaInstalled');
+  return {
+    installed,
+    canInstall: !!_pwaPrompt,
+    isIos: /iphone|ipad|ipod/i.test(navigator.userAgent),
+    isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent),
+    swReady: 'serviceWorker' in navigator && location.protocol !== 'file:',
+    protocol: location.protocol,
+  };
+};
+
+// ── Mettre à jour la section PWA dans Paramétrage → Production ──
+window.refreshPwaSettingsUi = function(){
+  const badge  = document.getElementById('pwaStatusBadge');
+  const grid   = document.getElementById('pwaButtonsGrid');
+  if(!badge || !grid) return;
+
+  const st = getPwaStatus();
+
+  if(st.installed){
+    badge.textContent = '✅ Installée';
+    badge.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:6px;background:#dcfce7;color:#166534;font-weight:700';
+    grid.innerHTML = '<div style="grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:8px 0;font-size:12px;color:#059669;font-weight:700">'
+      +'<i class="fas fa-check-circle" style="font-size:18px"></i> AviNest Pro est installé sur cet appareil.</div>';
+
+  } else if(st.canInstall){
+    badge.textContent = '💡 Prête à installer';
+    badge.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:6px;background:#fef9c3;color:#713f12;font-weight:700';
+    grid.innerHTML = '<button onclick="pwaInstall()" class="btn btn-p" style="min-height:48px;grid-column:1/-1;font-size:13px;font-weight:800">'
+      +'<i class="fas fa-mobile-alt" style="font-size:16px;margin-right:7px"></i> Installer AviNest Pro maintenant</button>';
+
+  } else if(st.isIos && st.isSafari){
+    badge.textContent = '📱 iOS — installation manuelle';
+    badge.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:6px;background:#e0e7ff;color:#3730a3;font-weight:700';
+    grid.innerHTML = '<button onclick="document.getElementById(\'pwaIosBanner\').style.display=\'block\'" class="btn btn-s" style="min-height:44px">'
+      +'<i class="fas fa-info-circle"></i> Voir les instructions (Partager → Sur l\'écran d\'accueil)</button>';
+
+  } else if(!st.swReady){
+    badge.textContent = '⚠️ Hébergement https:// requis';
+    badge.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-weight:700';
+    grid.innerHTML = '<div style="grid-column:1/-1;font-size:11px;color:var(--text2);line-height:1.8">'
+      +'<strong>Fichier local détecté (<code>file://</code>)</strong><br>'
+      +'Pour activer l\'installation PWA, hébergez ce fichier sur :<br>'
+      +'• <a href="https://vercel.com" target="_blank" style="color:var(--g2)">Vercel</a> (gratuit, déploiement par glisser-déposer)<br>'
+      +'• <a href="https://netlify.com" target="_blank" style="color:var(--g2)">Netlify</a> (gratuit)<br>'
+      +'• Un serveur local : <code>npx serve .</code> ou <code>python -m http.server</code>'
+      +'</div>';
+
+  } else {
+    // HTTPS mais beforeinstallprompt pas encore déclenché
+    badge.textContent = '⏳ En attente du navigateur';
+    badge.style.cssText = 'font-size:10px;padding:2px 8px;border-radius:6px;background:#f3f4f6;color:#6b7280;font-weight:700';
+    grid.innerHTML = '<div style="grid-column:1/-1;font-size:11px;color:var(--text2);line-height:1.8">'
+      +'Le navigateur évalue les critères d\'installation (HTTPS ✅ · Manifest ✅ · Service Worker ✅).<br>'
+      +'<strong>Attendez quelques secondes puis revenez ici</strong>, ou cherchez l\'icône <strong>⊕</strong> '
+      +'dans la barre d\'adresse de Chrome/Edge.</div>'
+      +'<button onclick="refreshPwaSettingsUi()" class="btn btn-s" style="min-height:36px;grid-column:1/-1;margin-top:6px">'
+      +'<i class="fas fa-sync"></i> Actualiser l\'état</button>';
+  }
+};
+
+// ── Guide de mise en production ──
+window.prodGuideSetOrg = function(){
+  const inp = document.getElementById('prodGuideOrgId');
+  const status = document.getElementById('prodGuideOrgStatus');
+  if(!inp||!status) return;
+  let org = (inp.value||'').trim().toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9\-_]/g,'');
+  if(!org){ status.textContent='⚠️ Identifiant invalide'; status.style.color='#c1121f'; return; }
+  if(org==='default'){ status.textContent='⚠️ "default" non autorisé — choisissez un identifiant unique'; status.style.color='#c1121f'; return; }
+  const cfg = typeof getSupaConfig==='function' ? getSupaConfig() : {};
+  localStorage.setItem('sanixavi_supabase_config', JSON.stringify({url:cfg.url||SUPA_DEFAULTS.url, key:cfg.key||SUPA_DEFAULTS.key, org}));
+  status.innerHTML = '✅ Organisation <strong>' + org + '</strong> configurée !';
+  status.style.color = '#059669';
+  if(typeof SUPA_ORG !== 'undefined') { try{ window.SUPA_ORG = org; }catch{} }
+};
+
+window.closeProdGuide = function(neverShow=false){
+  const el = document.getElementById('prodGuideOverlay');
+  if(el) el.style.display='none';
+  if(neverShow) localStorage.setItem('prodGuideShown','2');
+  else localStorage.setItem('prodGuideShown','1');
+};
+
+// Afficher le guide si première connexion (après login)
+function maybeShowProdGuide(){
+  const shown = localStorage.getItem('prodGuideShown');
+  if(shown==='2') return; // "ne plus afficher" choisi
+  // Afficher si pas encore montré (sans ORG custom, c'est le guide de setup)
+  const el = document.getElementById('prodGuideOverlay');
+  if(el) el.style.display = 'flex';
+}
+// Hook après login
+const _origInitAppAfterLogin = typeof initAppAfterLogin !== 'undefined' ? initAppAfterLogin : null;
+
+// ── Init au chargement de la page ──
+window.addEventListener('load', () => setTimeout(refreshPwaSettingsUi, 1500));
+</script>
+
+</body>
 
 <!-- Bannière d'installation -->
 <div id="pwaInstallBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:8000;background:linear-gradient(135deg,#0a2818,#1a4731);color:#fff;padding:14px 16px;box-shadow:0 -4px 20px rgba(0,0,0,.3);border-top:2px solid rgba(82,183,136,.4)">
