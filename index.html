@@ -2002,9 +2002,19 @@ function startSync(){
 // ── Mise à jour live des tableaux de bord : quand un autre utilisateur modifie une donnée,
 //    on rafraîchit automatiquement les vues de synthèse (dashboard, vue d'ensemble d'un lot). ──
 let lastSyncTime = null;
+let _dashSyncChannel = null; // référence du channel actif — évite le double .on()/.subscribe() sur un channel déjà souscrit
 function setupRealtimeSync(){
   if(!supa) return;
-  supa.channel('avico_dash_sync')
+  // startSync() peut être appelée plusieurs fois (reconnexion silencieuse au onload
+  // + connexion manuelle, ou double-clic sur "Se connecter") : supa.channel(nom) renvoie
+  // le MÊME objet s'il existe déjà, et ré-attacher .on() après .subscribe() lève l'erreur
+  // "cannot add postgres_changes callbacks ... after subscribe()". On détruit donc l'ancien
+  // channel avant d'en recréer un neuf.
+  if(_dashSyncChannel){
+    supa.removeChannel(_dashSyncChannel);
+    _dashSyncChannel = null;
+  }
+  _dashSyncChannel = supa.channel('avico_dash_sync')
     .on('postgres_changes', {event:'*', schema:'public', table:'avico_records', filter:'org_id=eq.'+SUPA_ORG}, ()=>{
       clearTimeout(window._rtDebounce);
       window._rtDebounce=setTimeout(async ()=>{
