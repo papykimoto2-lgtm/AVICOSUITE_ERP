@@ -1191,7 +1191,9 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Date J0 *</label><input id="lotStart" type="date"></div>
     <div class="fg"><label>Effectif initial *</label><input id="lotStock" type="number" value="100" min="1"></div>
     <div class="fg"><label>Coût/poussin (FCFA)</label><input id="lotCost" type="number" placeholder="0"></div>
-    <div class="fg"><label>Bâtiment / Ligne</label><input id="lotLine" placeholder="Bât. A – Ligne 1"></div>
+    <div class="fg"><label>Bâtiment</label><input id="lotLine" placeholder="Bât. A"></div>
+    <div class="fg"><label>Ligne</label><input id="lotLigne" placeholder="Ligne 1" list="lignesExistantes"></div>
+    <datalist id="lignesExistantes"></datalist>
     <div class="fg"><label>Fournisseur poussin</label><select id="lotFourn"><option value="">—</option></select></div>
   </div>
   <div class="modal-footer">
@@ -3832,7 +3834,7 @@ async function renderLotView(ca){
         <div class="lot-header-row">
           <div>
             <div class="lot-title">${lot.type==='layer'?'🥚':'🍗'} ${esc(lot.nom||'')} <span class="lot-phase ${ph.cls}">${ph.label}</span></div>
-            <div class="chips"><span class="chip">🧬 ${lot.breed||'—'}</span><span class="chip">📅 J0: ${lot.startDate}</span><span class="chip">🏚️ ${lot.line||'—'}</span><span class="chip">J${age}</span></div>
+            <div class="chips"><span class="chip">🧬 ${lot.breed||'—'}</span><span class="chip">📅 J0: ${lot.startDate}</span><span class="chip">🏚️ ${lot.line||'—'}</span>${lot.ligne?`<span class="chip">🧵 ${esc(lot.ligne)}</span>`:''}<span class="chip">J${age}</span></div>
           </div>
           <div class="hdr-actions">
             <button class="btn-hdr btn-hdr-edit" onclick="openLotModal(${lot.id})"><i class="fas fa-edit"></i> Modifier</button>
@@ -5443,18 +5445,22 @@ async function refreshLot(){
 // ── LOT MODAL ──
 async function openLotModal(id=null){
   const fourns=await getAll(S.FOURNISSEURS);
+  const allLots=await getAll(S.FLOCKS);
   document.getElementById('lotId').value=id||'';
   document.getElementById('mLotTitle').textContent=id?'Modifier le lot':'Nouveau lot';
   document.getElementById('lotFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
-  if(!id){['lotName','lotBreed','lotLine'].forEach(x=>document.getElementById(x).value='');document.getElementById('lotStart').value=new Date().toISOString().slice(0,10);document.getElementById('lotStock').value='100';document.getElementById('lotCost').value='';document.getElementById('lotType').value='layer';}
-  else{const lots=await getAll(S.FLOCKS);const l=lots.find(x=>x.id===id);if(l){document.getElementById('lotName').value=l.nom||l.name||'';document.getElementById('lotType').value=l.type||'layer';document.getElementById('lotBreed').value=l.breed||'';document.getElementById('lotStart').value=l.startDate||'';document.getElementById('lotStock').value=l.initialStock||100;document.getElementById('lotCost').value=l.costPerChick||'';document.getElementById('lotLine').value=l.line||'';document.getElementById('lotFourn').value=l.fournId||'';}}
+  // Suggestions de lignes déjà utilisées, pour éviter les doublons par faute de frappe (ex: "Ligne 1" vs "ligne1")
+  const lignesConnues=[...new Set(allLots.map(f=>f.ligne).filter(Boolean))];
+  document.getElementById('lignesExistantes').innerHTML=lignesConnues.map(l=>`<option value="${esc(l)}">`).join('');
+  if(!id){['lotName','lotBreed','lotLine','lotLigne'].forEach(x=>document.getElementById(x).value='');document.getElementById('lotStart').value=new Date().toISOString().slice(0,10);document.getElementById('lotStock').value='100';document.getElementById('lotCost').value='';document.getElementById('lotType').value='layer';}
+  else{const l=allLots.find(x=>x.id===id);if(l){document.getElementById('lotName').value=l.nom||l.name||'';document.getElementById('lotType').value=l.type||'layer';document.getElementById('lotBreed').value=l.breed||'';document.getElementById('lotStart').value=l.startDate||'';document.getElementById('lotStock').value=l.initialStock||100;document.getElementById('lotCost').value=l.costPerChick||'';document.getElementById('lotLine').value=l.line||'';document.getElementById('lotLigne').value=l.ligne||'';document.getElementById('lotFourn').value=l.fournId||'';}}
   openOverlay('mLot');
 }
 window.openLotModal=openLotModal;
 
 document.getElementById('saveLotBtn').onclick=async()=>{
   const id=document.getElementById('lotId').value;
-  const data={nom:document.getElementById('lotName').value.trim(),type:document.getElementById('lotType').value,breed:document.getElementById('lotBreed').value.trim(),startDate:document.getElementById('lotStart').value,initialStock:parseInt(document.getElementById('lotStock').value)||0,costPerChick:parseFloat(document.getElementById('lotCost').value)||0,line:document.getElementById('lotLine').value.trim(),fournId:document.getElementById('lotFourn').value?parseInt(document.getElementById('lotFourn').value):null};
+  const data={nom:document.getElementById('lotName').value.trim(),type:document.getElementById('lotType').value,breed:document.getElementById('lotBreed').value.trim(),startDate:document.getElementById('lotStart').value,initialStock:parseInt(document.getElementById('lotStock').value)||0,costPerChick:parseFloat(document.getElementById('lotCost').value)||0,line:document.getElementById('lotLine').value.trim(),ligne:document.getElementById('lotLigne').value.trim(),fournId:document.getElementById('lotFourn').value?parseInt(document.getElementById('lotFourn').value):null};
   if(!data.nom||!data.startDate||data.initialStock<1){toast('Nom, date et effectif requis','err');return;}
   if(id){await updRec(S.FLOCKS,parseInt(id),{...window._lot,...data});await scheduleTasks(parseInt(id),data.type,data.startDate);}
   else{const newId=await addRec(S.FLOCKS,data);await scheduleTasks(newId,data.type,data.startDate);curLotId=newId;}
@@ -11848,6 +11854,127 @@ async function collectRapportData(type, customMin=null, customMax=null){
   };
 }
 
+// ── Collecte : Production vs Conditionnement, groupée par Ligne > Bâtiment ──
+async function collectProdCondData(dateMin, dateMax, lotId=''){
+  const [flocks, eggProd, mortalite, feeds, waters, cond] = await Promise.all([
+    getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.MORTALITE),
+    getAll(S.FEEDING), getAll(S.WATER), getAll(S.COND)
+  ]);
+  const inPeriod = d => d && d >= dateMin && d <= dateMax;
+  let lots = flocks.filter(f=>f.type==='layer');
+  if(lotId) lots = lots.filter(f=>String(f.id)===String(lotId));
+
+  const batiments = lots.map(f=>{
+    const oeufs   = eggProd.filter(e=>e.flockId===f.id&&inPeriod(e.date)).reduce((a,e)=>a+(e.eggCount||0),0);
+    const morts   = mortalite.filter(m=>m.flockId===f.id&&inPeriod(m.date)).reduce((a,m)=>a+(m.nbMorts||0),0);
+    const alimKg  = feeds.filter(x=>x.flockId===f.id&&inPeriod(x.date)).reduce((a,x)=>a+(x.quantityKg||0),0);
+    const eauL    = waters.filter(x=>x.flockId===f.id&&inPeriod(x.date)).reduce((a,x)=>a+(x.waterLiters||0),0);
+    const condF   = cond.filter(c=>c.flockId===f.id&&inPeriod(c.date));
+    const bruts   = condF.reduce((a,c)=>a+(c.oeufs_bruts||0),0);
+    const casses  = condF.reduce((a,c)=>a+(c.oeufs_casses||0),0);
+    const nets    = condF.reduce((a,c)=>a+(c.oeufs_nets||0),0);
+    const plateaux= condF.reduce((a,c)=>a+(c.plateaux||0),0);
+    const cartons = condF.reduce((a,c)=>a+(c.cartons||0),0);
+    const tauxCond = oeufs>0 ? (nets/oeufs*100) : 0;
+    const tauxCasse = bruts>0 ? (casses/bruts*100) : 0;
+    const ecart = oeufs - bruts; // œufs produits mais pas encore engagés en conditionnement sur la période (peut être négatif si on conditionne un stock antérieur)
+    return { id:f.id, nom:f.nom, batiment:f.line||'—', ligne:f.ligne||'Sans ligne',
+      oeufs, morts, alimKg, eauL, bruts, casses, nets, plateaux, cartons, tauxCond, tauxCasse, ecart };
+  });
+
+  // Regroupement par ligne
+  const parLigne = {};
+  batiments.forEach(b=>{
+    if(!parLigne[b.ligne]) parLigne[b.ligne] = { ligne:b.ligne, batiments:[], oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0 };
+    const g = parLigne[b.ligne];
+    g.batiments.push(b);
+    g.oeufs+=b.oeufs; g.morts+=b.morts; g.alimKg+=b.alimKg; g.eauL+=b.eauL;
+    g.bruts+=b.bruts; g.casses+=b.casses; g.nets+=b.nets; g.plateaux+=b.plateaux; g.cartons+=b.cartons;
+  });
+  const lignes = Object.values(parLigne).map(g=>({
+    ...g, tauxCond: g.oeufs>0?(g.nets/g.oeufs*100):0, tauxCasse: g.bruts>0?(g.casses/g.bruts*100):0
+  })).sort((a,b)=>a.ligne.localeCompare(b.ligne));
+
+  const total = batiments.reduce((a,b)=>({
+    oeufs:a.oeufs+b.oeufs, morts:a.morts+b.morts, alimKg:a.alimKg+b.alimKg, eauL:a.eauL+b.eauL,
+    bruts:a.bruts+b.bruts, casses:a.casses+b.casses, nets:a.nets+b.nets, plateaux:a.plateaux+b.plateaux, cartons:a.cartons+b.cartons
+  }), {oeufs:0,morts:0,alimKg:0,eauL:0,bruts:0,casses:0,nets:0,plateaux:0,cartons:0});
+  total.tauxCond = total.oeufs>0 ? (total.nets/total.oeufs*100) : 0;
+  total.tauxCasse = total.bruts>0 ? (total.casses/total.bruts*100) : 0;
+
+  return { dateMin, dateMax, lignes, total, nbBatiments: batiments.length };
+}
+
+// ── Corps : Production vs Conditionnement (par ligne / bâtiment) ──
+function buildCorpsProdCond(data, cfg){
+  const t = data.total;
+  const ligneBlocks = data.lignes.map(g=>{
+    const rows = g.batiments.map(b=>`
+      <tr>
+        <td><strong>${esc(b.batiment)}</strong><br><span style="font-size:9px;color:#888">${esc(b.nom)}</span></td>
+        <td style="text-align:right;font-weight:700">${b.oeufs.toLocaleString('fr-FR')}</td>
+        <td style="text-align:right;color:#c1121f">${b.morts}</td>
+        <td style="text-align:right">${b.alimKg.toLocaleString('fr-FR')} kg</td>
+        <td style="text-align:right">${b.eauL.toLocaleString('fr-FR')} L</td>
+        <td style="text-align:right;font-weight:700">${b.nets.toLocaleString('fr-FR')}</td>
+        <td style="text-align:right">${b.plateaux}</td>
+        <td style="text-align:right">${b.cartons}</td>
+        <td style="text-align:right;color:${b.tauxCasse>5?'#c1121f':'#666'}">${b.tauxCasse.toFixed(1)}%</td>
+        <td style="text-align:right"><span class="${b.tauxCond>=90?'badge-ok':b.tauxCond>=70?'badge-warn':'badge-err'}">${b.tauxCond.toFixed(0)}%</span></td>
+      </tr>`).join('');
+    return `
+    <div class="section">
+      <div class="section-title">🧵 Ligne : ${esc(g.ligne)} — ${g.batiments.length} bâtiment(s)</div>
+      <table><thead><tr>
+        <th>Bâtiment</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th>
+        <th style="text-align:right">Aliment</th><th style="text-align:right">Eau</th>
+        <th style="text-align:right">Œufs cond.</th><th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th>
+        <th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tr class="total-row">
+        <td>SOUS-TOTAL LIGNE</td>
+        <td style="text-align:right">${g.oeufs.toLocaleString('fr-FR')}</td>
+        <td style="text-align:right">${g.morts}</td>
+        <td style="text-align:right">${g.alimKg.toLocaleString('fr-FR')} kg</td>
+        <td style="text-align:right">${g.eauL.toLocaleString('fr-FR')} L</td>
+        <td style="text-align:right">${g.nets.toLocaleString('fr-FR')}</td>
+        <td style="text-align:right">${g.plateaux}</td>
+        <td style="text-align:right">${g.cartons}</td>
+        <td style="text-align:right">${g.tauxCasse.toFixed(1)}%</td>
+        <td style="text-align:right">${g.tauxCond.toFixed(0)}%</td>
+      </tr>
+      </table>
+    </div>`;
+  }).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucune donnée sur la période</p></div>';
+
+  return `
+  <div class="kpis">
+    <div class="kpi-box"><div class="kpi-val">${t.oeufs.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Œufs produits</div></div>
+    <div class="kpi-box"><div class="kpi-val">${t.nets.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Œufs conditionnés</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCond>=90?'#1a5c2a':t.tauxCond>=70?'#92400e':'#c1121f'}">${t.tauxCond.toFixed(0)}%</div><div class="kpi-lbl">Taux conditionné</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCasse>5?'#c1121f':'#1a5c2a'}">${t.tauxCasse.toFixed(1)}%</div><div class="kpi-lbl">Taux de casse</div></div>
+  </div>
+  ${ligneBlocks}
+  <div class="section">
+    <div class="section-title">📊 Comparatif global — Production vs Conditionnement</div>
+    <table><thead><tr><th>Indicateur</th><th style="text-align:right">Valeur</th></tr></thead>
+    <tbody>
+      <tr><td>Œufs produits (période)</td><td style="text-align:right;font-weight:700">${t.oeufs.toLocaleString('fr-FR')}</td></tr>
+      <tr><td>Œufs bruts entrés en conditionnement</td><td style="text-align:right">${t.bruts.toLocaleString('fr-FR')}</td></tr>
+      <tr><td>Œufs cassés en conditionnement</td><td style="text-align:right;color:#c1121f">${t.casses.toLocaleString('fr-FR')}</td></tr>
+      <tr><td>Œufs nets conditionnés</td><td style="text-align:right;font-weight:700">${t.nets.toLocaleString('fr-FR')}</td></tr>
+      <tr><td>Plateaux / Cartons obtenus</td><td style="text-align:right">${t.plateaux.toLocaleString('fr-FR')} plateaux / ${t.cartons.toLocaleString('fr-FR')} cartons</td></tr>
+      <tr><td>Mortalité totale</td><td style="text-align:right;color:#c1121f">${t.morts}</td></tr>
+      <tr><td>Aliment consommé / Eau consommée</td><td style="text-align:right">${t.alimKg.toLocaleString('fr-FR')} kg / ${t.eauL.toLocaleString('fr-FR')} L</td></tr>
+    </tbody></table>
+    <p style="font-size:10px;color:#888;margin-top:4px">
+      Écart = œufs produits − œufs entrés en conditionnement sur la même période (stock intermédiaire non encore conditionné, ou conditionnement d'un stock antérieur si négatif) :
+      <strong style="color:${(t.oeufs-t.bruts)<0?'#c1121f':'#1a5c2a'}">${(t.oeufs-t.bruts).toLocaleString('fr-FR')} œufs</strong>
+    </p>
+  </div>`;
+}
+
 // ── Génération du texte du rapport ──
 function genRapportTexte(d, format='whatsapp'){
   const NL = '\n';
@@ -12081,6 +12208,15 @@ async function renderRapports(ca){
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:0;border-left:4px solid #0f766e">
+        <div style="padding:11px 14px 4px;font-weight:700;font-size:13px">🥚📦 Production vs Conditionnement</div>
+        <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Par ligne · Bâtiment · Taux conditionné & casse</div>
+        <div style="padding:0 10px 12px;display:flex;gap:7px">
+          <button style="flex:1;padding:11px 0;background:#0f766e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
+          <button style="padding:11px 14px;background:#fff;color:#0f766e;border:1.5px solid #99f6e4;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('prodcond')"><i class="fas fa-eye"></i></button>
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom:0;border-left:4px solid var(--g1);background:linear-gradient(135deg,#f0fdf4,#fff)">
         <div style="padding:11px 14px 4px;font-weight:800;font-size:13px;color:var(--g1)">📊 Bilan complet</div>
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Tous modules · Synthèse direction</div>
@@ -12236,6 +12372,7 @@ window.printEtatPeriodique = async function(type, preview=false){
   else if(type==='commercial') corps = buildCorpsCommercial(data, cfg);
   else if(type==='gmao') corps = buildCorpsGMAO(data, cfg);
   else if(type==='bilan') corps = buildCorpsBilan(data, cfg);
+  else if(type==='prodcond') corps = buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId), cfg);
 
   const html = buildDocumentImprimable(entreprise, corps, cfg, type, dateMin, dateMax, true);
   const w = window.open('','_blank','width=960,height=750');
@@ -12251,7 +12388,8 @@ function buildEnteteEtat(cfg, type, dateMin, dateMax){
     : `<div style="font-size:22px;font-weight:800;color:#1a5c2a">${cfg.nomExploitation||'Sanix AviNest Pro'}</div>`;
   const titreType = {
     production:'ÉTAT DE PRODUCTION',finance:'ÉTAT FINANCIER',stocks:'ÉTAT DES STOCKS',
-    commercial:'ÉTAT COMMERCIAL',gmao:'ÉTAT GMAO',bilan:'BILAN COMPLET'
+    commercial:'ÉTAT COMMERCIAL',gmao:'ÉTAT GMAO',bilan:'BILAN COMPLET',
+    prodcond:'PRODUCTION vs CONDITIONNEMENT (par ligne / bâtiment)'
   }[type]||'ÉTAT PÉRIODIQUE';
   const fmtDate = d => d ? new Date(d).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}) : '—';
   return {logo, titreType, fmtDate, dateMin, dateMax};
