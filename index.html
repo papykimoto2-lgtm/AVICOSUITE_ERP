@@ -887,9 +887,9 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
       <form onsubmit="doLogin();return false" autocomplete="on">
       <div class="login-field-wrap">
-        <label class="login-field-label" for="loginEmail">Email / Identifiant</label>
+        <label class="login-field-label" for="loginEmail">Nom d'utilisateur</label>
         <div class="login-field">
-          <input type="email" id="loginEmail" name="email" placeholder="admin@votre-exploitation.ci" autocomplete="username">
+          <input type="text" id="loginEmail" name="username" placeholder="ex : cyrille" autocomplete="username">
         </div>
       </div>
 
@@ -940,7 +940,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <form onsubmit="submitBootstrap();return false" autocomplete="on">
     <div class="form-grid" style="grid-template-columns:1fr">
       <div class="fg"><label>Nom complet *</label><input id="bsNom" name="name" autocomplete="name" placeholder="ex: Cyrille Kessié"></div>
-      <div class="fg"><label>Email *</label><input id="bsEmail" name="email" type="email" autocomplete="username" placeholder="admin@votre-exploitation.ci"></div>
+      <div class="fg"><label>Nom d'utilisateur *</label><input id="bsEmail" name="username" type="text" autocomplete="username" placeholder="ex : cyrille"></div>
       <div class="fg"><label>Mot de passe *</label><input id="bsPwd" name="new-password" type="password" placeholder="12 caractères minimum" autocomplete="new-password"></div>
       <div class="fg"><label>Confirmer le mot de passe *</label><input id="bsPwd2" name="confirm-password" type="password" autocomplete="new-password"></div>
     </div>
@@ -2641,6 +2641,14 @@ async function getExploitationSettings(){
   };
 }
 
+// ── Authentification par nom d'utilisateur (pas d'email réel) ──
+// Supabase Auth exige un format "email" en interne : on fabrique une adresse
+// factice à partir du nom d'utilisateur, jamais envoyée nulle part.
+function usernameToEmail(u){
+  const clean = String(u||'').trim().toLowerCase().replace(/[^a-z0-9._-]/g,'');
+  return clean + '@avinest.local';
+}
+
 // ── Login UI ──
 window.togglePwdVis = function(){
   const inp = document.getElementById('loginPwd');
@@ -2651,13 +2659,14 @@ window.togglePwdVis = function(){
 
 
 window.doLogin = async function(){
-  const email = (document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
+  const username = (document.getElementById('loginEmail')?.value||'').trim();
+  const email = usernameToEmail(username);
   const pwd   = document.getElementById('loginPwd')?.value||'';
   const errDiv= document.getElementById('loginError');
   const errMsg= document.getElementById('loginErrorMsg');
   const btn   = document.getElementById('loginBtn');
 
-  if(!email||!pwd){
+  if(!username||!pwd){
     errMsg.textContent='Veuillez remplir tous les champs.';
     errDiv.style.display='block';
     return;
@@ -2671,10 +2680,8 @@ window.doLogin = async function(){
     const { error } = await supa.auth.signInWithPassword({ email, password:pwd });
     if(error){
       errMsg.textContent = /invalid login/i.test(error.message)
-        ? 'Email ou mot de passe incorrect.'
-        : (/email not confirmed/i.test(error.message)
-            ? "Email non confirmé — désactivez « Confirm email » dans Supabase \u2192 Authentication \u2192 Providers."
-            : 'Erreur : '+error.message);
+        ? "Nom d'utilisateur ou mot de passe incorrect."
+        : 'Erreur : '+error.message;
       errDiv.style.display='block';
       document.getElementById('loginPwd').classList.add('err');
       btn.disabled=false;
@@ -2715,36 +2722,49 @@ window.doLogin = async function(){
 };
 
 window.submitBootstrap = async function(){
-  const nom   = document.getElementById('bsNom')?.value.trim();
-  const email = document.getElementById('bsEmail')?.value.trim().toLowerCase();
+  const nom      = document.getElementById('bsNom')?.value.trim();
+  const username = document.getElementById('bsEmail')?.value.trim();
+  const email    = usernameToEmail(username);
   const pwd   = document.getElementById('bsPwd')?.value||'';
   const pwd2  = document.getElementById('bsPwd2')?.value||'';
   const errEl = document.getElementById('bsError');
   const btn   = document.getElementById('bsSubmitBtn');
   errEl.style.display='none';
 
-  if(!nom||!email||!pwd){ errEl.textContent='Tous les champs sont requis.'; errEl.style.display='block'; return; }
+  if(!nom||!username||!pwd){ errEl.textContent='Tous les champs sont requis.'; errEl.style.display='block'; return; }
   if(pwd.length<12){ errEl.textContent='Mot de passe : 12 caractères minimum.'; errEl.style.display='block'; return; }
   if(pwd!==pwd2){ errEl.textContent='Les mots de passe ne correspondent pas.'; errEl.style.display='block'; return; }
 
   const resetBtn = ()=>{ btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> Créer l\'accès'; };
   btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Création\u2026';
   try{
-    // 1. Création du compte (ou connexion si le compte existe déjà mais n'est
-    //    rattaché à aucune organisation — cas d'une inscription interrompue).
-    let { error } = await supa.auth.signUp({ email, password:pwd });
-    if(error && /already registered/i.test(error.message)){
-      const r = await supa.auth.signInWithPassword({ email, password:pwd });
-      error = r.error;
-      if(error){ errEl.textContent='Ce compte existe déjà avec un autre mot de passe.'; errEl.style.display='block'; resetBtn(); return; }
-    }else if(error){
-      errEl.textContent='Erreur : '+error.message; errEl.style.display='block'; resetBtn(); return;
+    // 1. Création du compte via l'Edge Function "create-user" : le compte est
+    //    créé DÉJÀ CONFIRMÉ côté serveur (service_role), aucun email envoyé,
+    //    aucune dépendance au réglage "Confirm email" du dashboard.
+    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/create-user', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY},
+      body: JSON.stringify({ email, password:pwd })
+    });
+    const result = await resp.json().catch(()=>({}));
+    if(!resp.ok || result.error){
+      if(/already.*registered|existe déjà/i.test(result.error||'')){
+        // Compte déjà créé (ex: tentative précédente) → on tente juste la connexion
+        const r = await supa.auth.signInWithPassword({ email, password:pwd });
+        if(r.error){ errEl.textContent="Ce nom d'utilisateur est déjà pris avec un autre mot de passe."; errEl.style.display='block'; resetBtn(); return; }
+      } else {
+        errEl.textContent = 'Erreur : '+(result.error||'création du compte impossible — vérifiez que l\'Edge Function "create-user" est bien déployée.');
+        errEl.style.display='block'; resetBtn(); return;
+      }
+    } else {
+      // 1bis. Connexion immédiate — le compte est déjà confirmé, pas d'attente
+      const { error:signInErr } = await supa.auth.signInWithPassword({ email, password:pwd });
+      if(signInErr){ errEl.textContent='Erreur de connexion : '+signInErr.message; errEl.style.display='block'; resetBtn(); return; }
     }
 
     const { data:{ session } } = await supa.auth.getSession();
     if(!session){
-      errEl.innerHTML = "Compte créé, mais la confirmation par email est activée.<br>"
-        + "Désactivez « Confirm email » dans Supabase \u2192 Authentication \u2192 Providers, puis reconnectez-vous.";
+      errEl.textContent = "Erreur inattendue : session non créée après inscription.";
       errEl.style.display='block'; resetBtn(); return;
     }
 
@@ -2756,7 +2776,7 @@ window.submitBootstrap = async function(){
       errEl.style.display='block'; resetBtn(); return;
     }
 
-    currentUser = { id:session.user.id, nom, email, role:claim.role, org_id:claim.org_id };
+    currentUser = { id:session.user.id, nom, email, username, role:claim.role, org_id:claim.org_id };
     startSync();
     closeOverlay('ovBootstrap');
     toast('\u2705 Accès administrateur créé');
@@ -6960,7 +6980,7 @@ async function initAppAfterLogin(){
     document.getElementById('lotsPanel').classList.remove('hidden');
     await renderLotSidebar();
     const lots=await getAll(S.FLOCKS);if(lots.length) curLotId=lots[0].id;
-    try{ localStorage.setItem('sanixavi_last_email', currentUser?.email||''); }catch{}
+    try{ localStorage.setItem('sanixavi_last_email', (currentUser?.username || (currentUser?.email||'').replace(/@avinest\.local$/,''))); }catch{}
     await render();
     // Vérifier si changement de mot de passe forcé requis
     const users = await getAll(S.USERS);
