@@ -3173,7 +3173,7 @@ window.openUserModal = async function(id){
     +'<div id="uTabContent-info">'
     +'<div class="form-grid">'
     +'<div class="fg fg-full"><label>Nom complet *</label><input id="uNom" value="'+esc(u?.nom||'')+'" placeholder="Kouamé Jean"></div>'
-    +'<div class="fg"><label>Email *</label><input id="uEmail" type="email" value="'+esc(u?.email||'')+'" placeholder="jean@avicosuite.ci"></div>'
+    +'<div class="fg"><label>Nom d\'utilisateur *</label><input id="uEmail" type="text" autocomplete="off" value="'+esc(u?.username || (u?.email||'').replace(/@avinest\.local$/,'') || u?.email || '')+'" placeholder="ex : jean"'+(u?' disabled title="Le nom d\'utilisateur ne peut pas être modifié"':'')+'></div>'
     +'<div class="fg"><label>Téléphone / WhatsApp</label><input id="uTel" value="'+esc(u?.tel||'')+'" type="tel" placeholder="+225 07 …"></div>'
     +'<div class="fg"><label>Rôle *</label><select id="uRole" onchange="updateUserRolePreview()">'+roleOptions+'</select></div>'
     +'<div class="fg"><label>Statut</label><select id="uActif"><option value="1"'+(u?.actif!==false?' selected':'')+'>✅ Actif</option><option value="0"'+(u?.actif===false?' selected':'')+'>🚫 Inactif</option></select></div>'
@@ -3183,7 +3183,7 @@ window.openUserModal = async function(id){
     // Tab Sécurité
     +'<div id="uTabContent-sec" style="display:none">'
     +'<div class="form-grid">'
-    +'<div class="fg"><label>'+(u?'Nouveau mot de passe':'Mot de passe *')+'</label><input id="uPwd" type="password" placeholder="'+(u?'Vide = inchangé':'Min. 4 caractères')+'"></div>'
+    +'<div class="fg"><label>'+(u?'Nouveau mot de passe':'Mot de passe *')+'</label><input id="uPwd" type="password" placeholder="'+(u?'Vide = inchangé':'Min. 6 caractères')+'"></div>'
     +'<div class="fg"><label>Confirmer</label><input id="uPwd2" type="password" placeholder="••••••••"></div>'
     +'</div>'
     +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-top:10px">'
@@ -3212,33 +3212,67 @@ window.openUserModal = async function(id){
 
 window.saveUser = async function(id){
   if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
-  const nom   = document.getElementById('uNom')?.value.trim();
-  const email = document.getElementById('uEmail')?.value.trim().toLowerCase();
+  const nom      = document.getElementById('uNom')?.value.trim();
+  const username = document.getElementById('uEmail')?.value.trim();
+  const email    = usernameToEmail(username);
   const tel   = document.getElementById('uTel')?.value.trim()||'';
   const role  = document.getElementById('uRole')?.value;
   const pwd1  = document.getElementById('uPwd')?.value;
   const pwd2  = document.getElementById('uPwd2')?.value;
   const actif = document.getElementById('uActif')?.value==='1';
   const forceChangePwd = document.getElementById('uForceChangePwd')?.checked||false;
-  if(!nom||!email||!role){ toast('Nom, email et rôle requis','err'); return; }
+  if(!nom||!username||!role){ toast("Nom, nom d'utilisateur et rôle requis",'err'); return; }
   if(pwd1 && pwd1!==pwd2){ toast('Les mots de passe ne correspondent pas','err'); return; }
   const users = await getAll(S.USERS);
-  const dupEmail = users.find(u=>u.email.toLowerCase()===email && u.id!==parseInt(id||'0'));
-  if(dupEmail){ toast('Cet email est déjà utilisé','err'); return; }
+  const dupUser = users.find(u=>(u.username||'').toLowerCase()===username.toLowerCase() && u.id!==parseInt(id||'0'));
+  if(dupUser){ toast("Ce nom d'utilisateur est déjà pris",'err'); return; }
 
-  let data = { nom, email, tel, role, actif, forceChangePwd };
+  let data = { nom, username, email, tel, role, actif, forceChangePwd };
+  const saveBtn = document.querySelector('#ovUser .btn-p');
+  const resetSaveBtn = ()=>{ if(saveBtn){ saveBtn.disabled=false; saveBtn.innerHTML='<i class="fas fa-save"></i> Enregistrer'; } };
+
   if(id){
+    // Mise à jour d'un utilisateur existant : le compte Supabase Auth n'est jamais
+    // recréé (nom d'utilisateur verrouillé) ; un nouveau mot de passe éventuel
+    // n'est PAS propagé à Supabase Auth ici (chaque utilisateur change le sien
+    // depuis son propre profil) — seuls nom/tél/rôle/statut sont mis à jour.
     const existing = users.find(u=>u.id===parseInt(id));
-    data.pwd = pwd1 ? await hashPwd(pwd1) : existing?.pwd;
+    data.pwd = existing?.pwd; // champ conservé pour compat, non utilisé pour l'authentification
     data.dernierAcces = existing?.dernierAcces||null;
     await updRec(S.USERS, parseInt(id), data);
+    // Répercuter rôle/statut sur avico_members (accès réel à l'app)
+    if(existing?.authUserId){
+      await supa.from('avico_members').update({ role, actif, nom }).eq('user_id', existing.authUserId).eq('org_id', SUPA_ORG);
+    }
     toast('✅ Utilisateur mis à jour');
   } else {
     if(!pwd1){ toast('Mot de passe requis pour le nouvel utilisateur','err'); return; }
-    data.pwd = await hashPwd(pwd1);
-    data.dernierAcces = null;
-    await addRec(S.USERS, data);
-    toast('✅ Utilisateur créé');
+    if(pwd1.length<6){ toast('Mot de passe : 6 caractères minimum','err'); return; }
+    if(saveBtn){ saveBtn.disabled=true; saveBtn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Création…'; }
+    try{
+      // Créer un VRAI compte Supabase Auth pour ce collaborateur, via l'Edge
+      // Function "add-staff-user" (vérifie côté serveur que l'appelant est bien
+      // admin de cette organisation avant de créer le compte + le rattachement).
+      const { data:{ session } } = await supa.auth.getSession();
+      if(!session){ toast('Session expirée, reconnectez-vous','err'); resetSaveBtn(); return; }
+      const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/add-staff-user', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+session.access_token},
+        body: JSON.stringify({ org_id:SUPA_ORG, email, password:pwd1, nom, role })
+      });
+      const result = await resp.json().catch(()=>({}));
+      if(!resp.ok || result.error){
+        toast('Erreur : '+(result.error||"création du compte impossible — vérifiez que l'Edge Function \"add-staff-user\" est bien déployée."), 'err');
+        resetSaveBtn(); return;
+      }
+      data.pwd = await hashPwd(pwd1); // conservé pour compat locale (non utilisé pour l'auth réelle)
+      data.dernierAcces = null;
+      data.authUserId = result.user_id;
+      await addRec(S.USERS, data);
+      toast('✅ Utilisateur créé — il peut se connecter dès maintenant avec « '+username+' »');
+    }catch(e){
+      toast('Erreur : '+e.message,'err'); resetSaveBtn(); return;
+    }
   }
   document.getElementById('ovUser')?.remove();
   await renderSettings(document.getElementById('contentArea'));
@@ -3287,7 +3321,10 @@ window.toggleUserActif = async function(id, currentlyActif){
   const u = users.find(x=>x.id===id);
   if(!u) return;
   await updRec(S.USERS, id, {...u, actif:!currentlyActif});
-  toast(currentlyActif?'Utilisateur désactivé':'Utilisateur activé');
+  if(u.authUserId){
+    await supa.from('avico_members').update({ actif:!currentlyActif }).eq('user_id', u.authUserId).eq('org_id', SUPA_ORG);
+  }
+  toast(currentlyActif?'Utilisateur désactivé — accès révoqué':'Utilisateur activé — accès rétabli');
   settingsTab='users'; await switchSettingsTab('users');
 };
 
@@ -8876,7 +8913,32 @@ function buildEmetteurHeader(cfg){
   </div>`;
 }
 
-// ── Construire et imprimer une facture normalisée ──
+// ── QR code de sécurité — vérification rapide d'un document imprimé ──
+// Encode les éléments clés du document (org, type, référence, date, montant)
+// + un code de contrôle (checksum) dérivé de ces données. Ce n'est pas une
+// signature cryptographique côté serveur (aucune infrastructure de signature
+// n'existe dans ce système), mais un moyen simple et rapide de vérifier
+// visuellement, en scannant, que les informations imprimées sur le papier
+// correspondent bien à celles attendues — utile contre les copies altérées.
+function buildSecurityQR(cfg, docType, docRef, montant, dateDoc){
+  const org = SUPA_ORG || cfg.nomExploitation || '';
+  const payloadRaw = [org, docType, docRef||'', dateDoc||'', montant||0].join('|');
+  const checksum = simpleHashLegacy(payloadRaw + '::avinest-secure').toUpperCase();
+  const qrText = `AVINEST-DOC|${org}|${docType}|${docRef||''}|${dateDoc||''}|${montant||0}|${checksum}`;
+  const elId = 'qr_'+Math.random().toString(36).slice(2,10);
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+    <div id="${elId}" style="width:70px;height:70px"></div>
+    <div style="font-size:7px;color:#9ca3af;letter-spacing:.5px">${checksum}</div>
+    <\x73cript>
+      (function(){
+        function draw(){ try{ new QRCode(document.getElementById('${elId}'), { text: ${JSON.stringify(qrText)}, width:70, height:70, correctLevel: QRCode.CorrectLevel.M }); }catch(e){ document.getElementById('${elId}').innerHTML='<div style="font-size:7px;color:#c00">QR indispo</div>'; } }
+        if(window.QRCode) draw(); else window.addEventListener('load', draw);
+      })();
+    <\x2fscript>
+  </div>`;
+}
+
+
 function buildAndPrintFacture(s, c, cfg){
   const tvaApp   = cfg.tvaApplicable !== false;
   const tauxTva  = cfg.tauxTva ?? 18;
@@ -8912,6 +8974,7 @@ function buildAndPrintFacture(s, c, cfg){
 
   var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
   <title>Facture ${esc(s.numFacture||s.ref||'')}</title>
+  <\x73cript src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\x2fscript>
   <style>
     *{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}
     .doc{max-width:210mm;margin:0 auto;padding:12mm}
@@ -8934,9 +8997,13 @@ function buildAndPrintFacture(s, c, cfg){
     .tnap{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;font-weight:700;color:#dc2626}
     .ech-box{background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:9px 13px;margin-bottom:12px;font-size:11px}
     .retard-box{background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:7px 12px;color:#991b1b;margin-bottom:10px;font-size:11px}
-    .ftr{clear:both;border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8}
-    @media print{@page{margin:10mm;size:A4}button{display:none}}
-  </style></head><body><div class="doc">
+    .ftr{clear:both;border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8;display:flex;justify-content:center;align-items:center;gap:16px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;z-index:10}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;font-family:inherit}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}button{display:none}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression — vérifiez le document ci-dessous</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
   <div class="hdr">
     ${buildEmetteurHeader(cfg)}
     <div style="text-align:right">
@@ -8982,16 +9049,18 @@ function buildAndPrintFacture(s, c, cfg){
   ${hist}
   ${s.notes?`<div style="clear:both;margin-top:14px;padding:8px 12px;background:#f9fafb;border-radius:6px;font-size:10px;color:#555;font-style:italic">Notes : ${esc(s.notes)}</div>`:''}
   <div class="ftr">
-    ${banqueFtr?banqueFtr+'<br>':''}
-    ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}<br>
-    ${cfg.mentionLegale||'Tout paiement tardif entraîne des pénalités légales.'}
+    <div style="flex:1;text-align:right">
+      ${banqueFtr?banqueFtr+'<br>':''}
+      ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}<br>
+      ${cfg.mentionLegale||'Tout paiement tardif entraîne des pénalités légales.'}
+    </div>
+    ${buildSecurityQR(cfg, 'FACTURE', s.numFacture||s.ref, totalTTC, s.dateFacture||s.date)}
   </div>
   </div></body></html>`;
 
   var w = window.open('','_blank','width=900,height=700');
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 600);
 }
 
 window.printFacture = async function(id){
@@ -9021,6 +9090,7 @@ window.printBL = async function(id){
     ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
   var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
   <title>BL ${esc(s.numBL||s.ref||'')}</title>
+  <\x73cript src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\x2fscript>
   <style>
     *{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}
     .doc{max-width:210mm;margin:0 auto;padding:12mm}
@@ -9038,9 +9108,13 @@ window.printBL = async function(id){
     tbody tr:nth-child(even){background:#f9fafb}
     .sign{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:50px;text-align:center;font-size:11px}
     .sbox{border-top:2px solid #ccc;padding-top:12px;color:#555}
-    .ftr{border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8}
-    @media print{@page{margin:10mm;size:A4}button{display:none}}
-  </style></head><body><div class="doc">
+    .ftr{border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8;display:flex;justify-content:center;align-items:center;gap:16px}
+    .preview-bar{position:sticky;top:0;background:#1e40af;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;z-index:10}
+    .preview-bar button{background:#fff;color:#1e40af;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;font-family:inherit}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}button{display:none}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression — vérifiez le document ci-dessous</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
   <div class="hdr">
     ${buildEmetteurHeader(cfg)}
     <div style="text-align:right">
@@ -9078,14 +9152,16 @@ window.printBL = async function(id){
     <div class="sbox">Signature & cachet client<br><em style="font-size:10px;color:#888">(Bon pour accord)</em><br><br></div>
   </div>
   <div class="ftr">
-    ${banqueFtr?banqueFtr+'<br>':''}
-    ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}
+    <div style="flex:1;text-align:right">
+      ${banqueFtr?banqueFtr+'<br>':''}
+      ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}
+    </div>
+    ${buildSecurityQR(cfg, 'BL', s.numBL||s.ref, s.totalHT||0, s.dateLiv||s.date)}
   </div>
   </div></body></html>`;
   var w = window.open('','_blank','width=900,height=700');
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
-  setTimeout(()=>w.print(), 600);
 };
 
 
@@ -10750,9 +10826,16 @@ window.deleteUser = async function(id){
   if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   if(currentUser?.id===id){ toast('Impossible de supprimer votre propre compte','err'); return; }
   if(!confirm('Supprimer définitivement cet utilisateur ? Cette action est irréversible.')) return;
+  const users = await getAll(S.USERS);
+  const u = users.find(x=>x.id===id);
+  // Désactiver le VRAI accès (avico_members) — sans ça, l'utilisateur "supprimé"
+  // pourrait toujours se connecter avec ses identifiants Supabase Auth existants.
+  if(u?.authUserId){
+    await supa.from('avico_members').update({ actif:false }).eq('user_id', u.authUserId).eq('org_id', SUPA_ORG);
+  }
   await delRec(S.USERS, id);
   document.getElementById('ovUser')?.remove();
-  toast('Utilisateur supprimé');
+  toast('Utilisateur supprimé — accès révoqué');
   settingsTab='users'; await switchSettingsTab('users');
 };
 
@@ -11899,12 +11982,11 @@ window.printEtatPeriodique = async function(type, preview=false){
   else if(type==='gmao') corps = buildCorpsGMAO(data, cfg);
   else if(type==='bilan') corps = buildCorpsBilan(data, cfg);
 
-  const html = buildDocumentImprimable(entreprise, corps, cfg, type, dateMin, dateMax, preview);
+  const html = buildDocumentImprimable(entreprise, corps, cfg, type, dateMin, dateMax, true);
   const w = window.open('','_blank','width=960,height=750');
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html);
   w.document.close();
-  if(!preview) setTimeout(()=>w.print(), 700);
 };
 
 // ── En-tête commun de document ──
@@ -11932,6 +12014,7 @@ function buildDocumentImprimable(ent, corps, cfg, type, dateMin, dateMax, previe
 
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
   <title>${ent.titreType} — ${fmtDate(dateMin)} au ${fmtDate(dateMax)}</title>
+  <\x73cript src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\x2fscript>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111;line-height:1.5}
@@ -11956,18 +12039,20 @@ function buildDocumentImprimable(ent, corps, cfg, type, dateMin, dateMax, previe
     .badge-warn{background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
     .badge-err{background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .ftr{border-top:2px solid #e5e7eb;margin-top:20px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center}
+    .ftr{border-top:2px solid #e5e7eb;margin-top:20px;padding-top:10px;font-size:9px;color:#9ca3af;display:flex;justify-content:center;align-items:center;gap:16px;text-align:center}
     .sign-zone{display:grid;grid-template-columns:1fr 1fr;gap:60px;margin-top:30px}
     .sign-box{border-top:2px solid #ccc;padding-top:10px;text-align:center;font-size:10px;color:#555}
     .print-btn{position:fixed;top:14px;right:14px;background:#1a5c2a;color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit}
+    .preview-tag{position:fixed;top:14px;left:14px;background:#fef3c7;color:#92400e;border:1px solid #fbbf24;padding:8px 14px;border-radius:8px;font-size:11px;font-weight:700}
     @media print{
       @page{margin:10mm;size:A4}
-      .print-btn,.no-print{display:none!important}
+      .print-btn,.no-print,.preview-tag{display:none!important}
       body{font-size:11px}
       .doc{padding:0}
       .kpis{grid-template-columns:repeat(4,1fr)}
     }
   </style></head><body>
+  <div class="preview-tag no-print">📄 Aperçu avant impression</div>
   ${preview?'<button class="print-btn no-print" onclick="window.print()"><i>🖨️</i> Imprimer</button>':''}
   <div class="doc">
     <div class="hdr">
@@ -11993,8 +12078,11 @@ function buildDocumentImprimable(ent, corps, cfg, type, dateMin, dateMax, previe
       <div class="sign-box">Visa Direction<br><em style="font-size:9px">(cachet + signature)</em><br><br></div>
     </div>
     <div class="ftr">
-      ${cfg.nomExploitation||'Sanix AviNest Pro'} — Sanix Africa Technologies — ${now}
-      ${cfg.mentionLegale?'<br>'+cfg.mentionLegale:''}
+      <div style="flex:1">
+        ${cfg.nomExploitation||'Sanix AviNest Pro'} — Sanix Africa Technologies — ${now}
+        ${cfg.mentionLegale?'<br>'+cfg.mentionLegale:''}
+      </div>
+      ${buildSecurityQR(cfg, ent.titreType, dateMin+'_'+dateMax, '', dateMax)}
     </div>
   </div></body></html>`;
 }
