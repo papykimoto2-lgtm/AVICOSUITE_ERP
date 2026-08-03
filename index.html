@@ -1200,6 +1200,38 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
+<!-- RATTRAPAGE HISTORIQUE MODAL -->
+<div class="overlay" id="mRattrapage">
+<div class="modal">
+  <h3>📅 Rattrapage historique</h3>
+  <p style="font-size:11px;color:var(--text3);margin:-6px 0 10px">Répartit des totaux sur une période pour reconstituer un historique manquant. À corriger ensuite au cas par cas via "Saisie du jour" si besoin.</p>
+  <div class="form-grid">
+    <div class="fg"><label>Date début *</label><input type="date" id="rgFrom"></div>
+    <div class="fg"><label>Date fin *</label><input type="date" id="rgTo"></div>
+  </div>
+  <div class="form-grid" id="rgLayerFields">
+    <div class="fg"><label>Total œufs pondus sur la période</label><input type="number" id="rgEggs" min="0" placeholder="ex: 38000"></div>
+    <div class="fg"><label>Dépôt destination</label><select id="rgDepot"></select></div>
+  </div>
+  <div class="form-grid" id="rgBroilerFields" style="display:none">
+    <div class="fg"><label>Poids moyen début période (g)</label><input type="number" id="rgW0" min="0" placeholder="ex: 40"></div>
+    <div class="fg"><label>Poids moyen fin période (g)</label><input type="number" id="rgW1" min="0" placeholder="ex: 1800"></div>
+  </div>
+  <div class="form-grid">
+    <div class="fg"><label>Mortalité totale sur la période</label><input type="number" id="rgMort" min="0" placeholder="0"></div>
+    <div class="fg"><label>Aliment total consommé (kg)</label><input type="number" id="rgFeed" min="0" placeholder="0"></div>
+    <div class="fg fg-full"><label>Type d'aliment</label><select id="rgFeedType"></select></div>
+  </div>
+  <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin:8px 0 4px">
+    <input type="checkbox" id="rgVar" checked> Variation réaliste jour/jour (±8%) plutôt qu'un plat linéaire
+  </label>
+  <div id="rgProgress" style="display:none;font-size:12px;color:var(--text3);margin-top:6px">Génération en cours…</div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mRattrapage')">Annuler</button>
+    <button class="btn btn-p" id="runRattrapageBtn" onclick="runRattrapage()"><i class="fas fa-magic"></i> Générer l'historique</button>
+  </div>
+</div></div>
+
 <!-- VACCINATION MODAL -->
 <div class="overlay" id="mVacc">
 <div class="modal">
@@ -4533,6 +4565,7 @@ async function renderLotSaisie(lot,kpi,el){
     +'<span>Vivants : <strong>'+kpi.vivants+' / '+lot.initialStock+'</strong></span>'
     +'<span>Moy. J-7 : <strong>'+kpi.mortMoy7.toFixed(1)+'/jour</strong></span>'
     +mortTodaySpan
+    +'<button class="btn btn-sm btn-gh" style="margin-left:auto" onclick="openRattrapageModal()"><i class="fas fa-calendar-plus"></i> Rattrapage historique</button>'
     +'</div>';
 
   // Get products for stock hints
@@ -4747,6 +4780,137 @@ window.saveWater=async()=>{
   if(!date||l<=0){toast('Données incomplètes','err');return;}
   await addRec(S.WATER,{flockId:lot.id,date,waterLiters:l,remarks:'',operatorId:currentUser?.id||1});
   toast(`✓ Eau — ${l}L`);await refreshLot();
+};
+
+// ── RATTRAPAGE HISTORIQUE — comble un historique manquant en répartissant
+//    des totaux (œufs, mortalité, aliment, poids) sur une plage de dates. ──
+window.openRattrapageModal=async function(){
+  const lot=window._lot;if(!lot) return;
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('rgFrom').min=lot.startDate;document.getElementById('rgFrom').max=today;
+  document.getElementById('rgTo').min=lot.startDate;document.getElementById('rgTo').max=today;
+  document.getElementById('rgFrom').value=lot.startDate;
+  document.getElementById('rgTo').value=today;
+  document.getElementById('rgLayerFields').style.display=lot.type==='layer'?'':'none';
+  document.getElementById('rgBroilerFields').style.display=lot.type==='layer'?'none':'';
+  document.getElementById('rgMort').value='';document.getElementById('rgFeed').value='';
+  if(lot.type==='layer'){
+    const deps=await getAll(S.DEPOTS);
+    const defDep=deps.find(d=>d.type==='produit_fini')||deps[0];
+    document.getElementById('rgDepot').innerHTML=deps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
+    if(defDep) document.getElementById('rgDepot').value=defDep.id;
+    document.getElementById('rgEggs').value='';
+  } else {
+    document.getElementById('rgW0').value='';document.getElementById('rgW1').value='';
+  }
+  const prods=await getAll(S.PRODUITS);
+  const aliProds=prods.filter(p=>p.categorie==='aliment');
+  document.getElementById('rgFeedType').innerHTML=aliProds.map(p=>`<option value="${esc(p.nom)}">${esc(p.nom)}</option>`).join('')
+    ||'<option>Aliment ponte 116</option><option>Aliment finition F3</option>';
+  openOverlay('mRattrapage');
+};
+
+function _rgDateRange(from,to){
+  const days=[];const d=new Date(from);const end=new Date(to);
+  while(d<=end){days.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}
+  return days;
+}
+// Répartit `total` (entier) sur n jours, avec variation ±pct optionnelle,
+// en garantissant que la somme exacte vaut `total`.
+function _rgSpread(total,n,varyPct){
+  if(n<=0||total<=0) return [];
+  const base=total/n;
+  let vals=[];
+  for(let i=0;i<n;i++){
+    const noise=varyPct?(1+(Math.random()*2-1)*varyPct):1;
+    vals.push(Math.max(0,base*noise));
+  }
+  const sum=vals.reduce((a,b)=>a+b,0);
+  vals=vals.map(v=>Math.round(v*total/sum));
+  let diff=total-vals.reduce((a,b)=>a+b,0);
+  let i=0;while(diff!==0&&vals.length){const idx=i%vals.length;const step=diff>0?1:-1;if(vals[idx]+step>=0){vals[idx]+=step;diff-=step;}i++;if(i>10000)break;}
+  return vals;
+}
+// Répartit une mortalité totale sur un sous-ensemble aléatoire de jours
+// (occurrences réalistes plutôt qu'un mort chaque jour).
+function _rgSpreadMortality(total,n){
+  const perDay=new Array(n).fill(0);
+  if(total<=0||n<=0) return perDay;
+  const activeDays=Math.max(1,Math.min(n,Math.round(n*0.35)));
+  const idxPool=[...Array(n).keys()].sort(()=>Math.random()-0.5).slice(0,activeDays);
+  let remaining=total;
+  for(let k=0;k<idxPool.length&&remaining>0;k++){
+    const isLast=k===idxPool.length-1;
+    const amt=isLast?remaining:Math.max(1,Math.round((total/idxPool.length)*(0.5+Math.random())));
+    const take=Math.min(amt,remaining);
+    perDay[idxPool[k]]+=take;remaining-=take;
+  }
+  if(remaining>0) perDay[idxPool[idxPool.length-1]]+=remaining;
+  return perDay;
+};
+window.runRattrapage=async function(){
+  const lot=window._lot;if(!lot) return;
+  const from=document.getElementById('rgFrom').value, to=document.getElementById('rgTo').value;
+  if(!from||!to||from>to){toast('Plage de dates invalide','err');return;}
+  const days=_rgDateRange(from,to);
+  const vary=document.getElementById('rgVar').checked?0.08:0;
+  const totMort=parseInt(document.getElementById('rgMort').value)||0;
+  const totFeed=parseFloat(document.getElementById('rgFeed').value)||0;
+  const feedType=document.getElementById('rgFeedType').value;
+  if(totMort>=lot.initialStock){toast('Mortalité supérieure à l\'effectif initial','err');return;}
+
+  const btn=document.getElementById('runRattrapageBtn');btn.disabled=true;
+  const prog=document.getElementById('rgProgress');prog.style.display='block';
+
+  // Mortalité — occurrences réparties aléatoirement, pas un mort chaque jour
+  const mortPerDay=_rgSpreadMortality(totMort,days.length);
+  for(let i=0;i<days.length;i++){
+    if(mortPerDay[i]>0){
+      await addRec(S.MORTALITE,{flockId:lot.id,date:days[i],nbMorts:mortPerDay[i],cause:'inconnu',
+        observations:'Rattrapage historique',operatorId:currentUser?.id||1,ts:Date.now()});
+    }
+    if(i%20===0) prog.textContent=`Mortalité… ${i+1}/${days.length}`;
+  }
+
+  // Aliment — consommation quotidienne continue
+  if(totFeed>0){
+    const feedPerDay=_rgSpread(Math.round(totFeed),days.length,vary);
+    for(let i=0;i<days.length;i++){
+      if(feedPerDay[i]>0) await addRec(S.FEEDING,{flockId:lot.id,date:days[i],quantityKg:feedPerDay[i],feedType,operatorId:currentUser?.id||1});
+      if(i%20===0) prog.textContent=`Aliment… ${i+1}/${days.length}`;
+    }
+  }
+
+  if(lot.type==='layer'){
+    const totEggs=parseInt(document.getElementById('rgEggs').value)||0;
+    const depotDestId=parseInt(document.getElementById('rgDepot').value)||0;
+    if(totEggs>0){
+      const eggsPerDay=_rgSpread(totEggs,days.length,vary);
+      for(let i=0;i<days.length;i++){
+        if(eggsPerDay[i]>0){
+          await addRec(S.EGG_PROD,{flockId:lot.id,date:days[i],eggCount:eggsPerDay[i],eggsBroken:0,mortality:0,
+            operatorId:currentUser?.id||1,cal_petit:0,cal_moyen:0,cal_gros:0,cal_tres_gros:0});
+        }
+        if(i%20===0) prog.textContent=`Ponte… ${i+1}/${days.length}`;
+      }
+    }
+  } else {
+    const w0=parseFloat(document.getElementById('rgW0').value)||0;
+    const w1=parseFloat(document.getElementById('rgW1').value)||0;
+    if(w0>0&&w1>0){
+      // Une pesée par semaine, interpolation linéaire entre poids début/fin
+      for(let i=0;i<days.length;i+=7){
+        const ratio=days.length>1?i/(days.length-1):0;
+        const w=Math.round(w0+(w1-w0)*ratio);
+        await addRec(S.GROWTH_PROD,{flockId:lot.id,date:days[i],avgWeight:w,mortality:0,operatorId:currentUser?.id||1});
+      }
+    }
+  }
+
+  prog.style.display='none';btn.disabled=false;
+  closeOverlay('mRattrapage');
+  toast('✅ Historique reconstitué sur '+days.length+' jour(s)');
+  await refreshLot();
 };
 
 // ── PROPHYLAXIE ──
