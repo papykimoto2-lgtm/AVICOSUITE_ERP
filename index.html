@@ -12146,9 +12146,10 @@ function buildCorpsProdCond(data, cfg){
 function genRapportTexte(d, format='whatsapp'){
   const NL = '\n';
   const SEP = format==='whatsapp' ? '━━━━━━━━━━━━━━━━' : '────────────────';
-  const titres = {jour:'RAPPORT JOURNALIER', semaine:'RAPPORT HEBDOMADAIRE', mois:'RAPPORT MENSUEL'};
+  const titres = {jour:'RAPPORT JOURNALIER', semaine:'RAPPORT HEBDOMADAIRE', mois:'RAPPORT MENSUEL', annee:'RAPPORT ANNUEL'};
   const periode = d.type==='jour' ? d.todayStr
     : d.type==='semaine' ? `${d.dateMin} → ${d.todayStr}`
+    : d.type==='annee' ? d.dateMin.slice(0,4)
     : `${d.dateMin.slice(0,7)}`;
 
   let t = '';
@@ -12228,6 +12229,54 @@ function envoyerEmail(texte, email, sujet){
   const url = `mailto:${email}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
   window.location.href = url;
 }
+
+// ── Génération + envoi d'un rapport périodique (boutons WA/Email de l'onglet "Rapports & Envoi") ──
+window.envoyerRapport = async function(type, canal){
+  const cfg = getRapportConfig();
+  const data = await collectRapportData(type);
+  const texte = genRapportTexte(data, canal==='whatsapp'?'whatsapp':'email');
+  const titres = {jour:'Rapport journalier', semaine:'Rapport hebdomadaire', mois:'Rapport mensuel', annee:'Rapport annuel'};
+  const lbl = titres[type]||'Rapport';
+  if(canal==='whatsapp'){
+    const num = cfg.whatsapp || prompt('Numéro WhatsApp (avec indicatif, ex: +225XXXXXXXXXX) :');
+    if(!num) return;
+    envoyerWhatsApp(texte, num);
+  } else {
+    const email = cfg.email || prompt('Adresse email :');
+    if(!email) return;
+    envoyerEmail(texte, email, lbl+' — '+(cfg.nom||'Sanix AviNest'));
+  }
+  toast('📤 '+lbl+' préparé pour envoi');
+};
+
+// ── Enregistrer destinations + planification d'envoi auto (un seul formulaire réparti sur 2 cartes) ──
+window.sauvegarderCfgRapport = function(){
+  const cfg = getRapportConfig();
+  const val  = id => document.getElementById(id)?.value.trim();
+  const chk  = id => !!document.getElementById(id)?.checked;
+  const next = {
+    ...cfg,
+    whatsapp: val('cfgWhatsapp') ?? cfg.whatsapp,
+    email:    val('cfgEmail')    ?? cfg.email,
+    nom:      val('cfgNom')      ?? cfg.nom,
+    autoActif:   chk('cfgAutoActif'),
+    autoJour:    chk('cfgAutoJour'),    heureJour:    val('cfgHeureJour')    || cfg.heureJour    || '18:00',
+    autoSemaine: chk('cfgAutoSemaine'), heureSemaine: val('cfgHeureSemaine') || cfg.heureSemaine || '07:00',
+    autoMois:    chk('cfgAutoMois'),    heureMois:    val('cfgHeureMois')    || cfg.heureMois    || '07:00',
+  };
+  saveRapportConfig(next);
+  toast('Configuration enregistrée');
+  stopRapportAuto(); startRapportAuto();
+};
+
+// ── Activer/désactiver l'envoi auto immédiatement (sans attendre "Enregistrer") ──
+window.toggleAutoRapport = function(checked){
+  const cfg = getRapportConfig();
+  cfg.autoActif = checked;
+  saveRapportConfig(cfg);
+  if(checked){ startRapportAuto(); toast('🤖 Envoi automatique activé'); }
+  else{ stopRapportAuto(); toast('Envoi automatique désactivé'); }
+};
 
 // ── Programmation auto (localStorage + setInterval) ──
 let _rapportIntervals = [];
@@ -12526,8 +12575,14 @@ window.printEtatPeriodique = async function(type, preview=false){
   if(lotId){
     data.eggsP     = data.eggsP.filter(e=>String(e.flockId)===String(lotId));
     data.mortsP    = data.mortsP.filter(m=>String(m.flockId)===String(lotId));
-    data.salesP    = data.salesP;
     data.oeufsByLot = data.oeufsByLot.filter(b=>String(data.flocks.find(f=>f.nom===b.nom)?.id)===String(lotId));
+    // Les KPI de synthèse doivent suivre le filtre, sinon ils affichent encore le total tous-lots
+    // alors que le tableau détaillé juste en-dessous, lui, n'affiche que le lot sélectionné.
+    data.totalOeufs = data.eggsP.reduce((a,e)=>a+(e.eggCount||0),0);
+    data.totalMorts = data.mortsP.reduce((a,m)=>a+(m.nbMorts||0),0);
+    const selLot = data.flocks.find(f=>String(f.id)===String(lotId));
+    data.lotsLayer = selLot&&selLot.type==='layer' ? [selLot] : [];
+    data.lotsBroiler = selLot&&selLot.type==='broiler' ? [selLot] : [];
   }
 
   const entreprise = buildEnteteEtat(cfg, type, dateMin, dateMax);
