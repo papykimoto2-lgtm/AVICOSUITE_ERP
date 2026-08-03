@@ -883,7 +883,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <div class="login-title">Bienvenue 👋</div>
       <div class="login-subtitle">Connectez-vous à votre espace de gestion</div>
 
-      <div id="loginError" class="login-error" style="display:none"><i class="fas fa-exclamation-circle" style="margin-right:6px"></i><span id="loginErrorMsg">Email ou mot de passe incorrect.</span></div>
+      <div id="loginError" class="login-error" style="display:none"><i class="fas fa-exclamation-circle" style="margin-right:6px"></i><span id="loginErrorMsg">Nom d'utilisateur ou mot de passe incorrect.</span></div>
 
       <form onsubmit="doLogin();return false" autocomplete="on">
       <div class="login-field-wrap">
@@ -3152,7 +3152,7 @@ window.openUserModal = async function(id){
     return '<option value="'+k+'"'+(u&&u.role===k?' selected':'')+'>'+v.label+'</option>';
   }).join('');
   var secBtn = (u&&!isMe)
-    ? '<button class="btn btn-s btn-sm" style="margin-top:10px;min-height:38px" onclick="resetUserPassword('+u.id+')"><i class="fas fa-key"></i> Réinitialiser → 1234</button>'
+    ? '<button class="btn btn-s btn-sm" style="margin-top:10px;min-height:38px" onclick="resetUserPassword('+u.id+')"><i class="fas fa-key"></i> Réinitialiser → 123456</button>'
     : '';
   var secInfo = u
     ? '<div style="margin-top:12px;padding:8px 12px;background:#f8f9fa;border-radius:8px;font-size:11px;color:var(--text3)">Dernière connexion : <strong>'+(u.dernierAcces?new Date(u.dernierAcces).toLocaleString('fr-FR'):'Jamais')+'</strong>'+(u.forceChangePwd?'<div style="color:#d97706;margin-top:3px">⚠️ Changement de mot de passe requis</div>':'')+'</div>'
@@ -3210,6 +3210,24 @@ window.openUserModal = async function(id){
 };
 
 
+// ── Modifier un membre de l'organisation (rôle/statut/nom) via l'Edge Function
+//    "update-staff-member" — jamais en direct sur avico_members, pour ne pas
+//    dépendre des policies RLS de cette table (non garanties depuis ce fichier). ──
+async function callUpdateStaffMember(targetUserId, updates){
+  const { data:{ session } } = await supa.auth.getSession();
+  if(!session) return { error:'Session expirée, reconnectez-vous' };
+  try{
+    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/update-staff-member', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+session.access_token},
+      body: JSON.stringify({ org_id:SUPA_ORG, target_user_id:targetUserId, ...updates })
+    });
+    const result = await resp.json().catch(()=>({}));
+    if(!resp.ok || result.error) return { error: result.error||"vérifiez que l'Edge Function \"update-staff-member\" est bien déployée." };
+    return { ok:true };
+  }catch(e){ return { error:e.message }; }
+}
+
 window.saveUser = async function(id){
   if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
   const nom      = document.getElementById('uNom')?.value.trim();
@@ -3240,9 +3258,10 @@ window.saveUser = async function(id){
     data.pwd = existing?.pwd; // champ conservé pour compat, non utilisé pour l'authentification
     data.dernierAcces = existing?.dernierAcces||null;
     await updRec(S.USERS, parseInt(id), data);
-    // Répercuter rôle/statut sur avico_members (accès réel à l'app)
+    // Répercuter rôle/statut sur avico_members (accès réel à l'app) via Edge Function
     if(existing?.authUserId){
-      await supa.from('avico_members').update({ role, actif, nom }).eq('user_id', existing.authUserId).eq('org_id', SUPA_ORG);
+      const r = await callUpdateStaffMember(existing.authUserId, { role, actif, nom });
+      if(r.error) toast('⚠️ Fiche locale mise à jour, mais accès réel non synchronisé : '+r.error, 'err');
     }
     toast('✅ Utilisateur mis à jour');
   } else {
@@ -3322,7 +3341,8 @@ window.toggleUserActif = async function(id, currentlyActif){
   if(!u) return;
   await updRec(S.USERS, id, {...u, actif:!currentlyActif});
   if(u.authUserId){
-    await supa.from('avico_members').update({ actif:!currentlyActif }).eq('user_id', u.authUserId).eq('org_id', SUPA_ORG);
+    const r = await callUpdateStaffMember(u.authUserId, { actif:!currentlyActif });
+    if(r.error){ toast('⚠️ Fiche locale mise à jour, mais accès réel non synchronisé : '+r.error, 'err'); return; }
   }
   toast(currentlyActif?'Utilisateur désactivé — accès révoqué':'Utilisateur activé — accès rétabli');
   settingsTab='users'; await switchSettingsTab('users');
@@ -10831,7 +10851,8 @@ window.deleteUser = async function(id){
   // Désactiver le VRAI accès (avico_members) — sans ça, l'utilisateur "supprimé"
   // pourrait toujours se connecter avec ses identifiants Supabase Auth existants.
   if(u?.authUserId){
-    await supa.from('avico_members').update({ actif:false }).eq('user_id', u.authUserId).eq('org_id', SUPA_ORG);
+    const r = await callUpdateStaffMember(u.authUserId, { actif:false });
+    if(r.error){ toast('⚠️ Erreur lors de la révocation de l\'accès réel : '+r.error, 'err'); return; }
   }
   await delRec(S.USERS, id);
   document.getElementById('ovUser')?.remove();
@@ -10841,23 +10862,43 @@ window.deleteUser = async function(id){
 
 window.resetUserPassword = async function(id){
   if(currentUser?.role!=='admin'){ toast('⛔ Réservé à l\'Administrateur','err'); return; }
-  if(!confirm('Réinitialiser le mot de passe de cet utilisateur → 1234 ?')) return;
+  if(!confirm('Réinitialiser le mot de passe de cet utilisateur → 123456 ?')) return;
   const users = await getAll(S.USERS);
   const u = users.find(x=>x.id===id);
   if(!u) return;
-  await updRec(S.USERS, id, {...u, pwd:await hashPwd('1234'), forceChangePwd:true});
-  toast('✅ Mot de passe → 1234 · Changement forcé activé');
+  if(!u.authUserId){
+    toast("Cet utilisateur n'a pas de compte de connexion réel (créé avant la mise à jour) — supprimez-le et recréez-le.",'err');
+    return;
+  }
+  const { data:{ session } } = await supa.auth.getSession();
+  if(!session){ toast('Session expirée, reconnectez-vous','err'); return; }
+  try{
+    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/reset-staff-password', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+session.access_token},
+      body: JSON.stringify({ org_id:SUPA_ORG, target_user_id:u.authUserId, new_password:'123456' })
+    });
+    const result = await resp.json().catch(()=>({}));
+    if(!resp.ok || result.error){
+      toast('Erreur : '+(result.error||"vérifiez que l'Edge Function \"reset-staff-password\" est bien déployée."),'err');
+      return;
+    }
+  }catch(e){ toast('Erreur : '+e.message,'err'); return; }
+  await updRec(S.USERS, id, {...u, forceChangePwd:true});
+  toast('✅ Mot de passe → 123456 · Changement forcé activé');
 };
 
 window.saveForcePwd = async function(id){
   const p1 = document.getElementById('fpNewPwd')?.value;
   const p2 = document.getElementById('fpConfPwd')?.value;
-  if(!p1||p1.length<4){ toast('Mot de passe trop court (min 4 car.)','err'); return; }
+  if(!p1||p1.length<6){ toast('Mot de passe trop court (min 6 car.)','err'); return; }
   if(p1!==p2){ toast('Les mots de passe ne correspondent pas','err'); return; }
+  // Changer le VRAI mot de passe de connexion (autorisé : chacun peut changer le sien)
+  const { error } = await supa.auth.updateUser({ password:p1 });
+  if(error){ toast('Erreur : '+error.message,'err'); return; }
   const users = await getAll(S.USERS);
   const u = users.find(x=>x.id===id);
-  if(!u) return;
-  await updRec(S.USERS, id, {...u, pwd:await hashPwd(p1), forceChangePwd:false});
+  if(u) await updRec(S.USERS, id, {...u, forceChangePwd:false});
   document.getElementById('ovForcePwd')?.remove();
   toast('✅ Mot de passe mis à jour');
 };
@@ -10872,7 +10913,7 @@ function checkForceChangePwd(user){
       <h3>Changement de mot de passe requis</h3>
       <p style="font-size:12px;color:var(--text3);margin-bottom:16px">L'administrateur exige que vous changiez votre mot de passe avant de continuer.</p>
       <div class="form-grid" style="text-align:left">
-        <div class="fg"><label>Nouveau mot de passe *</label><input id="fpNewPwd" type="password" placeholder="Min. 4 caractères"></div>
+        <div class="fg"><label>Nouveau mot de passe *</label><input id="fpNewPwd" type="password" placeholder="Min. 6 caractères"></div>
         <div class="fg"><label>Confirmer *</label><input id="fpConfPwd" type="password" placeholder="••••••••"></div>
       </div>
       <button class="btn btn-p" style="width:100%;margin-top:12px;min-height:46px" onclick="saveForcePwd(${user.id})"><i class="fas fa-save"></i> Enregistrer</button>
