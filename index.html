@@ -4583,7 +4583,6 @@ async function renderLotSaisie(lot,kpi,el){
     const defDep=allDeps.find(d=>d.type==='produit_fini')||allDeps[0];
     prodForm=`<div class="card"><div class="card-hd"><span>🥚 Ponte du jour</span></div><div class="card-bd">
       <div class="form-grid">
-        <div class="fg"><label>Date *</label><input type="date" id="sDate" value="${today}"></div>
         <div class="fg"><label>Oeufs pondus *</label><input type="number" id="sEggs" placeholder="0" min="0" oninput="updateCalibreHint()"></div>
         <div class="fg"><label>Casses collecte</label><input type="number" id="sCassesColl" placeholder="0" min="0"></div>
         <div class="fg"><label>Depot destination *</label><select id="sDepotDest">${depOpts}</select></div>
@@ -4623,7 +4622,6 @@ async function renderLotSaisie(lot,kpi,el){
   const lastMorts=kpi.mortRecords.slice(-5).reverse();
   const mortFormHtml=`
     <div class="form-grid" style="margin-bottom:10px">
-      <div class="fg"><label>Date *</label><input type="date" id="mDate" value="${today}"></div>
       <div class="fg"><label>💀 Nb sujets morts *</label><input type="number" id="mNb" placeholder="0" min="1" oninput="previewMort()"></div>
       <div class="fg"><label>Cause</label>
         <select id="mCause">
@@ -4660,7 +4658,13 @@ async function renderLotSaisie(lot,kpi,el){
     </table>`:'<div style="color:var(--text3);text-align:center;padding:10px;font-size:12px">Aucune mortalité enregistrée</div>'}
   `;
 
-  el.innerHTML=`${mortBand}${nutBand}
+  const sjDateBand=`<div id="sjDateBand" style="display:flex;gap:12px;align-items:center;background:#eef2ff;border:1px solid #a5b4fc;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+    <label style="font-size:12px;font-weight:700;color:#3730a3;white-space:nowrap">📅 Date de la saisie du jour</label>
+    <input type="date" id="sjDate" value="${today}" max="${today}" style="max-width:160px" onchange="updateSjDateWarn()">
+    <span id="sjDateWarn" style="display:none;font-size:11px;font-weight:700;color:var(--red)">⚠ Différente d'aujourd'hui — utilisée pour Mortalité, Ponte et Alimentation ci-dessous</span>
+  </div>`;
+
+  el.innerHTML=`${sjDateBand}${mortBand}${nutBand}
     <div class="card" style="margin-bottom:14px;border:2px solid #fca5a5">
       <div class="card-hd" style="background:linear-gradient(135deg,#fff0f0,#ffe4e4);border-bottom:1px solid #fca5a5">
         <span style="color:var(--red);font-weight:700;font-size:14px">💀 Saisie des mortalités</span>
@@ -4673,7 +4677,6 @@ async function renderLotSaisie(lot,kpi,el){
       <div>
         <div class="card"><div class="card-hd"><span>🌾 Alimentation</span></div><div class="card-bd">
           <div class="form-grid">
-            <div class="fg"><label>Date</label><input type="date" id="fDate" value="${today}"></div>
             <div class="fg"><label>Quantité (kg)</label><input type="number" id="fKg" value="${recFeed}" step="0.1" class="rec-inp"></div>
             <div class="fg fg-full"><label>Type d'aliment</label>
               <select id="fType" onchange="showFeedStock()">${aliOpts||`<option>Aliment ponte 116</option><option>Aliment finition F3</option>`}</select>
@@ -4722,7 +4725,7 @@ window.updateMortDisplay=function(){
 };
 window.savePonte=async function(){
   var lot=window._lot;
-  var date=document.getElementById('sDate').value;
+  var date=document.getElementById('sjDate').value;
   var eggs=parseInt(document.getElementById('sEggs').value)||0;
   var cassesColl=parseInt(document.getElementById('sCassesColl')?.value)||0;
   var depotDestId=parseInt(document.getElementById('sDepotDest')?.value)||0;
@@ -4764,7 +4767,7 @@ window.saveAbattage=async()=>{
   toast(`✓ Abattage — ${kg}kg`);await refreshLot();
 };
 window.saveFeed=async()=>{
-  const lot=window._lot;const date=document.getElementById('fDate').value;
+  const lot=window._lot;const date=document.getElementById('sjDate').value;
   const kg=parseFloat(document.getElementById('fKg').value)||0;
   const type=document.getElementById('fType').value;
   if(!date||kg<=0){toast('Données incomplètes','err');return;}
@@ -6804,9 +6807,15 @@ window.previewMort=function(){
     +' · Vivants restants : <strong>'+newViv+'</strong>';
 };
 
+window.updateSjDateWarn=function(){
+  const inp=document.getElementById('sjDate');const warn=document.getElementById('sjDateWarn');
+  if(!inp||!warn) return;
+  const today=new Date().toISOString().slice(0,10);
+  warn.style.display=inp.value!==today?'inline':'none';
+};
 window.saveMortalite=async()=>{
   const lot=window._lot;
-  const date=document.getElementById('mDate')?.value;
+  const date=document.getElementById('sjDate')?.value;
   const nb=parseInt(document.getElementById('mNb')?.value)||0;
   const cause=document.getElementById('mCause')?.value||'inconnu';
   const obs=document.getElementById('mObs')?.value.trim()||'';
