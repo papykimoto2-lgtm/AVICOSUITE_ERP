@@ -2239,12 +2239,13 @@ CREATE TABLE IF NOT EXISTS avico_audit (
 CREATE INDEX IF NOT EXISTS idx_avico_audit_lookup ON avico_audit(store, record_id, ts DESC);
 
 CREATE OR REPLACE FUNCTION avico_audit_trigger() RETURNS TRIGGER AS $$
-DECLARE claims json;
+DECLARE actor_org TEXT; actor_rl TEXT;
 BEGIN
-  claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true),''), '{}')::json;
+  SELECT m.org_id, m.role INTO actor_org, actor_rl FROM avico_members m
+    WHERE m.user_id = auth.uid() AND m.actif IS NOT FALSE LIMIT 1;
   INSERT INTO avico_audit(record_id,store,org_id,action,actor_org_id,actor_role,actor_sub,old_data,new_data)
   VALUES(COALESCE(NEW.id,OLD.id), COALESCE(NEW.store,OLD.store), COALESCE(NEW.org_id,OLD.org_id),
-         lower(TG_OP), claims->>'org_id', claims->>'user_role', claims->>'sub',
+         lower(TG_OP), actor_org, actor_rl, auth.uid()::text,
          CASE WHEN TG_OP<>'INSERT' THEN OLD.data END,
          CASE WHEN TG_OP<>'DELETE' THEN NEW.data END);
   RETURN COALESCE(NEW,OLD);
@@ -2255,28 +2256,40 @@ CREATE TRIGGER avico_audit_trg
   AFTER INSERT OR UPDATE OR DELETE ON avico_records
   FOR EACH ROW EXECUTE FUNCTION avico_audit_trigger();
 
--- 5. ROW LEVEL SECURITY — isolation réelle par org_id, via JWT signé par l'Edge Function staff-login
---    ⚠️ Déploiement en 2 temps obligatoire :
---    a) exécuter ce script (anon perd tout accès direct)
---    b) déployer staff-login + bootstrap-org AVANT de couper l'accès anon en prod,
---       sinon plus personne ne peut se connecter tant que les Edge Functions ne sont pas actives.
+-- 5. ROW LEVEL SECURITY — isolation réelle par org_id, via la table avico_members
+--    (auth Supabase native : le SDK gère JWT/session, aucun claim personnalisé
+--    n'est émis. L'org réelle d'un utilisateur vient de avico_members.user_id = auth.uid(),
+--    exactement comme le lit déjà loadMembership() côté client — jamais du JWT.)
 ALTER TABLE avico_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE avico_records FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "avico_anon_access" ON avico_records;
+DROP POLICY IF EXISTS "avico_org_isolation" ON avico_records;
 REVOKE ALL ON avico_records FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON avico_records TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE avico_records_id_seq TO authenticated;
 
 CREATE POLICY "avico_org_isolation" ON avico_records
   FOR ALL TO authenticated
-  USING (org_id = (current_setting('request.jwt.claims', true)::json->>'org_id'))
-  WITH CHECK (org_id = (current_setting('request.jwt.claims', true)::json->>'org_id'));
+  USING (org_id IN (
+    SELECT m.org_id FROM avico_members m
+    WHERE m.user_id = auth.uid() AND m.actif IS NOT FALSE
+  ))
+  WITH CHECK (org_id IN (
+    SELECT m.org_id FROM avico_members m
+    WHERE m.user_id = auth.uid() AND m.actif IS NOT FALSE
+  ));
 
 -- 5bis. org_id imposé serveur — empêche l'écriture croisée même authentifié
 CREATE OR REPLACE FUNCTION avico_force_org_id() RETURNS TRIGGER AS $$
+DECLARE real_org TEXT;
 BEGIN
-  NEW.org_id := COALESCE(current_setting('request.jwt.claims', true)::json->>'org_id', NEW.org_id);
+  SELECT m.org_id INTO real_org FROM avico_members m
+    WHERE m.user_id = auth.uid() AND m.actif IS NOT FALSE
+    LIMIT 1;
+  IF real_org IS NOT NULL THEN
+    NEW.org_id := real_org;
+  END IF;
   RETURN NEW;
 END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -11467,7 +11480,7 @@ window.testSupaConnection = async function(){
       // ── Cas où l'utilisateur teste une AUTRE URL/clé (avant de changer de projet) ──
       // Sans session, seul un test de base (URL/clé valides, projet joignable) est possible :
       // la lecture de données réelles nécessitera toujours une connexion utilisateur.
-      const testClient = window.supabase.createClient(url, key);
+      const testClient = window.supabase.createClient(url, key, { auth:{ persistSession:false, autoRefreshToken:false } });
       const {error} = await testClient.auth.getSession();
       if(error) throw error;
       const ms = Math.round(performance.now()-t0);
@@ -11486,15 +11499,33 @@ window.testSupaSync = async function(){
   const t0 = performance.now();
   try{
     if(!window.supabase) throw new Error('Librairie Supabase non chargée');
-    const testClient = window.supabase.createClient(url, key);
+
+    const isCurrentConfig = (url === SUPA_URL) && (key === SUPA_KEY) && (org === SUPA_ORG);
+    let client;
+    if(isCurrentConfig && supa){
+      // ── Cas normal : on réutilise la session déjà authentifiée ──
+      // Un client anonyme fraîchement créé échouera TOUJOURS ici (permission denied),
+      // car l'accès anonyme est révoqué par design (RLS) : il faut la session utilisateur.
+      const { data:{ session } } = await supa.auth.getSession();
+      if(!session){
+        supaResultBox('⚠️ Vous n\'êtes pas connecté — reconnectez-vous pour tester la synchronisation.', false);
+        return;
+      }
+      client = supa;
+    } else {
+      // Autre projet/organisation que celui en session : test d'écriture non authentifié impossible.
+      supaResultBox('⚠️ Ce test nécessite une session utilisateur active sur ce projet/organisation. Enregistrez d\'abord cette configuration puis reconnectez-vous avant de tester la synchronisation.', false);
+      return;
+    }
+
     const marker = 'ping_'+uid();
-    const {data:ins, error:errIns} = await testClient.from('avico_records')
+    const {data:ins, error:errIns} = await client.from('avico_records')
       .insert({store:'_test_ping', org_id:org, data:{marker, ts:Date.now()}}).select('id').single();
     if(errIns) throw errIns;
-    const {data:sel, error:errSel} = await testClient.from('avico_records').select('id,data').eq('id',ins.id).maybeSingle();
+    const {data:sel, error:errSel} = await client.from('avico_records').select('id,data').eq('id',ins.id).maybeSingle();
     if(errSel) throw errSel;
     if(!sel || sel.data?.marker!==marker) throw new Error('Enregistrement relu introuvable ou corrompu');
-    await testClient.from('avico_records').delete().eq('id',ins.id);
+    await client.from('avico_records').delete().eq('id',ins.id);
     const ms = Math.round(performance.now()-t0);
     supaResultBox(`✅ Synchronisation OK (${ms} ms) — écriture, lecture et suppression validées sur org_id <code>${esc(org)}</code>.`, true);
   }catch(e){
@@ -14610,7 +14641,6 @@ window.goTo = function(page){
   setTimeout(()=>{
     const btn = document.getElementById('mobLotsFloatBtn');
     if(btn) btn.style.display = (isMobile() && page==='lots') ? 'flex' : 'none';
-    if(page==='lots') mobInjectLotsBtn();
   }, 250);
 };
 
