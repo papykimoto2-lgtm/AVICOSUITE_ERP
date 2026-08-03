@@ -913,11 +913,42 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
         <i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter
       </button>
 
+      <div style="text-align:center;margin-top:14px">
+        <a href="javascript:void(0)" onclick="openOverlay('ovBootstrap')" style="font-size:11px;color:#1a4731;font-weight:600">
+          <i class="fas fa-rocket"></i> Premier lancement — Créer le compte administrateur
+        </a>
+      </div>
+
       <div class="login-copyright">© 2025 Sanix Africa Technologies · Tous droits réservés</div>
     </div>
   </div>
 
 </div>
+
+<!-- ══ Création du premier compte admin (Edge Function bootstrap-org) ══
+     Refuse côté serveur si l'organisation a déjà au moins un utilisateur —
+     utilisable sans risque même après le premier lancement. ── -->
+<div class="overlay" id="ovBootstrap">
+  <div class="modal" style="max-width:420px">
+    <h3><i class="fas fa-rocket"></i> Créer l'accès administrateur</h3>
+    <div style="font-size:11px;color:#666;margin-bottom:14px;line-height:1.6">
+      Crée le premier compte de l'organisation « <strong id="bsOrgLabel"></strong> ».
+      Ne fonctionne qu'une seule fois : refusé si un compte existe déjà.
+    </div>
+    <div class="form-grid" style="grid-template-columns:1fr">
+      <div class="fg"><label>Nom complet *</label><input id="bsNom" placeholder="ex: Cyrille Kessié"></div>
+      <div class="fg"><label>Email *</label><input id="bsEmail" type="email" placeholder="admin@votre-exploitation.ci"></div>
+      <div class="fg"><label>Mot de passe *</label><input id="bsPwd" type="password" placeholder="12 caractères minimum" autocomplete="new-password"></div>
+      <div class="fg"><label>Confirmer le mot de passe *</label><input id="bsPwd2" type="password" autocomplete="new-password"></div>
+    </div>
+    <div id="bsError" style="display:none;color:#c1121f;font-size:11px;margin-top:6px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-s" onclick="closeOverlay('ovBootstrap')">Annuler</button>
+      <button class="btn btn-p" id="bsSubmitBtn" onclick="submitBootstrap()"><i class="fas fa-check"></i> Créer l'accès</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- ══ Écran bloquant : configuration obligatoire de l'organisation ══
      Tant qu'aucun org_id personnalisé n'est enregistré en local, l'app utiliserait
@@ -2645,6 +2676,47 @@ window.doLogin = async function(){
   }
   btn.disabled=false;
   btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
+};
+
+window.submitBootstrap = async function(){
+  const nom   = document.getElementById('bsNom')?.value.trim();
+  const email = document.getElementById('bsEmail')?.value.trim().toLowerCase();
+  const pwd   = document.getElementById('bsPwd')?.value||'';
+  const pwd2  = document.getElementById('bsPwd2')?.value||'';
+  const errEl = document.getElementById('bsError');
+  const btn   = document.getElementById('bsSubmitBtn');
+  errEl.style.display='none';
+
+  if(!nom||!email||!pwd){ errEl.textContent='Tous les champs sont requis.'; errEl.style.display='block'; return; }
+  if(pwd.length<12){ errEl.textContent='Mot de passe : 12 caractères minimum.'; errEl.style.display='block'; return; }
+  if(pwd!==pwd2){ errEl.textContent='Les mots de passe ne correspondent pas.'; errEl.style.display='block'; return; }
+
+  btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Création…';
+  try{
+    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/bootstrap-org', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY},
+      body: JSON.stringify({org_id:SUPA_ORG, nom, email, password:pwd})
+    });
+    let result; try{ result = await resp.json(); }catch{ result = {error:'Réponse serveur invalide'}; }
+    if(!resp.ok || result.error){
+      errEl.textContent = resp.status===409
+        ? 'Organisation déjà initialisée — connectez-vous normalement ou contactez votre administrateur.'
+        : ('Erreur : '+(result.error||'création impossible'));
+      errEl.style.display='block';
+      btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> Créer l\'accès';
+      return;
+    }
+    closeOverlay('ovBootstrap');
+    toast('✅ Compte administrateur créé — connexion…');
+    document.getElementById('loginEmail').value = email;
+    document.getElementById('loginPwd').value   = pwd;
+    setTimeout(doLogin, 400);
+  }catch(e){
+    errEl.textContent = 'Erreur réseau : '+e.message;
+    errEl.style.display='block';
+  }
+  btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> Créer l\'accès';
 };
 
 window.doLogout = function(){
@@ -5901,7 +5973,10 @@ window.delSale=async(id)=>{
 };
 
 // ══ UTILITIES ══
-function openOverlay(id){document.getElementById(id).classList.add('open');}
+function openOverlay(id){
+  document.getElementById(id).classList.add('open');
+  if(id==='ovBootstrap'){ const l=document.getElementById('bsOrgLabel'); if(l) l.textContent=SUPA_ORG; }
+}
 function closeOverlay(id){document.getElementById(id).classList.remove('open');}
 window.closeOverlay=closeOverlay;
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o) o.classList.remove('open');}));
