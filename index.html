@@ -1867,6 +1867,20 @@ const PENDING_KEY = 'sanixavi_pendingOps';
 function loadQueue(){ try{return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]');}catch{return [];} }
 function saveQueue(q){ try{localStorage.setItem(PENDING_KEY, JSON.stringify(q));}catch{} }
 function queueOp(op){ const q=loadQueue(); q.push(op); saveQueue(q); }
+
+// ⚠️ Purge unique des opérations héritées des anciennes injections de données démo.
+// Elles restaient bloquées en file (permission denied) et se seraient rejouées
+// intégralement dès la première connexion réussie — réinjectant les données factices
+// qu'on venait de supprimer. Ce verrou ne s'exécute qu'une fois par navigateur.
+(function purgeLegacyQueue(){
+  try{
+    if(localStorage.getItem('sanixavi_queuePurged_v14')) return;
+    const n = loadQueue().length;
+    localStorage.removeItem(PENDING_KEY);
+    localStorage.setItem('sanixavi_queuePurged_v14','1');
+    if(n) console.warn('[Migration v14] '+n+' opération(s) en attente héritées purgées (résidus de données démo).');
+  }catch{}
+})();
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
 // ── Chantier 2 : suivi des versions lues, pour détecter les conflits ──
@@ -1874,12 +1888,12 @@ const _recVersions = {}; // clé "store:id" -> version telle que lue au dernier 
 
 let _flushing=false;
 async function flushPendingOps(){
-  if(_flushing || !supa) return;
+  if(_flushing || !supa || !currentUser) return; // rien à tenter tant que non authentifié
   const q=loadQueue();
   if(!q.length) return;
   _flushing=true;
   const remaining=[];
-  let okCount=0;
+  let okCount=0, dropped=0;
   for(const op of q){
     try{
       if(op.op==='add'){
@@ -1900,11 +1914,19 @@ async function flushPendingOps(){
         }
       }
       okCount++;
-    }catch(e){ console.warn('Sync différée : nouvelle tentative plus tard pour', op.op, op.store, e.message); remaining.push(op); }
+    }catch(e){
+      // Une opération rejetée indéfiniment (droits, enregistrement disparu, donnée
+      // invalide) ne doit pas boucler éternellement ni polluer la console : après
+      // 5 tentatives elle est abandonnée.
+      op.fails = (op.fails||0) + 1;
+      if(op.fails >= 5){ dropped++; console.warn('Opération abandonnée après 5 échecs :', op.op, op.store, e.message); }
+      else remaining.push(op);
+    }
   }
   saveQueue(remaining);
   _flushing=false;
   if(okCount>0) toast('✅ '+okCount+' modification(s) hors-ligne synchronisée(s)','ok');
+  if(dropped>0) toast('⚠️ '+dropped+' opération(s) hors-ligne abandonnée(s) — voir la console','err');
 }
 window.addEventListener('online', flushPendingOps);
 setInterval(flushPendingOps, 20000);
@@ -1912,29 +1934,33 @@ setInterval(flushPendingOps, 20000);
 function openDB(){
   return new Promise((res,rej)=>{
     try{
-      supa = window.supabase.createClient(SUPA_URL, SUPA_KEY, {realtime:{params:{eventsPerSecond:5}}});
-      db = supa; // conserve la variable globale `db` utilisée comme test de disponibilité ailleurs
-      console.log('Supabase connecté (anon) — org=', SUPA_ORG);
+      // Auth Supabase native : le SDK gère JWT, refresh token et persistance.
+      // Plus aucune Edge Function requise pour se connecter.
+      supa = window.supabase.createClient(SUPA_URL, SUPA_KEY, {
+        auth:{ persistSession:true, autoRefreshToken:true, storageKey:'sanixavi_auth_'+SUPA_ORG },
+        realtime:{ params:{ eventsPerSecond:5 } }
+      });
+      db = supa;
       res(db);
     }catch(e){ console.error('DB open error', e); rej('DB error'); }
   });
 }
 
-// ── Bascule vers un client authentifié (JWT signé par l'Edge Function staff-login) ──
-// RLS n'accorde plus rien à anon depuis migration_v13.sql : sans ce client, aucune
-// lecture ni écriture n'est possible une fois connecté.
-function setAuthedClient(token){
-  try{
-    supa = token
-      ? window.supabase.createClient(SUPA_URL, SUPA_KEY, {
-          global:{ headers:{ Authorization:'Bearer '+token } },
-          realtime:{ params:{ eventsPerSecond:5 } }
-        })
-      : window.supabase.createClient(SUPA_URL, SUPA_KEY, {realtime:{params:{eventsPerSecond:5}}});
-    db = supa;
-    flushPendingOps();
-    setupRealtimeSync();
-  }catch(e){ console.error('setAuthedClient error:', e.message); }
+// Charge le profil membre (org + rôle) — source de vérité côté serveur,
+// jamais user_metadata qui est modifiable par le client lui-même.
+async function loadMembership(){
+  const { data:{ user } } = await supa.auth.getUser();
+  if(!user) return null;
+  const { data, error } = await supa.from('avico_members')
+    .select('org_id,role,nom,email,actif').eq('user_id', user.id).maybeSingle();
+  if(error || !data || data.actif===false) return null;
+  return { id:user.id, nom:data.nom||data.email, email:data.email||user.email, role:data.role, org_id:data.org_id };
+}
+
+// Active la synchro temps réel + vide la file d'attente, une fois authentifié.
+function startSync(){
+  flushPendingOps();
+  setupRealtimeSync();
 }
 
 // ── Mise à jour live des tableaux de bord : quand un autre utilisateur modifie une donnée,
@@ -2551,18 +2577,12 @@ function simpleHash(str){ return DJB2_LEGACY_PFX + simpleHashLegacy(str); }
 
 
 
-function getSession(){
-  try{
-    const s = JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
-    if(!s || !s.token) return null;
-    if(s.expires_at && Date.now()>s.expires_at){ localStorage.removeItem(SESSION_KEY); return null; }
-    return s;
-  }catch{ return null; }
-}
-function setSession(token, user, expires_at){
-  localStorage.setItem(SESSION_KEY, JSON.stringify({token, user, expires_at}));
-}
-function clearSession(){ localStorage.removeItem(SESSION_KEY); }
+// La session est désormais gérée nativement par le SDK Supabase
+// (persistSession + autoRefreshToken). Ces helpers ne servent plus qu'à
+// purger les résidus des anciennes versions.
+function getSession(){ return null; }
+function setSession(){}
+function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch{} }
 
 function canAccessPage(page){
   if(!currentUser) return false;
@@ -2627,12 +2647,11 @@ window.togglePwdVis = function(){
 
 
 window.doLogin = async function(){
-  const email   = (document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
-  const pwd     = document.getElementById('loginPwd')?.value||'';
-  const remember= document.getElementById('loginRemember')?.checked||false;
-  const errDiv  = document.getElementById('loginError');
-  const errMsg  = document.getElementById('loginErrorMsg');
-  const btn     = document.getElementById('loginBtn');
+  const email = (document.getElementById('loginEmail')?.value||'').trim().toLowerCase();
+  const pwd   = document.getElementById('loginPwd')?.value||'';
+  const errDiv= document.getElementById('loginError');
+  const errMsg= document.getElementById('loginErrorMsg');
+  const btn   = document.getElementById('loginBtn');
 
   if(!email||!pwd){
     errMsg.textContent='Veuillez remplir tous les champs.';
@@ -2640,32 +2659,45 @@ window.doLogin = async function(){
     return;
   }
   btn.disabled=true;
-  btn.innerHTML='<i class="fas fa-spinner fa-spin" style="margin-right:7px"></i>Connexion…';
+  btn.innerHTML='<i class="fas fa-spinner fa-spin" style="margin-right:7px"></i>Connexion\u2026';
 
   try{
-    // Vérification du mot de passe déportée côté serveur (Edge Function staff-login,
-    // service_role) — le client anonyme n'a plus aucun accès direct depuis la RLS stricte.
-    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/staff-login', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY},
-      body: JSON.stringify({email,password:pwd,org_id:SUPA_ORG,remember})
-    });
-    let result;
-    try{ result = await resp.json(); }catch{ result = {error:'Réponse serveur invalide'}; }
-
-    if(!resp.ok || result.error){
-      errMsg.textContent = resp.status===401 ? 'Email ou mot de passe incorrect.' : ('Erreur : '+(result.error||'connexion impossible'));
+    // Authentification Supabase native : mot de passe vérifié par le serveur d'auth,
+    // JWT et refresh token gérés par le SDK. Aucune Edge Function nécessaire.
+    const { error } = await supa.auth.signInWithPassword({ email, password:pwd });
+    if(error){
+      errMsg.textContent = /invalid login/i.test(error.message)
+        ? 'Email ou mot de passe incorrect.'
+        : (/email not confirmed/i.test(error.message)
+            ? "Email non confirmé — désactivez « Confirm email » dans Supabase \u2192 Authentication \u2192 Providers."
+            : 'Erreur : '+error.message);
       errDiv.style.display='block';
-      if(resp.status===401) document.getElementById('loginPwd').classList.add('err');
+      document.getElementById('loginPwd').classList.add('err');
       btn.disabled=false;
       btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
       return;
     }
 
-    // Succès
-    currentUser = result.user;
-    setAuthedClient(result.token);
-    setSession(result.token, currentUser, result.expires_at);
+    const me = await loadMembership();
+    if(!me){
+      await supa.auth.signOut();
+      errMsg.textContent = "Ce compte n'est rattaché à aucune organisation active. Demandez une invitation à votre administrateur.";
+      errDiv.style.display='block';
+      btn.disabled=false;
+      btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
+      return;
+    }
+    if(me.org_id !== SUPA_ORG){
+      await supa.auth.signOut();
+      errMsg.textContent = 'Ce compte appartient à l\'organisation « '+me.org_id+' », pas à « '+SUPA_ORG+' ».';
+      errDiv.style.display='block';
+      btn.disabled=false;
+      btn.innerHTML='<i class="fas fa-sign-in-alt" style="margin-right:7px"></i>Se connecter';
+      return;
+    }
+
+    currentUser = me;
+    startSync();
     document.getElementById('loginScreen').style.display='none';
     updateNavUser();
     goTo('dash');
@@ -2691,43 +2723,58 @@ window.submitBootstrap = async function(){
   if(pwd.length<12){ errEl.textContent='Mot de passe : 12 caractères minimum.'; errEl.style.display='block'; return; }
   if(pwd!==pwd2){ errEl.textContent='Les mots de passe ne correspondent pas.'; errEl.style.display='block'; return; }
 
-  btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Création…';
+  const resetBtn = ()=>{ btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> Créer l\'accès'; };
+  btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Création\u2026';
   try{
-    const resp = await fetch(SUPA_URL.replace('.supabase.co','.functions.supabase.co')+'/bootstrap-org', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY},
-      body: JSON.stringify({org_id:SUPA_ORG, nom, email, password:pwd})
-    });
-    let result; try{ result = await resp.json(); }catch{ result = {error:'Réponse serveur invalide'}; }
-    if(!resp.ok || result.error){
-      errEl.textContent = resp.status===409
-        ? 'Organisation déjà initialisée — connectez-vous normalement ou contactez votre administrateur.'
-        : ('Erreur : '+(result.error||'création impossible'));
-      errEl.style.display='block';
-      btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> Créer l\'accès';
-      return;
+    // 1. Création du compte (ou connexion si le compte existe déjà mais n'est
+    //    rattaché à aucune organisation — cas d'une inscription interrompue).
+    let { error } = await supa.auth.signUp({ email, password:pwd });
+    if(error && /already registered/i.test(error.message)){
+      const r = await supa.auth.signInWithPassword({ email, password:pwd });
+      error = r.error;
+      if(error){ errEl.textContent='Ce compte existe déjà avec un autre mot de passe.'; errEl.style.display='block'; resetBtn(); return; }
+    }else if(error){
+      errEl.textContent='Erreur : '+error.message; errEl.style.display='block'; resetBtn(); return;
     }
+
+    const { data:{ session } } = await supa.auth.getSession();
+    if(!session){
+      errEl.innerHTML = "Compte créé, mais la confirmation par email est activée.<br>"
+        + "Désactivez « Confirm email » dans Supabase \u2192 Authentication \u2192 Providers, puis reconnectez-vous.";
+      errEl.style.display='block'; resetBtn(); return;
+    }
+
+    // 2. Rattachement à l'organisation (fonction SQL : refuse si l'org a déjà des membres)
+    const { data:claim, error:cErr } = await supa.rpc('avico_claim_org', { p_org:SUPA_ORG, p_nom:nom });
+    if(cErr){
+      await supa.auth.signOut();
+      errEl.textContent = 'Erreur : '+cErr.message;
+      errEl.style.display='block'; resetBtn(); return;
+    }
+
+    currentUser = { id:session.user.id, nom, email, role:claim.role, org_id:claim.org_id };
+    startSync();
     closeOverlay('ovBootstrap');
-    toast('✅ Compte administrateur créé — connexion…');
-    document.getElementById('loginEmail').value = email;
-    document.getElementById('loginPwd').value   = pwd;
-    setTimeout(doLogin, 400);
+    toast('\u2705 Accès administrateur créé');
+    document.getElementById('loginScreen').style.display='none';
+    updateNavUser();
+    goTo('dash');
+    await initAppAfterLogin();
   }catch(e){
-    errEl.textContent = 'Erreur réseau : '+e.message;
+    errEl.textContent = 'Erreur : '+e.message;
     errEl.style.display='block';
   }
-  btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> Créer l\'accès';
+  resetBtn();
 };
 
-window.doLogout = function(){
+window.doLogout = async function(){
   if(!confirm('Se déconnecter de Sanix AviNest Pro ?')) return;
+  try{ await supa.auth.signOut(); }catch{}
   clearSession();
   currentUser = null;
-  setAuthedClient(null);
   document.getElementById('loginEmail').value='';
   document.getElementById('loginPwd').value='';
   document.getElementById('loginError').style.display='none';
-  document.getElementById('loginRecoveryLink').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
 };
 
@@ -6862,25 +6909,27 @@ window.onload=async()=>{
   document.getElementById('loginScreen').style.display='flex';
 
   try{
-    // ── Client anonyme — sert uniquement à joindre l'Edge Function staff-login.
-    //    RLS stricte depuis migration_v13.sql : aucune lecture/écriture directe possible
-    //    avant authentification. initDemo()/loadRoleOverrides() sont donc déplacés
-    //    après connexion réussie (voir initAppAfterLogin). ──
+    // RLS stricte : aucune lecture/écriture possible avant authentification.
+    // initDemo()/loadRoleOverrides() sont donc appelés après connexion réussie.
     await openDB();
 
-    // ── Session existante (JWT) — reconnexion silencieuse si encore valide ──
-    const savedSession = getSession();
-    if(savedSession){
-      currentUser = savedSession.user;
-      setAuthedClient(savedSession.token);
-      document.getElementById('loginScreen').style.display='none';
-      updateNavUser();
-      document.getElementById('lotsPanel').classList.remove('hidden');
-      await loadRoleOverrides();
-      await renderLotSidebar();
-      const lots=await getAll(S.FLOCKS); if(lots.length) curLotId=lots[0].id;
-      await render();
-      return;
+    // ── Session Supabase existante — reconnexion silencieuse (refresh token géré par le SDK) ──
+    const { data:{ session } } = await supa.auth.getSession();
+    if(session){
+      const me = await loadMembership();
+      if(me && me.org_id === SUPA_ORG){
+        currentUser = me;
+        startSync();
+        document.getElementById('loginScreen').style.display='none';
+        updateNavUser();
+        document.getElementById('lotsPanel').classList.remove('hidden');
+        await loadRoleOverrides();
+        await renderLotSidebar();
+        const lots=await getAll(S.FLOCKS); if(lots.length) curLotId=lots[0].id;
+        await render();
+        return;
+      }
+      await supa.auth.signOut(); // session orpheline ou d'une autre organisation
     }
 
     // ── Pas de session valide → écran login ──
