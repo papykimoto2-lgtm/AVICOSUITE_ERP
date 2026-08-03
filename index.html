@@ -1191,9 +1191,8 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Date J0 *</label><input id="lotStart" type="date"></div>
     <div class="fg"><label>Effectif initial *</label><input id="lotStock" type="number" value="100" min="1"></div>
     <div class="fg"><label>Coût/poussin (FCFA)</label><input id="lotCost" type="number" placeholder="0"></div>
-    <div class="fg"><label>Bâtiment</label><input id="lotLine" placeholder="Bât. A"></div>
-    <div class="fg"><label>Ligne</label><input id="lotLigne" placeholder="Ligne 1" list="lignesExistantes"></div>
-    <datalist id="lignesExistantes"></datalist>
+    <div class="fg"><label>Bâtiment</label><select id="lotBuilding" onchange="onLotBuildingChange()"><option value="">—</option></select></div>
+    <div class="fg"><label>Ligne</label><select id="lotLineId"><option value="">—</option></select></div>
     <div class="fg"><label>Fournisseur poussin</label><select id="lotFourn"><option value="">—</option></select></div>
   </div>
   <div class="modal-footer">
@@ -1299,6 +1298,36 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mDepot')">Annuler</button>
     <button class="btn btn-p" onclick="saveDepot()"><i class="fas fa-save"></i> Enregistrer</button>
+  </div>
+</div></div>
+
+<!-- BÂTIMENT MODAL -->
+<div class="overlay" id="mBuilding">
+<div class="modal">
+  <h3 id="mBuildingTitle">Nouveau bâtiment</h3>
+  <input type="hidden" id="buildingId">
+  <div class="form-grid">
+    <div class="fg"><label>Nom *</label><input id="buildingName" placeholder="ex: Bâtiment A"></div>
+    <div class="fg fg-full"><label>Localisation / Notes</label><textarea id="buildingDesc"></textarea></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mBuilding')">Annuler</button>
+    <button class="btn btn-p" onclick="saveBuilding()"><i class="fas fa-save"></i> Enregistrer</button>
+  </div>
+</div></div>
+
+<!-- LIGNE MODAL -->
+<div class="overlay" id="mLine">
+<div class="modal">
+  <h3 id="mLineTitle">Nouvelle ligne</h3>
+  <input type="hidden" id="lineId">
+  <div class="form-grid">
+    <div class="fg"><label>Bâtiment *</label><select id="lineBuildingId"></select></div>
+    <div class="fg"><label>Nom *</label><input id="lineName" placeholder="ex: Ligne 1"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mLine')">Annuler</button>
+    <button class="btn btn-p" onclick="saveLine()"><i class="fas fa-save"></i> Enregistrer</button>
   </div>
 </div></div>
 
@@ -2872,6 +2901,7 @@ async function renderSettings(ca){
 
   const tabs = [
     ['exploitation','fa-building','Exploitation'],
+    ['batiments','fa-warehouse','Bât. & Lignes'],
     ['users','fa-users','Utilisateurs'],
     ['roles','fa-shield-alt','Rôles'],
     ['notifs','fa-bell','Notifs'],
@@ -2901,6 +2931,7 @@ async function renderSettings(ca){
 
 async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='exploitation') return renderSettingsExploitation(cfg, isAdmin);
+  if(tab==='batiments')    return await renderSettingsBatiments();
   if(tab==='users')        return await renderSettingsUsers(users, isSuperAdmin);
   if(tab==='roles')        return renderSettingsRoles(isAdmin, isSuperAdmin);
   if(tab==='notifs')       return renderSettingsNotifs(cfg, isAdmin);
@@ -3808,6 +3839,9 @@ async function renderLotView(ca){
   try{
   const lots=await getAll(S.FLOCKS);
   const lot=lots.find(f=>f.id===curLotId);if(!lot) return;
+  const [buildings, lines] = await Promise.all([getAll(S.BUILDINGS), getAll(S.LINES)]);
+  const batNom = buildings.find(b=>b.id===lot.buildingId)?.nom || lot.line || '—';
+  const ligneNom = lines.find(l=>l.id===lot.lineId)?.nom || lot.ligne || '';
   const age=getAge(lot.startDate);
   const ph=getPhase(lot.type,age);
   const kpi=await computeKPIs(lot);
@@ -3834,7 +3868,7 @@ async function renderLotView(ca){
         <div class="lot-header-row">
           <div>
             <div class="lot-title">${lot.type==='layer'?'🥚':'🍗'} ${esc(lot.nom||'')} <span class="lot-phase ${ph.cls}">${ph.label}</span></div>
-            <div class="chips"><span class="chip">🧬 ${lot.breed||'—'}</span><span class="chip">📅 J0: ${lot.startDate}</span><span class="chip">🏚️ ${lot.line||'—'}</span>${lot.ligne?`<span class="chip">🧵 ${esc(lot.ligne)}</span>`:''}<span class="chip">J${age}</span></div>
+            <div class="chips"><span class="chip">🧬 ${lot.breed||'—'}</span><span class="chip">📅 J0: ${lot.startDate}</span><span class="chip">🏗️ ${esc(batNom)}</span>${ligneNom?`<span class="chip">🧵 ${esc(ligneNom)}</span>`:''}<span class="chip">J${age}</span></div>
           </div>
           <div class="hdr-actions">
             <button class="btn-hdr btn-hdr-edit" onclick="openLotModal(${lot.id})"><i class="fas fa-edit"></i> Modifier</button>
@@ -5446,21 +5480,44 @@ async function refreshLot(){
 async function openLotModal(id=null){
   const fourns=await getAll(S.FOURNISSEURS);
   const allLots=await getAll(S.FLOCKS);
+  const buildings=await getAll(S.BUILDINGS);
   document.getElementById('lotId').value=id||'';
   document.getElementById('mLotTitle').textContent=id?'Modifier le lot':'Nouveau lot';
   document.getElementById('lotFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
-  // Suggestions de lignes déjà utilisées, pour éviter les doublons par faute de frappe (ex: "Ligne 1" vs "ligne1")
-  const lignesConnues=[...new Set(allLots.map(f=>f.ligne).filter(Boolean))];
-  document.getElementById('lignesExistantes').innerHTML=lignesConnues.map(l=>`<option value="${esc(l)}">`).join('');
-  if(!id){['lotName','lotBreed','lotLine','lotLigne'].forEach(x=>document.getElementById(x).value='');document.getElementById('lotStart').value=new Date().toISOString().slice(0,10);document.getElementById('lotStock').value='100';document.getElementById('lotCost').value='';document.getElementById('lotType').value='layer';}
-  else{const l=allLots.find(x=>x.id===id);if(l){document.getElementById('lotName').value=l.nom||l.name||'';document.getElementById('lotType').value=l.type||'layer';document.getElementById('lotBreed').value=l.breed||'';document.getElementById('lotStart').value=l.startDate||'';document.getElementById('lotStock').value=l.initialStock||100;document.getElementById('lotCost').value=l.costPerChick||'';document.getElementById('lotLine').value=l.line||'';document.getElementById('lotLigne').value=l.ligne||'';document.getElementById('lotFourn').value=l.fournId||'';}}
+  const bSel=document.getElementById('lotBuilding');
+  bSel.innerHTML='<option value="">—</option>'+buildings.map(b=>`<option value="${b.id}">${esc(b.nom)}</option>`).join('');
+  if(!id){
+    ['lotName','lotBreed'].forEach(x=>document.getElementById(x).value='');
+    document.getElementById('lotStart').value=new Date().toISOString().slice(0,10);
+    document.getElementById('lotStock').value='100';document.getElementById('lotCost').value='';document.getElementById('lotType').value='layer';
+    bSel.value=''; await onLotBuildingChange();
+  }
+  else{
+    const l=allLots.find(x=>x.id===id);
+    if(l){
+      document.getElementById('lotName').value=l.nom||l.name||'';document.getElementById('lotType').value=l.type||'layer';
+      document.getElementById('lotBreed').value=l.breed||'';document.getElementById('lotStart').value=l.startDate||'';
+      document.getElementById('lotStock').value=l.initialStock||100;document.getElementById('lotCost').value=l.costPerChick||'';
+      document.getElementById('lotFourn').value=l.fournId||'';
+      bSel.value=l.buildingId||'';
+      await onLotBuildingChange();
+      document.getElementById('lotLineId').value=l.lineId||'';
+    }
+  }
   openOverlay('mLot');
 }
+window.onLotBuildingChange=async function(){
+  const buildingId=parseInt(document.getElementById('lotBuilding').value)||null;
+  const lines=await getAll(S.LINES);
+  const lSel=document.getElementById('lotLineId');
+  const filtered=buildingId?lines.filter(l=>l.buildingId===buildingId):[];
+  lSel.innerHTML='<option value="">—</option>'+filtered.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('');
+};
 window.openLotModal=openLotModal;
 
 document.getElementById('saveLotBtn').onclick=async()=>{
   const id=document.getElementById('lotId').value;
-  const data={nom:document.getElementById('lotName').value.trim(),type:document.getElementById('lotType').value,breed:document.getElementById('lotBreed').value.trim(),startDate:document.getElementById('lotStart').value,initialStock:parseInt(document.getElementById('lotStock').value)||0,costPerChick:parseFloat(document.getElementById('lotCost').value)||0,line:document.getElementById('lotLine').value.trim(),ligne:document.getElementById('lotLigne').value.trim(),fournId:document.getElementById('lotFourn').value?parseInt(document.getElementById('lotFourn').value):null};
+  const data={nom:document.getElementById('lotName').value.trim(),type:document.getElementById('lotType').value,breed:document.getElementById('lotBreed').value.trim(),startDate:document.getElementById('lotStart').value,initialStock:parseInt(document.getElementById('lotStock').value)||0,costPerChick:parseFloat(document.getElementById('lotCost').value)||0,buildingId:parseInt(document.getElementById('lotBuilding').value)||null,lineId:parseInt(document.getElementById('lotLineId').value)||null,fournId:document.getElementById('lotFourn').value?parseInt(document.getElementById('lotFourn').value):null};
   if(!data.nom||!data.startDate||data.initialStock<1){toast('Nom, date et effectif requis','err');return;}
   if(id){await updRec(S.FLOCKS,parseInt(id),{...window._lot,...data});await scheduleTasks(parseInt(id),data.type,data.startDate);}
   else{const newId=await addRec(S.FLOCKS,data);await scheduleTasks(newId,data.type,data.startDate);curLotId=newId;}
@@ -5636,6 +5693,104 @@ async function saveDepot(){
   closeOverlay('mDepot');toast(id?'Dépôt mis à jour':'Dépôt créé');await renderDepots(document.getElementById('contentArea'));
 }
 window.saveDepot=saveDepot;
+
+// ══ BÂTIMENTS & LIGNES (paramétrage production) ══
+// Un bâtiment peut contenir plusieurs lignes (S.LINES.buildingId → S.BUILDINGS.id).
+// Les lots (S.FLOCKS) sont affectés à un buildingId + lineId précis.
+async function renderSettingsBatiments(){
+  const [buildings, lines, flocks] = await Promise.all([getAll(S.BUILDINGS), getAll(S.LINES), getAll(S.FLOCKS)]);
+  const rows = buildings.slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'')).map(b=>{
+    const bLines = lines.filter(l=>l.buildingId===b.id);
+    const nbLots = flocks.filter(f=>f.buildingId===b.id).length;
+    const lineRows = bLines.map(l=>{
+      const nbLotsLigne = flocks.filter(f=>f.lineId===l.id).length;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-radius:6px;background:#f9fafb;margin-bottom:4px">
+        <span style="font-size:12px">🧵 ${esc(l.nom)} <span style="color:var(--text3);font-size:10px">(${nbLotsLigne} lot${nbLotsLigne>1?'s':''})</span></span>
+        <span style="display:flex;gap:4px">
+          <button class="btn btn-sm btn-gh" onclick="openLineModal(${l.id})"><i class="fas fa-edit"></i></button>
+          <button class="btn-del" onclick="delLine(${l.id})"><i class="fas fa-trash"></i></button>
+        </span>
+      </div>`;
+    }).join('') || '<div style="font-size:11px;color:var(--text3);padding:4px 10px">Aucune ligne dans ce bâtiment.</div>';
+    return `<div class="card" style="margin-bottom:12px">
+      <div class="card-hd">
+        <span>🏗️ ${esc(b.nom)} <span style="font-size:10px;color:var(--text3);font-weight:400">(${nbLots} lot${nbLots>1?'s':''})</span></span>
+        <span style="display:flex;gap:4px">
+          <button class="btn btn-sm btn-p" onclick="openLineModal(null,${b.id})"><i class="fas fa-plus"></i> Ligne</button>
+          <button class="btn btn-sm btn-gh" onclick="openBuildingModal(${b.id})"><i class="fas fa-edit"></i></button>
+          <button class="btn-del" onclick="delBuilding(${b.id})"><i class="fas fa-trash"></i></button>
+        </span>
+      </div>
+      <div class="card-bd">
+        ${b.description?`<div style="font-size:11px;color:var(--text3);margin-bottom:8px">${esc(b.description)}</div>`:''}
+        ${lineRows}
+      </div>
+    </div>`;
+  }).join('');
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-weight:700;font-size:14px">🏗️ Bâtiments & Lignes</div>
+      <button class="btn btn-p btn-sm" onclick="openBuildingModal()"><i class="fas fa-plus"></i> Nouveau bâtiment</button>
+    </div>
+    ${rows || '<div style="color:var(--text3);text-align:center;padding:30px">Aucun bâtiment. Créez-en un pour organiser vos lots.</div>'}
+  `;
+}
+
+window.openBuildingModal=async function(id=null){
+  document.getElementById('buildingId').value=id||'';
+  document.getElementById('mBuildingTitle').textContent=id?'Modifier le bâtiment':'Nouveau bâtiment';
+  if(!id){ document.getElementById('buildingName').value=''; document.getElementById('buildingDesc').value=''; }
+  else{ const b=(await getAll(S.BUILDINGS)).find(x=>x.id===id); if(b){ document.getElementById('buildingName').value=b.nom||''; document.getElementById('buildingDesc').value=b.description||''; } }
+  openOverlay('mBuilding');
+};
+window.saveBuilding=async function(){
+  const id=document.getElementById('buildingId').value;
+  const data={nom:document.getElementById('buildingName').value.trim(),description:document.getElementById('buildingDesc').value.trim()};
+  if(!data.nom){toast('Nom requis','err');return;}
+  if(id) await updRec(S.BUILDINGS,parseInt(id),data); else await addRec(S.BUILDINGS,data);
+  closeOverlay('mBuilding'); toast(id?'Bâtiment mis à jour':'Bâtiment créé');
+  settingsTab='batiments'; await switchSettingsTab('batiments');
+};
+window.delBuilding=async function(id){
+  const [lines, flocks] = await Promise.all([getAll(S.LINES), getAll(S.FLOCKS)]);
+  if(lines.some(l=>l.buildingId===id)){ toast('Supprimez d\'abord les lignes de ce bâtiment','err'); return; }
+  if(flocks.some(f=>f.buildingId===id)){ toast('Des lots sont affectés à ce bâtiment — réaffectez-les avant suppression','err'); return; }
+  if(!confirm('Supprimer ce bâtiment ?')) return;
+  await delRec(S.BUILDINGS,id); toast('Bâtiment supprimé');
+  settingsTab='batiments'; await switchSettingsTab('batiments');
+};
+
+window.openLineModal=async function(id=null, presetBuildingId=null){
+  const buildings=await getAll(S.BUILDINGS);
+  const sel=document.getElementById('lineBuildingId');
+  sel.innerHTML=buildings.map(b=>`<option value="${b.id}">${esc(b.nom)}</option>`).join('') || '<option value="">— Créez un bâtiment d\'abord —</option>';
+  document.getElementById('lineId').value=id||'';
+  document.getElementById('mLineTitle').textContent=id?'Modifier la ligne':'Nouvelle ligne';
+  if(!id){
+    document.getElementById('lineName').value='';
+    if(presetBuildingId) sel.value=String(presetBuildingId);
+  } else {
+    const l=(await getAll(S.LINES)).find(x=>x.id===id);
+    if(l){ document.getElementById('lineName').value=l.nom||''; sel.value=String(l.buildingId||''); }
+  }
+  if(!buildings.length){ toast('Créez d\'abord un bâtiment','err'); return; }
+  openOverlay('mLine');
+};
+window.saveLine=async function(){
+  const id=document.getElementById('lineId').value;
+  const data={nom:document.getElementById('lineName').value.trim(), buildingId:parseInt(document.getElementById('lineBuildingId').value)||null};
+  if(!data.nom||!data.buildingId){toast('Bâtiment et nom requis','err');return;}
+  if(id) await updRec(S.LINES,parseInt(id),data); else await addRec(S.LINES,data);
+  closeOverlay('mLine'); toast(id?'Ligne mise à jour':'Ligne créée');
+  settingsTab='batiments'; await switchSettingsTab('batiments');
+};
+window.delLine=async function(id){
+  const flocks=await getAll(S.FLOCKS);
+  if(flocks.some(f=>f.lineId===id)){ toast('Des lots sont affectés à cette ligne — réaffectez-les avant suppression','err'); return; }
+  if(!confirm('Supprimer cette ligne ?')) return;
+  await delRec(S.LINES,id); toast('Ligne supprimée');
+  settingsTab='batiments'; await switchSettingsTab('batiments');
+};
 
 // ══ STOCKS ══
 async function renderStocks(ca){
@@ -11854,17 +12009,17 @@ async function collectRapportData(type, customMin=null, customMax=null){
   };
 }
 
-// ── Collecte : Production vs Conditionnement, groupée par Ligne > Bâtiment ──
+// ── Collecte : Production vs Conditionnement, groupée par Bâtiment > Ligne ──
 async function collectProdCondData(dateMin, dateMax, lotId=''){
-  const [flocks, eggProd, mortalite, feeds, waters, cond] = await Promise.all([
+  const [flocks, eggProd, mortalite, feeds, waters, cond, buildings, lines] = await Promise.all([
     getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.MORTALITE),
-    getAll(S.FEEDING), getAll(S.WATER), getAll(S.COND)
+    getAll(S.FEEDING), getAll(S.WATER), getAll(S.COND), getAll(S.BUILDINGS), getAll(S.LINES)
   ]);
   const inPeriod = d => d && d >= dateMin && d <= dateMax;
   let lots = flocks.filter(f=>f.type==='layer');
   if(lotId) lots = lots.filter(f=>String(f.id)===String(lotId));
 
-  const batiments = lots.map(f=>{
+  const batLots = lots.map(f=>{
     const oeufs   = eggProd.filter(e=>e.flockId===f.id&&inPeriod(e.date)).reduce((a,e)=>a+(e.eggCount||0),0);
     const morts   = mortalite.filter(m=>m.flockId===f.id&&inPeriod(m.date)).reduce((a,m)=>a+(m.nbMorts||0),0);
     const alimKg  = feeds.filter(x=>x.flockId===f.id&&inPeriod(x.date)).reduce((a,x)=>a+(x.quantityKg||0),0);
@@ -11878,40 +12033,44 @@ async function collectProdCondData(dateMin, dateMax, lotId=''){
     const tauxCond = oeufs>0 ? (nets/oeufs*100) : 0;
     const tauxCasse = bruts>0 ? (casses/bruts*100) : 0;
     const ecart = oeufs - bruts; // œufs produits mais pas encore engagés en conditionnement sur la période (peut être négatif si on conditionne un stock antérieur)
-    return { id:f.id, nom:f.nom, batiment:f.line||'—', ligne:f.ligne||'Sans ligne',
+    const batimentNom = buildings.find(b=>b.id===f.buildingId)?.nom || f.line || 'Sans bâtiment';
+    const ligneNom = lines.find(l=>l.id===f.lineId)?.nom || f.ligne || 'Sans ligne';
+    return { id:f.id, nom:f.nom, batiment:batimentNom, ligne:ligneNom,
       oeufs, morts, alimKg, eauL, bruts, casses, nets, plateaux, cartons, tauxCond, tauxCasse, ecart };
   });
 
-  // Regroupement par ligne
-  const parLigne = {};
-  batiments.forEach(b=>{
-    if(!parLigne[b.ligne]) parLigne[b.ligne] = { ligne:b.ligne, batiments:[], oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0 };
-    const g = parLigne[b.ligne];
-    g.batiments.push(b);
-    g.oeufs+=b.oeufs; g.morts+=b.morts; g.alimKg+=b.alimKg; g.eauL+=b.eauL;
-    g.bruts+=b.bruts; g.casses+=b.casses; g.nets+=b.nets; g.plateaux+=b.plateaux; g.cartons+=b.cartons;
+  // Regroupement Bâtiment > Ligne (un bâtiment peut contenir plusieurs lignes)
+  const parBatiment = {};
+  batLots.forEach(b=>{
+    if(!parBatiment[b.batiment]) parBatiment[b.batiment] = { batiment:b.batiment, parLigne:{}, oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0 };
+    const bg = parBatiment[b.batiment];
+    if(!bg.parLigne[b.ligne]) bg.parLigne[b.ligne] = { ligne:b.ligne, lots:[], oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0 };
+    const lg = bg.parLigne[b.ligne];
+    lg.lots.push(b);
+    [bg,lg].forEach(g=>{ g.oeufs+=b.oeufs; g.morts+=b.morts; g.alimKg+=b.alimKg; g.eauL+=b.eauL; g.bruts+=b.bruts; g.casses+=b.casses; g.nets+=b.nets; g.plateaux+=b.plateaux; g.cartons+=b.cartons; });
   });
-  const lignes = Object.values(parLigne).map(g=>({
-    ...g, tauxCond: g.oeufs>0?(g.nets/g.oeufs*100):0, tauxCasse: g.bruts>0?(g.casses/g.bruts*100):0
-  })).sort((a,b)=>a.ligne.localeCompare(b.ligne));
+  const withRates = g => ({ ...g, tauxCond: g.oeufs>0?(g.nets/g.oeufs*100):0, tauxCasse: g.bruts>0?(g.casses/g.bruts*100):0 });
+  const batiments = Object.values(parBatiment).map(bg=>({
+    ...withRates(bg),
+    lignes: Object.values(bg.parLigne).map(withRates).sort((a,b)=>a.ligne.localeCompare(b.ligne))
+  })).sort((a,b)=>a.batiment.localeCompare(b.batiment));
 
-  const total = batiments.reduce((a,b)=>({
+  const total = batLots.reduce((a,b)=>({
     oeufs:a.oeufs+b.oeufs, morts:a.morts+b.morts, alimKg:a.alimKg+b.alimKg, eauL:a.eauL+b.eauL,
     bruts:a.bruts+b.bruts, casses:a.casses+b.casses, nets:a.nets+b.nets, plateaux:a.plateaux+b.plateaux, cartons:a.cartons+b.cartons
   }), {oeufs:0,morts:0,alimKg:0,eauL:0,bruts:0,casses:0,nets:0,plateaux:0,cartons:0});
   total.tauxCond = total.oeufs>0 ? (total.nets/total.oeufs*100) : 0;
   total.tauxCasse = total.bruts>0 ? (total.casses/total.bruts*100) : 0;
 
-  return { dateMin, dateMax, lignes, total, nbBatiments: batiments.length };
+  return { dateMin, dateMax, batiments, total, nbLots: batLots.length };
 }
 
-// ── Corps : Production vs Conditionnement (par ligne / bâtiment) ──
+// ── Corps : Production vs Conditionnement (par bâtiment / ligne) ──
 function buildCorpsProdCond(data, cfg){
   const t = data.total;
-  const ligneBlocks = data.lignes.map(g=>{
-    const rows = g.batiments.map(b=>`
+  const rowHtml = b => `
       <tr>
-        <td><strong>${esc(b.batiment)}</strong><br><span style="font-size:9px;color:#888">${esc(b.nom)}</span></td>
+        <td><strong>${esc(b.nom)}</strong></td>
         <td style="text-align:right;font-weight:700">${b.oeufs.toLocaleString('fr-FR')}</td>
         <td style="text-align:right;color:#c1121f">${b.morts}</td>
         <td style="text-align:right">${b.alimKg.toLocaleString('fr-FR')} kg</td>
@@ -11921,19 +12080,10 @@ function buildCorpsProdCond(data, cfg){
         <td style="text-align:right">${b.cartons}</td>
         <td style="text-align:right;color:${b.tauxCasse>5?'#c1121f':'#666'}">${b.tauxCasse.toFixed(1)}%</td>
         <td style="text-align:right"><span class="${b.tauxCond>=90?'badge-ok':b.tauxCond>=70?'badge-warn':'badge-err'}">${b.tauxCond.toFixed(0)}%</span></td>
-      </tr>`).join('');
-    return `
-    <div class="section">
-      <div class="section-title">🧵 Ligne : ${esc(g.ligne)} — ${g.batiments.length} bâtiment(s)</div>
-      <table><thead><tr>
-        <th>Bâtiment</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th>
-        <th style="text-align:right">Aliment</th><th style="text-align:right">Eau</th>
-        <th style="text-align:right">Œufs cond.</th><th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th>
-        <th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
+      </tr>`;
+  const totalRowHtml = (label,g) => `
       <tr class="total-row">
-        <td>SOUS-TOTAL LIGNE</td>
+        <td>${label}</td>
         <td style="text-align:right">${g.oeufs.toLocaleString('fr-FR')}</td>
         <td style="text-align:right">${g.morts}</td>
         <td style="text-align:right">${g.alimKg.toLocaleString('fr-FR')} kg</td>
@@ -11943,8 +12093,25 @@ function buildCorpsProdCond(data, cfg){
         <td style="text-align:right">${g.cartons}</td>
         <td style="text-align:right">${g.tauxCasse.toFixed(1)}%</td>
         <td style="text-align:right">${g.tauxCond.toFixed(0)}%</td>
-      </tr>
-      </table>
+      </tr>`;
+  const theadHtml = `<thead><tr>
+        <th>Lot</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th>
+        <th style="text-align:right">Aliment</th><th style="text-align:right">Eau</th>
+        <th style="text-align:right">Œufs cond.</th><th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th>
+        <th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th>
+      </tr></thead>`;
+
+  const batBlocks = data.batiments.map(bg=>{
+    const ligneBlocks = bg.lignes.map(lg=>`
+      <div style="margin:8px 0 10px 14px">
+        <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px">🧵 Ligne : ${esc(lg.ligne)} — ${lg.lots.length} lot(s)</div>
+        <table>${theadHtml}<tbody>${lg.lots.map(rowHtml).join('')}</tbody>${totalRowHtml('Sous-total ligne',lg)}</table>
+      </div>`).join('');
+    return `
+    <div class="section">
+      <div class="section-title">🏗️ Bâtiment : ${esc(bg.batiment)} — ${bg.lignes.length} ligne(s)</div>
+      ${ligneBlocks}
+      <table>${totalRowHtml('TOTAL BÂTIMENT',bg)}</table>
     </div>`;
   }).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucune donnée sur la période</p></div>';
 
@@ -11955,7 +12122,7 @@ function buildCorpsProdCond(data, cfg){
     <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCond>=90?'#1a5c2a':t.tauxCond>=70?'#92400e':'#c1121f'}">${t.tauxCond.toFixed(0)}%</div><div class="kpi-lbl">Taux conditionné</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCasse>5?'#c1121f':'#1a5c2a'}">${t.tauxCasse.toFixed(1)}%</div><div class="kpi-lbl">Taux de casse</div></div>
   </div>
-  ${ligneBlocks}
+  ${batBlocks}
   <div class="section">
     <div class="section-title">📊 Comparatif global — Production vs Conditionnement</div>
     <table><thead><tr><th>Indicateur</th><th style="text-align:right">Valeur</th></tr></thead>
