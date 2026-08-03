@@ -11151,13 +11151,33 @@ window.testSupaConnection = async function(){
   const t0 = performance.now();
   try{
     if(!window.supabase) throw new Error('Librairie Supabase non chargée');
-    const testClient = window.supabase.createClient(url, key);
-    const {error} = await testClient.from('avico_records').select('id', {count:'exact', head:true}).limit(1);
-    if(error) throw error;
-    const ms = Math.round(performance.now()-t0);
-    supaResultBox(`✅ Connexion réussie (${ms} ms) — l'URL et la clé anon sont valides et la table <code>avico_records</code> est accessible.`, true);
+
+    const isCurrentConfig = (url === SUPA_URL) && (key === SUPA_KEY);
+
+    if(isCurrentConfig && supa){
+      // ── Cas normal : on teste avec la session déjà authentifiée ──
+      // (un client anonyme échouera toujours : l'accès anonyme est bloqué par design — RLS)
+      const { data:{ session } } = await supa.auth.getSession();
+      if(!session){
+        supaResultBox('⚠️ Vous n\'êtes pas connecté — reconnectez-vous pour tester l\'accès aux données.', false);
+        return;
+      }
+      const {error} = await supa.from('avico_records').select('id', {count:'exact', head:true}).limit(1);
+      if(error) throw error;
+      const ms = Math.round(performance.now()-t0);
+      supaResultBox(`✅ Connexion réussie (${ms} ms) — session active, accès à <code>avico_records</code> confirmé pour l'organisation <strong>${esc(SUPA_ORG)}</strong>.`, true);
+    } else {
+      // ── Cas où l'utilisateur teste une AUTRE URL/clé (avant de changer de projet) ──
+      // Sans session, seul un test de base (URL/clé valides, projet joignable) est possible :
+      // la lecture de données réelles nécessitera toujours une connexion utilisateur.
+      const testClient = window.supabase.createClient(url, key);
+      const {error} = await testClient.auth.getSession();
+      if(error) throw error;
+      const ms = Math.round(performance.now()-t0);
+      supaResultBox(`✅ Projet joignable (${ms} ms) — URL et clé valides. Note : l'accès aux données réelles n'est testable qu'après connexion (nom d'utilisateur/mot de passe), l'accès anonyme étant bloqué par sécurité.`, true);
+    }
   }catch(e){
-    supaResultBox(`❌ Échec de connexion : ${esc(e.message||String(e))}`, false);
+    supaResultBox(`❌ Échec de connexion : ${esc(e.message||e.error_description||JSON.stringify(e))}`, false);
   }
 };
 
