@@ -1280,6 +1280,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="form-grid">
     <div class="fg"><label>Date début *</label><input type="date" id="rgFrom"></div>
     <div class="fg"><label>Date fin *</label><input type="date" id="rgTo"></div>
+    <div class="fg fg-full"><label>Responsable de bâtiment</label><select id="rgResponsable"><option value="">—</option></select></div>
   </div>
   <div class="form-grid" id="rgLayerFields">
     <div class="fg"><label>Total œufs pondus sur la période</label><input type="number" id="rgEggs" min="0" placeholder="ex: 38000"></div>
@@ -1379,6 +1380,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <input type="hidden" id="buildingId">
   <div class="form-grid">
     <div class="fg"><label>Nom *</label><input id="buildingName" placeholder="ex: Bâtiment A"></div>
+    <div class="fg"><label>Responsable de bâtiment</label><select id="buildingResponsable"><option value="">—</option></select></div>
     <div class="fg fg-full"><label>Localisation / Notes</label><textarea id="buildingDesc"></textarea></div>
   </div>
   <div class="modal-footer">
@@ -4543,6 +4545,11 @@ async function renderLotSemaine(lot, kpi, el){
   const semActuelle=getSemaineNum(lot.startDate, new Date().toISOString().slice(0,10));
   const sems=getAllSemaines(lot,kpi);
   const isLayer=lot.type==='layer';
+  // Responsable de bâtiment pour la saisie rapide semaine (même logique que Saisie du jour)
+  const wsStaffList=await getAll(S.STAFF);
+  const wsBuilding=lot.buildingId?(await getAll(S.BUILDINGS)).find(b=>b.id===lot.buildingId):null;
+  const wsDefResponsableId=wsBuilding?.responsableId||currentUser?.id||'';
+  const wsResponsableOpts=wsStaffList.map(s=>`<option value="${s.id}" ${String(s.id)===String(wsDefResponsableId)?'selected':''}>${esc(s.nom)} — ${esc(s.role||'')}</option>`).join('');
 
   // Semaine sélectionnée (défaut = semaine courante)
   if(!window._semView[lot.id]) window._semView[lot.id]=semActuelle;
@@ -4649,8 +4656,12 @@ async function renderLotSemaine(lot, kpi, el){
       <span style="font-size:11px;color:var(--text3)">J${plageActuelle.debutJ}–J${plageActuelle.finJ} | ${plageActuelle.debut} → ${plageActuelle.fin}</span>
     </div>
     <div class="card-bd">
-      <div style="background:var(--blue-bg);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--blue);margin-bottom:12px">
-        <i class="fas fa-info-circle"></i> Saisie rapide pour n'importe quel jour de la semaine en cours. Pour des dates précises, utilisez <strong>Saisie du jour</strong>.
+      <div style="background:var(--blue-bg);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--blue);margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span><i class="fas fa-info-circle"></i> Saisie rapide pour n'importe quel jour de la semaine en cours. Pour des dates précises, utilisez <strong>Saisie du jour</strong>.</span>
+        <span style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          <label style="font-weight:700;white-space:nowrap">🏗️ Responsable</label>
+          <select id="wsResponsable" style="max-width:200px">${wsResponsableOpts}</select>
+        </span>
       </div>
       <div class="week-saisie-grid">
         ${isLayer?`
@@ -4865,6 +4876,10 @@ window.calcWsRate=function(){
 };
 
 /* ── Saisie rapide semaine ── */
+window.getWsResponsableId=function(){
+  const v=parseInt(document.getElementById('wsResponsable')?.value);
+  return v||currentUser?.id||1;
+};
 window.saveWsSaisie=async function(type){
   const lot=window._lot;
   if(!lot){toast('Lot non sélectionné','err');return;}
@@ -4880,7 +4895,7 @@ window.saveWsSaisie=async function(type){
     if(!date||eggs<0){toast('Date et oeufs requis','err');return;}
     var allDeps=await getAll(S.DEPOTS);
     var defDep=allDeps.find(function(d){return d.type==='produit_fini';})||allDeps[0];
-    await addRec(S.EGG_PROD,{flockId:lot.id,date,eggCount:eggs,eggsBroken:casses,mortality:0,operatorId:currentUser?.id||1,
+    await addRec(S.EGG_PROD,{flockId:lot.id,date,eggCount:eggs,eggsBroken:casses,mortality:0,operatorId:getWsResponsableId(),
       cal_petit:wsCalPetit,cal_moyen:wsCalMoyen,cal_gros:wsCalGros,cal_tres_gros:wsCalTresGros});
     if(eggs>0&&defDep){
       var prods=await getAll(S.PRODUITS);
@@ -4893,20 +4908,20 @@ window.saveWsSaisie=async function(type){
     const date=document.getElementById('wsDatePesee').value;
     const poids=parseInt(document.getElementById('wsPoids').value)||0;
     if(!date||poids<=0){toast('Date et poids requis','err');return;}
-    await addRec(S.GROWTH_PROD,{flockId:lot.id,date,avgWeight:poids,mortality:0,operatorId:currentUser?.id||1});
+    await addRec(S.GROWTH_PROD,{flockId:lot.id,date,avgWeight:poids,mortality:0,operatorId:getWsResponsableId()});
     toast(`✓ Pesée S${getSemaineNum(lot.startDate,date)} — ${poids}g (${date})`);
   } else if(type==='aliment'){
     const date=document.getElementById('wsDateAlim').value;
     const kg=parseFloat(document.getElementById('wsAlim').value)||0;
     if(!date||kg<=0){toast('Date et quantité requis','err');return;}
-    await addRec(S.FEEDING,{flockId:lot.id,date,quantityKg:kg,feedType:'Aliment',operatorId:currentUser?.id||1});
+    await addRec(S.FEEDING,{flockId:lot.id,date,quantityKg:kg,feedType:'Aliment',operatorId:getWsResponsableId()});
     toast(`✓ Aliment S${getSemaineNum(lot.startDate,date)} — ${kg}kg (${date})`);
   } else if(type==='mortalite'){
     const date=document.getElementById('wsDateMort').value;
     const nb=parseInt(document.getElementById('wsMorts').value)||0;
     const cause=document.getElementById('wsCause').value;
     if(!date||nb<1){toast('Date et nombre de morts requis','err');return;}
-    await addRec(S.MORTALITE,{flockId:lot.id,date,nbMorts:nb,cause,observations:'',operatorId:currentUser?.id||1,ts:Date.now()});
+    await addRec(S.MORTALITE,{flockId:lot.id,date,nbMorts:nb,cause,observations:'',operatorId:getWsResponsableId(),ts:Date.now()});
     toast(`✓ Mortalité S${getSemaineNum(lot.startDate,date)} — ${nb} mort(s) (${date})`);
   }
 
@@ -4917,6 +4932,13 @@ window.saveWsSaisie=async function(type){
 async function renderLotSaisie(lot,kpi,el){
   const nut=getNut(lot.type,getAge(lot.startDate),lot.breed);
   const today=new Date().toISOString().slice(0,10);
+  // Responsable de bâtiment — liste déroulante alimentée par le module Personnel.
+  // Pré-sélection : responsable rattaché au bâtiment du lot (S.BUILDINGS.responsableId), sinon utilisateur courant.
+  const staffList=await getAll(S.STAFF);
+  const lotBuilding=lot.buildingId?(await getAll(S.BUILDINGS)).find(b=>b.id===lot.buildingId):null;
+  const defResponsableId=lotBuilding?.responsableId||currentUser?.id||'';
+  const responsableOpts=staffList.map(s=>`<option value="${s.id}" ${String(s.id)===String(defResponsableId)?'selected':''}>${esc(s.nom)} — ${esc(s.role||'')}</option>`).join('');
+  const responsableSelHtml=`<option value="">—</option>${responsableOpts}`;
   const recFeed=nut?(nut.feedGPD*kpi.vivants/1000).toFixed(1):0;
   const recWater=nut?(nut.waterMlPD*kpi.vivants/1000).toFixed(0):0;
   // mortAujourdhui comes from kpi (computed in computeKPIs from MORTALITE store)
@@ -5013,19 +5035,23 @@ async function renderLotSaisie(lot,kpi,el){
         <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">Morts</th>
         <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">Cause</th>
         <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">Notes</th>
+        <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">Responsable</th>
       </tr></thead>
       <tbody>${lastMorts.map(m=>`<tr>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${m.date}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:center;font-weight:700;color:var(--red)">${m.nbMorts}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${({'inconnu':'Inconnu','maladie':'Maladie','digestif':'Digestif','accident':'Accident','predateur':'Prédateur','chaleur':'Chaleur','autre':'Autre'}[m.cause])||m.cause||'—'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${m.observations||'—'}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${esc(staffList.find(s=>s.id===m.operatorId)?.nom||'—')}</td>
       </tr>`).join('')}</tbody>
     </table>`:'<div style="color:var(--text3);text-align:center;padding:10px;font-size:12px">Aucune mortalité enregistrée</div>'}
   `;
 
-  const sjDateBand=`<div id="sjDateBand" style="display:flex;gap:12px;align-items:center;background:#eef2ff;border:1px solid #a5b4fc;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+  const sjDateBand=`<div id="sjDateBand" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#eef2ff;border:1px solid #a5b4fc;border-radius:10px;padding:10px 14px;margin-bottom:12px">
     <label style="font-size:12px;font-weight:700;color:#3730a3;white-space:nowrap">📅 Date de la saisie du jour</label>
     <input type="date" id="sjDate" value="${today}" max="${today}" style="max-width:160px" onchange="updateSjDateWarn()">
+    <label style="font-size:12px;font-weight:700;color:#3730a3;white-space:nowrap;margin-left:6px">🏗️ Responsable de bâtiment</label>
+    <select id="sjResponsable" style="max-width:220px">${responsableSelHtml}</select>
     <span id="sjDateWarn" style="display:none;font-size:11px;font-weight:700;color:var(--red)">⚠ Différente d'aujourd'hui — utilisée pour Mortalité, Ponte et Alimentation ci-dessous</span>
   </div>`;
 
@@ -5102,7 +5128,7 @@ window.savePonte=async function(){
   // Validation calibres
   var sommeCal=sCalPetit+sCalMoyen+sCalGros+sCalTresGros;
   if(sommeCal>eggs){toast('Erreur: total calibres ('+sommeCal+') superieur aux oeufs pondus ('+eggs+')','err');return;}
-  await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:currentUser?.id||1,
+  await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:getSjResponsableId(),
     cal_petit:sCalPetit,cal_moyen:sCalMoyen,cal_gros:sCalGros,cal_tres_gros:sCalTresGros});
   // Entree stock oeufs bruts dans le depot selectionne
   if(eggs>0&&depotDestId){
@@ -5120,7 +5146,7 @@ window.savePesee=async()=>{
   const lot=window._lot;const date=document.getElementById('sDate').value;
   const poids=parseInt(document.getElementById('sPoids').value)||0;
   if(!date||poids<=0){toast('Date et poids requis','err');return;}
-  await addRec(S.GROWTH_PROD,{flockId:lot.id,date,avgWeight:poids,mortality:0,operatorId:currentUser?.id||1});
+  await addRec(S.GROWTH_PROD,{flockId:lot.id,date,avgWeight:poids,mortality:0,operatorId:getSjResponsableId()});
   toast('✓ Pesée — '+poids+'g');await refreshLot();
 };
 window.saveAbattage=async()=>{
@@ -5128,7 +5154,7 @@ window.saveAbattage=async()=>{
   const kg=parseFloat(document.getElementById('aPoids').value)||0;
   const nb=parseInt(document.getElementById('aNb').value)||0;
   if(!date||kg<=0){toast('Date et poids requis','err');return;}
-  await addRec(S.SLAUGHTER,{flockId:lot.id,date,meatKg:kg,nbAnimaux:nb,operatorId:currentUser?.id||1});
+  await addRec(S.SLAUGHTER,{flockId:lot.id,date,meatKg:kg,nbAnimaux:nb,operatorId:getSjResponsableId()});
   toast(`✓ Abattage — ${kg}kg`);await refreshLot();
 };
 window.saveFeed=async()=>{
@@ -5136,7 +5162,7 @@ window.saveFeed=async()=>{
   const kg=parseFloat(document.getElementById('fKg').value)||0;
   const type=document.getElementById('fType').value;
   if(!date||kg<=0){toast('Données incomplètes','err');return;}
-  await addRec(S.FEEDING,{flockId:lot.id,date,quantityKg:kg,feedType:type,operatorId:currentUser?.id||1});
+  await addRec(S.FEEDING,{flockId:lot.id,date,quantityKg:kg,feedType:type,operatorId:getSjResponsableId()});
   // Auto-stock: sortie aliment
   const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.nom===type);
   if(p){const deps=await getAll(S.DEPOTS);const d=deps.find(x=>x.type==='aliment')||deps[0];if(d) await addRec(S.MVTS,{type:'sortie',produitId:p.id,depotSrcId:d.id,depotDestId:null,quantite:kg,unite:'kg',prixUnit:p.prix||0,fournId:null,ref:'AUTO',motif:`Alimentation lot ${lot.nom}`,date,ts:Date.now()});}
@@ -5146,7 +5172,7 @@ window.saveWater=async()=>{
   const lot=window._lot;const date=document.getElementById('wDate').value;
   const l=parseFloat(document.getElementById('wLitres').value)||0;
   if(!date||l<=0){toast('Données incomplètes','err');return;}
-  await addRec(S.WATER,{flockId:lot.id,date,waterLiters:l,remarks:'',operatorId:currentUser?.id||1});
+  await addRec(S.WATER,{flockId:lot.id,date,waterLiters:l,remarks:'',operatorId:getSjResponsableId()});
   toast(`✓ Eau — ${l}L`);await refreshLot();
 };
 
@@ -5175,6 +5201,11 @@ window.openRattrapageModal=async function(){
   const aliProds=prods.filter(p=>p.categorie==='aliment');
   document.getElementById('rgFeedType').innerHTML=aliProds.map(p=>`<option value="${esc(p.nom)}">${esc(p.nom)}</option>`).join('')
     ||'<option>Aliment ponte 116</option><option>Aliment finition F3</option>';
+  const rgStaff=await getAll(S.STAFF);
+  const rgBuilding=lot.buildingId?(await getAll(S.BUILDINGS)).find(b=>b.id===lot.buildingId):null;
+  const rgDefResp=rgBuilding?.responsableId||currentUser?.id||'';
+  document.getElementById('rgResponsable').innerHTML='<option value="">—</option>'+rgStaff.map(s=>`<option value="${s.id}">${esc(s.nom)} — ${esc(s.role||'')}</option>`).join('');
+  document.getElementById('rgResponsable').value=rgDefResp;
   openOverlay('mRattrapage');
 };
 
@@ -5225,6 +5256,7 @@ window.runRattrapage=async function(){
   const totMort=parseInt(document.getElementById('rgMort').value)||0;
   const totFeed=parseFloat(document.getElementById('rgFeed').value)||0;
   const feedType=document.getElementById('rgFeedType').value;
+  const rgOpId=parseInt(document.getElementById('rgResponsable')?.value)||currentUser?.id||1;
   if(totMort>=lot.initialStock){toast('Mortalité supérieure à l\'effectif initial','err');return;}
 
   const btn=document.getElementById('runRattrapageBtn');btn.disabled=true;
@@ -5235,7 +5267,7 @@ window.runRattrapage=async function(){
   for(let i=0;i<days.length;i++){
     if(mortPerDay[i]>0){
       await addRec(S.MORTALITE,{flockId:lot.id,date:days[i],nbMorts:mortPerDay[i],cause:'inconnu',
-        observations:'Rattrapage historique',operatorId:currentUser?.id||1,ts:Date.now()});
+        observations:'Rattrapage historique',operatorId:rgOpId,ts:Date.now()});
     }
     if(i%20===0) prog.textContent=`Mortalité… ${i+1}/${days.length}`;
   }
@@ -5244,7 +5276,7 @@ window.runRattrapage=async function(){
   if(totFeed>0){
     const feedPerDay=_rgSpread(Math.round(totFeed),days.length,vary);
     for(let i=0;i<days.length;i++){
-      if(feedPerDay[i]>0) await addRec(S.FEEDING,{flockId:lot.id,date:days[i],quantityKg:feedPerDay[i],feedType,operatorId:currentUser?.id||1});
+      if(feedPerDay[i]>0) await addRec(S.FEEDING,{flockId:lot.id,date:days[i],quantityKg:feedPerDay[i],feedType,operatorId:rgOpId});
       if(i%20===0) prog.textContent=`Aliment… ${i+1}/${days.length}`;
     }
   }
@@ -5257,7 +5289,7 @@ window.runRattrapage=async function(){
       for(let i=0;i<days.length;i++){
         if(eggsPerDay[i]>0){
           await addRec(S.EGG_PROD,{flockId:lot.id,date:days[i],eggCount:eggsPerDay[i],eggsBroken:0,mortality:0,
-            operatorId:currentUser?.id||1,cal_petit:0,cal_moyen:0,cal_gros:0,cal_tres_gros:0});
+            operatorId:rgOpId,cal_petit:0,cal_moyen:0,cal_gros:0,cal_tres_gros:0});
         }
         if(i%20===0) prog.textContent=`Ponte… ${i+1}/${days.length}`;
       }
@@ -5270,7 +5302,7 @@ window.runRattrapage=async function(){
       for(let i=0;i<days.length;i+=7){
         const ratio=days.length>1?i/(days.length-1):0;
         const w=Math.round(w0+(w1-w0)*ratio);
-        await addRec(S.GROWTH_PROD,{flockId:lot.id,date:days[i],avgWeight:w,mortality:0,operatorId:currentUser?.id||1});
+        await addRec(S.GROWTH_PROD,{flockId:lot.id,date:days[i],avgWeight:w,mortality:0,operatorId:rgOpId});
       }
     }
   }
@@ -6004,10 +6036,11 @@ window.saveDepot=saveDepot;
 // Un bâtiment peut contenir plusieurs lignes (S.LINES.buildingId → S.BUILDINGS.id).
 // Les lots (S.FLOCKS) sont affectés à un buildingId + lineId précis.
 async function renderSettingsBatiments(){
-  const [buildings, lines, flocks] = await Promise.all([getAll(S.BUILDINGS), getAll(S.LINES), getAll(S.FLOCKS)]);
+  const [buildings, lines, flocks, staff] = await Promise.all([getAll(S.BUILDINGS), getAll(S.LINES), getAll(S.FLOCKS), getAll(S.STAFF)]);
   const rows = buildings.slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'')).map(b=>{
     const bLines = lines.filter(l=>l.buildingId===b.id);
     const nbLots = flocks.filter(f=>f.buildingId===b.id).length;
+    const respNom = staff.find(s=>s.id===b.responsableId)?.nom || null;
     const lineRows = bLines.map(l=>{
       const nbLotsLigne = flocks.filter(f=>f.lineId===l.id).length;
       return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-radius:6px;background:#f9fafb;margin-bottom:4px">
@@ -6028,6 +6061,7 @@ async function renderSettingsBatiments(){
         </span>
       </div>
       <div class="card-bd">
+        <div style="font-size:11px;margin-bottom:8px"><i class="fas fa-user-shield" style="color:${respNom?'var(--g2)':'var(--text3)'}"></i> Responsable : <strong style="color:${respNom?'inherit':'var(--text3)'}">${respNom?esc(respNom):'Non assigné'}</strong></div>
         ${b.description?`<div style="font-size:11px;color:var(--text3);margin-bottom:8px">${esc(b.description)}</div>`:''}
         ${lineRows}
       </div>
@@ -6045,13 +6079,17 @@ async function renderSettingsBatiments(){
 window.openBuildingModal=async function(id=null){
   document.getElementById('buildingId').value=id||'';
   document.getElementById('mBuildingTitle').textContent=id?'Modifier le bâtiment':'Nouveau bâtiment';
-  if(!id){ document.getElementById('buildingName').value=''; document.getElementById('buildingDesc').value=''; }
-  else{ const b=(await getAll(S.BUILDINGS)).find(x=>x.id===id); if(b){ document.getElementById('buildingName').value=b.nom||''; document.getElementById('buildingDesc').value=b.description||''; } }
+  const staff=await getAll(S.STAFF);
+  const respSel=document.getElementById('buildingResponsable');
+  respSel.innerHTML='<option value="">—</option>'+staff.map(s=>`<option value="${s.id}">${esc(s.nom)} — ${esc(s.role||'')}</option>`).join('');
+  if(!id){ document.getElementById('buildingName').value=''; document.getElementById('buildingDesc').value=''; respSel.value=''; }
+  else{ const b=(await getAll(S.BUILDINGS)).find(x=>x.id===id); if(b){ document.getElementById('buildingName').value=b.nom||''; document.getElementById('buildingDesc').value=b.description||''; respSel.value=b.responsableId||''; } }
   openOverlay('mBuilding');
 };
 window.saveBuilding=async function(){
   const id=document.getElementById('buildingId').value;
-  const data={nom:document.getElementById('buildingName').value.trim(),description:document.getElementById('buildingDesc').value.trim()};
+  const respVal=document.getElementById('buildingResponsable').value;
+  const data={nom:document.getElementById('buildingName').value.trim(),description:document.getElementById('buildingDesc').value.trim(),responsableId:respVal?parseInt(respVal):null};
   if(!data.nom){toast('Nom requis','err');return;}
   if(id) await updRec(S.BUILDINGS,parseInt(id),data); else await addRec(S.BUILDINGS,data);
   closeOverlay('mBuilding'); toast(id?'Bâtiment mis à jour':'Bâtiment créé');
@@ -7615,6 +7653,11 @@ window.updateSjDateWarn=function(){
   const today=new Date().toISOString().slice(0,10);
   warn.style.display=inp.value!==today?'inline':'none';
 };
+// Responsable de bâtiment sélectionné pour la saisie du jour en cours (fallback : utilisateur connecté).
+window.getSjResponsableId=function(){
+  const v=parseInt(document.getElementById('sjResponsable')?.value);
+  return v||currentUser?.id||1;
+};
 window.saveMortalite=async()=>{
   const lot=window._lot;
   const date=document.getElementById('sjDate')?.value;
@@ -7625,7 +7668,7 @@ window.saveMortalite=async()=>{
   if(nb>=lot.initialStock){toast('Nombre supérieur à l\'effectif initial','err');return;}
   await addRec(S.MORTALITE,{
     flockId:lot.id, date, nbMorts:nb,
-    cause, observations:obs, operatorId:currentUser?.id||1, ts:Date.now()
+    cause, observations:obs, operatorId:getSjResponsableId(), ts:Date.now()
   });
   const causeLabels={inconnu:'Inconnu',maladie:'Maladie infectieuse',digestif:'Digestif',
     accident:'Accident',predateur:'Prédateur',chaleur:'Chaleur',autre:'Autre'};
