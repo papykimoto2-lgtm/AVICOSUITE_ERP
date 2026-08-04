@@ -1671,6 +1671,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Téléphone</label><input id="clientTel" placeholder="+225 07 00 00 00"></div>
     <div class="fg"><label>Email</label><input id="clientEmail" type="email"></div>
     <div class="fg"><label>Ville / Zone</label><input id="clientVille" placeholder="Abidjan, Bouaké…"></div>
+    <div class="fg"><label>NCC — N° Compte Contribuable <span style="font-weight:400;color:var(--text3)">(requis FNE si entreprise)</span></label><input id="clientNcc" placeholder="9502363N"></div>
     <div class="fg"><label>Modalité paiement</label><select id="clientPaie">
       <option value="comptant">Comptant</option><option value="credit7">Crédit 7j</option>
       <option value="credit15">Crédit 15j</option><option value="credit30">Crédit 30j</option>
@@ -1683,6 +1684,39 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mClient')">Annuler</button>
     <button class="btn btn-p" onclick="saveClient()"><i class="fas fa-save"></i> Enregistrer</button>
+  </div>
+</div></div>
+
+<!-- TÉLÉDÉCLARATION FNE — modal de confirmation -->
+<div class="overlay" id="mFne">
+<div class="modal">
+  <h3 id="mFneTitle"><i class="fas fa-stamp"></i> Télédéclarer à la FNE (DGI)</h3>
+  <input type="hidden" id="fneType"><input type="hidden" id="fneRecId">
+  <div id="fneRecapBox" style="background:#f0fdf4;border:1px solid var(--g3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px"></div>
+  <div class="form-grid">
+    <div class="fg" id="fneTemplateWrap"><label>Type de client</label><select id="fne_m_template" onchange="fneToggleNccField()">
+      <option value="B2C">B2C — Particulier</option>
+      <option value="B2B">B2B — Entreprise (NCC requis)</option>
+      <option value="B2G">B2G — Institution gouvernementale</option>
+      <option value="B2F">B2F — Client à l'international</option>
+    </select></div>
+    <div class="fg" id="fneNccWrap" style="display:none"><label>NCC du client</label><input id="fne_m_ncc" placeholder="9502363N"></div>
+    <div class="fg"><label>Mode de paiement</label><select id="fne_m_pay">
+      <option value="cash">Espèces</option><option value="card">Carte bancaire</option>
+      <option value="check">Chèque</option><option value="mobile-money">Mobile Money</option>
+      <option value="transfer">Virement</option><option value="deferred">À terme (crédit)</option>
+    </select></div>
+    <div class="fg" id="fneTaxWrap"><label>Régime TVA</label><select id="fne_m_tax">
+      <option value="TVA">TVA normale 18%</option><option value="TVAB">TVA réduite 9%</option>
+      <option value="TVAC">TVA exo. conventionnelle 0%</option><option value="TVAD">TVA exo. légale 0%</option>
+    </select></div>
+    <div class="fg"><label>Point de vente</label><input id="fne_m_pos" placeholder="Ex : 23"></div>
+    <div class="fg"><label>Établissement</label><input id="fne_m_etab" placeholder="Nom de l'établissement"></div>
+  </div>
+  <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.6"><i class="fas fa-info-circle"></i> La certification est transmise en temps réel à la plateforme officielle de la DGI et retourne un numéro de facture normalisée, un sticker QR et un lien de vérification.</div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mFne')">Annuler</button>
+    <button class="btn btn-p" id="fneConfirmBtn" onclick="confirmFneSend()"><i class="fas fa-paper-plane"></i> Télédéclarer</button>
   </div>
 </div></div>
 
@@ -2828,7 +2862,14 @@ async function getExploitationSettings(){
     tvaApplicable:true, tauxTva:18, mentionExoneration:'',
     mentionLegale:'Tout paiement tardif entraîne des pénalités légales.',
     logoBase64:'', devise:'FCFA', formeJuridique:'', capitalSocial:'',
-    codePostal:'', telephone2:'', siteWeb:''
+    codePostal:'', telephone2:'', siteWeb:'',
+    // ── FNE (Facture Normalisée Électronique — DGI Côte d'Ivoire) ──
+    fneActive:false, fneEnv:'test',
+    fneUrlTest:'http://54.247.95.108/ws', fneUrlProd:'',
+    fneApiKey:'', fneNcc:'',
+    fnePointOfSale:'', fneEtablissement:'',
+    fneTemplateDefault:'B2C', fneTaxDefault:'TVA', fnePaymentDefault:'cash',
+    fneUseProxy:false, fneProxyUrl:''
   };
 }
 
@@ -3012,6 +3053,7 @@ async function renderSettings(ca){
     ['notifs','fa-bell','Notifs'],
     ['production','fa-rocket','Prod.'],
     ['cloud','fa-cloud','Cloud'],
+    ['fne','fa-stamp','FNE (DGI)'],
     ['data','fa-database','Données'],
     ['diagnostic','fa-stethoscope','Diagnostic'],
   ];
@@ -3042,6 +3084,7 @@ async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='notifs')       return renderSettingsNotifs(cfg, isAdmin);
   if(tab==='production')   return await renderSettingsProduction(cfg, users);
   if(tab==='cloud')        return renderSettingsCloud(cfg);
+  if(tab==='fne')          return renderSettingsFNE(cfg, isAdmin);
   if(tab==='data')         return renderSettingsData(isSuperAdmin);
   if(tab==='diagnostic')   return '<div id="diagContainer"><div style="padding:30px;text-align:center"><button class="btn btn-p" onclick="runDbDiagnostic()"><i class="fas fa-stethoscope"></i> Lancer le diagnostic</button></div></div>';
   return '';
@@ -3266,6 +3309,149 @@ window.previewFactureTest = async function(){
   };
   const testClient = {nom:'Client Démo SARL',adresse:'Plateau, Rue du Commerce',ville:'Abidjan',tel:'+225 07 00 00 00 00'};
   buildAndPrintFacture(testSale, testClient, cfg);
+};
+
+// ── Tab FNE (Facture Normalisée Électronique — DGI Côte d'Ivoire) ──
+function renderSettingsFNE(cfg, isAdmin){
+  const ro  = isAdmin ? '' : 'readonly';
+  const dis = isAdmin ? '' : 'disabled';
+  const envBadge = cfg.fneEnv==='prod'
+    ? '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#fee2e2;color:#991b1b;font-weight:700">🔴 PRODUCTION</span>'
+    : '<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:#fef9c3;color:#713f12;font-weight:700">🧪 TEST</span>';
+  return `
+  <div class="settings-section-title">🖨️ Facture Normalisée Électronique (FNE) — DGI Côte d'Ivoire</div>
+  <div class="settings-section-sub">Télédéclaration des factures de vente et des bordereaux d'achat agricole auprès de la plateforme officielle de la Direction Générale des Impôts. ${envBadge}</div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">⚙️ Activation</div>
+    <div class="card-bd">
+      <div class="form-grid">
+        <div class="fg"><label>Télédéclaration FNE</label>
+          <select id="fne_active" ${dis}>
+            <option value="1" ${cfg.fneActive?'selected':''}>✅ Activée</option>
+            <option value="0" ${!cfg.fneActive?'selected':''}>❌ Désactivée</option>
+          </select></div>
+        <div class="fg"><label>Environnement</label>
+          <select id="fne_env" ${dis}>
+            <option value="test" ${cfg.fneEnv!=='prod'?'selected':''}>🧪 Test (bac à sable DGI)</option>
+            <option value="prod" ${cfg.fneEnv==='prod'?'selected':''}>🔴 Production</option>
+          </select></div>
+      </div>
+      <div style="margin-top:8px;padding:9px 12px;background:var(--blue-bg);color:var(--blue);border-radius:8px;font-size:11px;line-height:1.7">
+        <i class="fas fa-info-circle"></i> Pas encore de compte ? Inscrivez votre entreprise sur
+        <a href="https://www.fne.dgi.gouv.ci" target="_blank" style="color:var(--blue);font-weight:700">fne.dgi.gouv.ci</a>,
+        activez l'environnement de test, puis récupérez votre clé API dans l'onglet « Paramétrage » de votre espace FNE.
+        La clé de production n'est délivrée qu'après validation de spécimens de factures par la DGI (support.fne@dgi.gouv.ci).
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">🔑 Identifiants API</div>
+    <div class="card-bd">
+      <div class="form-grid">
+        <div class="fg"><label>NCC — N° de Compte Contribuable (votre entreprise)</label><input id="fne_ncc" value="${esc(cfg.fneNcc||'')}" placeholder="9606123E" ${ro}></div>
+        <div class="fg"><label>Clé API (Bearer token)</label><input id="fne_apikey" type="password" value="${esc(cfg.fneApiKey||'')}" placeholder="kAF01gEM40r1Uz5WLJn5lxAnGMwVjCME" ${ro}></div>
+        <div class="fg"><label>URL environnement test</label><input id="fne_urltest" value="${esc(cfg.fneUrlTest||'http://54.247.95.108/ws')}" ${ro}></div>
+        <div class="fg"><label>URL environnement production</label><input id="fne_urlprod" value="${esc(cfg.fneUrlProd||'')}" placeholder="transmise par la DGI après validation" ${ro}></div>
+        <div class="fg"><label>Point de vente</label><input id="fne_pos" value="${esc(cfg.fnePointOfSale||'')}" placeholder="Ex : 23 / Siège" ${ro}></div>
+        <div class="fg"><label>Établissement</label><input id="fne_etab" value="${esc(cfg.fneEtablissement||'')}" placeholder="Nom de l'établissement" ${ro}></div>
+        <div class="fg"><label>Modèle de TVA par défaut</label>
+          <select id="fne_taxdefault" ${dis}>
+            <option value="TVA" ${cfg.fneTaxDefault==='TVA'?'selected':''}>TVA normale 18%</option>
+            <option value="TVAB" ${cfg.fneTaxDefault==='TVAB'?'selected':''}>TVA réduite 9%</option>
+            <option value="TVAC" ${cfg.fneTaxDefault==='TVAC'?'selected':''}>TVA exonérée conventionnelle 0%</option>
+            <option value="TVAD" ${cfg.fneTaxDefault==='TVAD'?'selected':''}>TVA exonérée légale 0% (TEE/RME)</option>
+          </select></div>
+        <div class="fg"><label>Type de client par défaut</label>
+          <select id="fne_templatedefault" ${dis}>
+            <option value="B2C" ${cfg.fneTemplateDefault==='B2C'?'selected':''}>B2C — Particulier</option>
+            <option value="B2B" ${cfg.fneTemplateDefault==='B2B'?'selected':''}>B2B — Entreprise (NCC requis)</option>
+            <option value="B2G" ${cfg.fneTemplateDefault==='B2G'?'selected':''}>B2G — Institution gouvernementale</option>
+            <option value="B2F" ${cfg.fneTemplateDefault==='B2F'?'selected':''}>B2F — Client à l'international</option>
+          </select></div>
+        <div class="fg"><label>Mode de paiement par défaut</label>
+          <select id="fne_paydefault" ${dis}>
+            <option value="cash" ${cfg.fnePaymentDefault==='cash'?'selected':''}>Espèces</option>
+            <option value="card" ${cfg.fnePaymentDefault==='card'?'selected':''}>Carte bancaire</option>
+            <option value="check" ${cfg.fnePaymentDefault==='check'?'selected':''}>Chèque</option>
+            <option value="mobile-money" ${cfg.fnePaymentDefault==='mobile-money'?'selected':''}>Mobile Money</option>
+            <option value="transfer" ${cfg.fnePaymentDefault==='transfer'?'selected':''}>Virement</option>
+            <option value="deferred" ${cfg.fnePaymentDefault==='deferred'?'selected':''}>À terme (crédit)</option>
+          </select></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">🌐 Relais réseau (si blocage CORS)</div>
+    <div class="card-bd">
+      <div style="font-size:11px;color:var(--text2);line-height:1.7;margin-bottom:10px">
+        Le navigateur appelle par défaut l'API DGI directement. Si la plateforme FNE refuse les requêtes cross-origin (erreur réseau au moment de la télédéclaration),
+        activez un relais : une petite fonction Supabase Edge Function (fournie séparément, à déployer une fois) qui transmet la requête sans exposer votre clé API à un tiers autre que la DGI.
+      </div>
+      <div class="form-grid">
+        <div class="fg"><label>Utiliser un relais</label>
+          <select id="fne_useproxy" ${dis}>
+            <option value="0" ${!cfg.fneUseProxy?'selected':''}>❌ Non — appel direct</option>
+            <option value="1" ${cfg.fneUseProxy?'selected':''}>✅ Oui — via relais</option>
+          </select></div>
+        <div class="fg fg-full"><label>URL du relais</label><input id="fne_proxyurl" value="${esc(cfg.fneProxyUrl||'')}" placeholder="https://xxxx.supabase.co/functions/v1/fne-proxy" ${ro}></div>
+      </div>
+    </div>
+  </div>
+
+  ${isAdmin ? `
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn btn-p" style="min-height:46px" onclick="saveFNE()"><i class="fas fa-save"></i> Enregistrer</button>
+    <button class="btn btn-gh" style="min-height:46px" onclick="testFneConnection()"><i class="fas fa-plug"></i> Tester la connexion</button>
+  </div>
+  <div id="fneTestResult" style="margin-top:10px"></div>
+  ` : '<div style="padding:9px 12px;background:var(--blue-bg);color:var(--blue);border-radius:8px;font-size:11px"><i class="fas fa-info-circle"></i> Seuls les administrateurs peuvent modifier ces informations.</div>'}
+  `;
+}
+
+window.saveFNE = async function(){
+  const all = await getAll(S.SETTINGS_APP);
+  const existing = all.find(s=>s.key==='exploitation');
+  const data = {
+    ...(existing||{key:'exploitation'}),
+    fneActive:        document.getElementById('fne_active')?.value==='1',
+    fneEnv:            document.getElementById('fne_env')?.value||'test',
+    fneNcc:            document.getElementById('fne_ncc')?.value.trim()||'',
+    fneApiKey:         document.getElementById('fne_apikey')?.value.trim()||'',
+    fneUrlTest:        document.getElementById('fne_urltest')?.value.trim()||'http://54.247.95.108/ws',
+    fneUrlProd:        document.getElementById('fne_urlprod')?.value.trim()||'',
+    fnePointOfSale:    document.getElementById('fne_pos')?.value.trim()||'',
+    fneEtablissement:  document.getElementById('fne_etab')?.value.trim()||'',
+    fneTaxDefault:     document.getElementById('fne_taxdefault')?.value||'TVA',
+    fneTemplateDefault:document.getElementById('fne_templatedefault')?.value||'B2C',
+    fnePaymentDefault: document.getElementById('fne_paydefault')?.value||'cash',
+    fneUseProxy:       document.getElementById('fne_useproxy')?.value==='1',
+    fneProxyUrl:       document.getElementById('fne_proxyurl')?.value.trim()||'',
+  };
+  if(existing) await updRec(S.SETTINGS_APP, existing.id, data);
+  else await addRec(S.SETTINGS_APP, data);
+  toast('✅ Paramètres FNE sauvegardés');
+};
+
+// ── Test de connexion basique (vérifie que l'URL + la clé répondent, sans certifier de facture) ──
+window.testFneConnection = async function(){
+  const el = document.getElementById('fneTestResult');
+  if(el) el.innerHTML = '<div style="font-size:12px;color:var(--text2)"><i class="fas fa-spinner fa-spin"></i> Test en cours…</div>';
+  const cfg = await getExploitationSettings();
+  try{
+    // On envoie une requête volontairement incomplète : une réponse 400/401 structurée
+    // prouve que l'URL et le réseau fonctionnent (seule l'authentification/les données sont en cause).
+    await fneCall(cfg, '/external/invoices/sign', {});
+    if(el) el.innerHTML = '<div style="font-size:12px;color:#059669"><i class="fas fa-check-circle"></i> La plateforme FNE a répondu.</div>';
+  }catch(e){
+    const msg = String(e.message||e);
+    const looksReachable = /FNE — /.test(msg); // une erreur métier structurée = la plateforme a répondu
+    if(el) el.innerHTML = looksReachable
+      ? '<div style="font-size:12px;color:#059669"><i class="fas fa-check-circle"></i> La plateforme FNE a répondu (réseau OK) : '+esc(msg)+'</div>'
+      : '<div style="font-size:12px;color:var(--red)"><i class="fas fa-times-circle"></i> '+esc(msg)+'</div>';
+  }
 };
 
 // ── Tab Utilisateurs ──
@@ -6303,7 +6489,7 @@ async function renderBCs(ca){
   const statL={draft:'Brouillon',sent:'Envoyé',partial:'Partiel',done:'Réceptionné'};
   const statC={draft:'bc-draft',sent:'bc-sent',partial:'bc-partial',done:'bc-done'};
   const wait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
-  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div><div class="stock-page">
     <div class="g4"><div class="kpi kpi-b"><div class="kpi-lbl">Total BC</div><div class="kpi-val">${bcs.length}</div></div><div class="kpi kpi-a"><div class="kpi-lbl">En attente</div><div class="kpi-val">${wait}</div></div><div class="kpi kpi-g"><div class="kpi-lbl">Réceptionnés</div><div class="kpi-val">${bcs.filter(b=>b.statut==='done').length}</div></div><div class="kpi kpi-b"><div class="kpi-lbl">Brouillons</div><div class="kpi-val">${bcs.filter(b=>b.statut==='draft').length}</div></div></div>
     <div class="card"><div class="card-hd">Bons de commande</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Référence</th><th>Date</th><th>Fournisseur</th><th>Lignes</th><th>Total HT</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun bon de commande</td></tr>'}</tbody></table></div></div>
@@ -6472,7 +6658,7 @@ async function openClientModal(id=null){
   document.getElementById('clientId').value=id||'';
   document.getElementById('mClientTitle').textContent=id?'Modifier le client':'Nouveau client';
   if(!id){
-    ['clientNom','clientContact','clientTel','clientEmail','clientVille','clientAdresse','clientNotes'].forEach(x=>document.getElementById(x).value='');
+    ['clientNom','clientContact','clientTel','clientEmail','clientVille','clientNcc','clientAdresse','clientNotes'].forEach(x=>document.getElementById(x).value='');
     document.getElementById('clientCredit').value='';
     document.getElementById('clientType').value='detail';
     document.getElementById('clientPaie').value='comptant';
@@ -6486,6 +6672,7 @@ async function openClientModal(id=null){
       document.getElementById('clientTel').value=c.tel||'';
       document.getElementById('clientEmail').value=c.email||'';
       document.getElementById('clientVille').value=c.ville||'';
+      document.getElementById('clientNcc').value=c.ncc||'';
       document.getElementById('clientPaie').value=c.paie||'comptant';
       document.getElementById('clientCredit').value=c.credit||'';
       document.getElementById('clientAdresse').value=c.adresse||'';
@@ -6505,6 +6692,7 @@ async function saveClient(){
     tel:document.getElementById('clientTel').value.trim(),
     email:document.getElementById('clientEmail').value.trim(),
     ville:document.getElementById('clientVille').value.trim(),
+    ncc:document.getElementById('clientNcc').value.trim(),
     paie:document.getElementById('clientPaie').value,
     credit:parseFloat(document.getElementById('clientCredit').value)||0,
     adresse:document.getElementById('clientAdresse').value.trim(),
@@ -6548,6 +6736,7 @@ async function renderCommandes(ca){
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
         ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -6606,6 +6795,7 @@ window.filterCommandes=async function(clientId){
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
         ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -9730,6 +9920,266 @@ function buildSecurityQR(cfg, docType, docRef, montant, dateDoc){
 }
 
 
+// Sticker officiel FNE — QR pointant vers le lien de vérification renvoyé par la DGI
+function buildFneSticker(verifUrl, reference, ncc){
+  const elId = 'fneqr_'+Math.random().toString(36).slice(2,10);
+  const url = verifUrl || '';
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;border:1.5px solid #166534;border-radius:8px;padding:6px 10px;background:#f0fdf4">
+    <div style="font-size:8px;font-weight:700;color:#166534;letter-spacing:.5px">FNE · DGI CÔTE D'IVOIRE</div>
+    <div id="${elId}" style="width:64px;height:64px"></div>
+    <div style="font-size:7px;color:#166534;font-weight:700">${esc(reference||'')}</div>
+    ${ncc?`<div style="font-size:6px;color:#4b5563">NCC ${esc(ncc)}</div>`:''}
+    <\x73cript>
+      (function(){
+        function draw(){ try{ new QRCode(document.getElementById('${elId}'), { text: ${JSON.stringify(url)}, width:64, height:64, correctLevel: QRCode.CorrectLevel.M }); }catch(e){ document.getElementById('${elId}').innerHTML='<div style="font-size:7px;color:#c00">QR indispo</div>'; } }
+        if(window.QRCode) draw(); else window.addEventListener('load', draw);
+      })();
+    <\x2fscript>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  MODULE FNE — Facture Normalisée Électronique (DGI Côte d'Ivoire)
+//  Réf. « PROCEDURE D'INTERFACAGE DES ENTREPRISES PAR API » — DGI, mai 2025
+// ════════════════════════════════════════════════════════════════════════
+function fneBaseUrl(cfg){
+  const u = (cfg.fneEnv==='prod' ? (cfg.fneUrlProd||'') : (cfg.fneUrlTest||'http://54.247.95.108/ws'));
+  return String(u||'').replace(/\/+$/,'');
+}
+
+// Mappe les modes de paiement internes (ventes ET clients) vers l'énum FNE
+const FNE_PAY_MAP = {
+  comptant:'cash', especes:'cash', cash:'cash',
+  card:'card', carte:'card',
+  check:'check', cheque:'check', 'chèque':'check',
+  mobile_money:'mobile-money', 'mobile-money':'mobile-money', wave:'mobile-money', orange_money:'mobile-money', mtn:'mobile-money',
+  virement:'transfer', transfer:'transfer',
+  credit:'deferred', credit7:'deferred', credit15:'deferred', credit30:'deferred', credit60:'deferred', deferred:'deferred',
+};
+function fnePaymentMethod(val, fallback){ return FNE_PAY_MAP[val] || fallback || 'cash'; }
+
+// Appel générique — direct, ou via relais (Edge Function) si configuré pour contourner un blocage CORS
+async function fneCall(cfg, path, body, method){
+  method = method || 'POST';
+  if(!cfg.fneApiKey) throw new Error('Clé API FNE non configurée — Paramétrage → FNE (DGI).');
+  const targetUrl = fneBaseUrl(cfg) + path;
+  const headers = { 'Content-Type':'application/json', 'Accept':'application/json', 'Authorization':'Bearer '+cfg.fneApiKey };
+  let res;
+  try{
+    if(cfg.fneUseProxy && cfg.fneProxyUrl){
+      // Contrat du relais : POST { url, method, headers, body } → renvoie la réponse DGI telle quelle
+      res = await fetch(cfg.fneProxyUrl, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ url: targetUrl, method, headers, body })
+      });
+    } else {
+      res = await fetch(targetUrl, { method, headers, body: JSON.stringify(body||{}) });
+    }
+  }catch(networkErr){
+    throw new Error('Connexion à la plateforme FNE impossible (' + targetUrl + '). Probable blocage CORS du navigateur — activez le relais dans Paramétrage → FNE (DGI). Détail technique : ' + (networkErr?.message||networkErr));
+  }
+  let json = null;
+  try{ json = await res.json(); }catch(e){ /* réponse non-JSON */ }
+  if(!res.ok){
+    const msg = (json && (json.message || json.error)) || ('Erreur HTTP ' + res.status);
+    const err = new Error('FNE — ' + msg);
+    err.status = res.status; err.payload = json;
+    throw err;
+  }
+  return json;
+}
+
+// ── Construction du corps de requête — Facture de VENTE ──
+function fneBuildSalePayload(s, client, cfg, opts){
+  opts = opts || {};
+  const lignes = (s.lignes && s.lignes.length) ? s.lignes
+    : [{designation:s.produit||'Vente', qte:s.qty||1, unite:'', prixUnit:s.totalHT||0}];
+  const taxeParDefaut = opts.taxes || cfg.fneTaxDefault || 'TVA';
+  const template = opts.template || (client && client.ncc ? 'B2B' : (cfg.fneTemplateDefault||'B2C'));
+  return {
+    invoiceType: 'sale',
+    paymentMethod: fnePaymentMethod(opts.paymentMethod || s.paie, cfg.fnePaymentDefault),
+    template,
+    isRne: false,
+    clientNcc: template==='B2B' ? (opts.clientNcc || client?.ncc || '') : undefined,
+    clientCompanyName: client?.nom || 'Client comptant',
+    clientPhone: client?.tel || '',
+    clientEmail: client?.email || '',
+    pointOfSale: opts.pointOfSale || cfg.fnePointOfSale || '1',
+    establishment: opts.establishment || cfg.fneEtablissement || cfg.nomExploitation || '1',
+    commercialMessage: opts.commercialMessage || '',
+    footer: opts.footer || cfg.mentionLegale || '',
+    foreignCurrency: opts.foreignCurrency || '',
+    foreignCurrencyRate: opts.foreignCurrency ? (opts.foreignCurrencyRate||0) : 0,
+    items: lignes.map(l => ({
+      taxes: [l.fneTaxe || taxeParDefaut],
+      reference: l.ref || l.produitId ? String(l.produitId||'') : '',
+      description: l.designation || l.produit || 'Article',
+      quantity: l.qte || 0,
+      amount: l.prixUnit || 0,
+      discount: l.remise || 0,
+      measurementUnit: l.unite || ''
+    })),
+    discount: s.remise || 0,
+  };
+}
+
+// ── Construction du corps de requête — Bordereau d'ACHAT agricole ──
+function fneBuildPurchasePayload(bc, fourn, cfg, opts){
+  opts = opts || {};
+  const lignes = bc.lignes || [];
+  return {
+    invoiceType: 'purchase',
+    paymentMethod: fnePaymentMethod(opts.paymentMethod || fourn?.paie, cfg.fnePaymentDefault),
+    template: opts.template || cfg.fneTemplateDefault || 'B2B',
+    isRne: false,
+    clientCompanyName: fourn?.nom || 'Fournisseur',
+    clientPhone: fourn?.tel || '',
+    clientEmail: fourn?.email || '',
+    pointOfSale: opts.pointOfSale || cfg.fnePointOfSale || '1',
+    establishment: opts.establishment || cfg.fneEtablissement || cfg.nomExploitation || '1',
+    commercialMessage: opts.commercialMessage || '',
+    footer: opts.footer || '',
+    items: lignes.map(l => ({
+      reference: l.produitId ? String(l.produitId) : '',
+      description: l.designation || 'Article',
+      quantity: l.qte || 0,
+      amount: l.prixUnit || 0,
+      discount: 0,
+      measurementUnit: l.unite || ''
+    })),
+    discount: 0,
+  };
+}
+
+// ── Certifier une facture de vente ──
+window.fneSignSale = async function(saleId, opts){
+  const cfg = await getExploitationSettings();
+  if(!cfg.fneActive){ toast('Activez la FNE dans Paramétrage → FNE (DGI) avant de télédéclarer','err'); return null; }
+  const [sales, clients] = await Promise.all([getAll(S.SALES), getAll(S.CLIENTS)]);
+  const s = sales.find(x=>x.id===saleId); if(!s){ toast('Vente introuvable','err'); return null; }
+  const client = clients.find(c=>c.id===s.clientId);
+  const payload = fneBuildSalePayload(s, client, cfg, opts);
+  try{
+    const resp = await fneCall(cfg, '/external/invoices/sign', payload);
+    await updRec(S.SALES, s.id, {
+      ...s,
+      fneReference: resp.reference, fneNcc: resp.ncc, fneToken: resp.token,
+      fneInvoiceId: resp.invoice?.id || null, fneStatus:'certifie', fneDate:new Date().toISOString(),
+      fneStickerBalance: resp.balance_sticker ?? null,
+    });
+    toast('✅ Facture certifiée FNE — n° ' + resp.reference);
+    return resp;
+  }catch(e){
+    toast(String(e.message||e), 'err');
+    return null;
+  }
+};
+
+// ── Certifier un bordereau d'achat de produits agricoles ──
+window.fneSignPurchaseBordereau = async function(bcId, opts){
+  const cfg = await getExploitationSettings();
+  if(!cfg.fneActive){ toast('Activez la FNE dans Paramétrage → FNE (DGI) avant de télédéclarer','err'); return null; }
+  const [bcs, fourns] = await Promise.all([getAll(S.BCS), getAll(S.FOURNISSEURS)]);
+  const bc = bcs.find(x=>x.id===bcId); if(!bc){ toast('Bon de commande introuvable','err'); return null; }
+  const fourn = fourns.find(f=>f.id===bc.fournId);
+  const payload = fneBuildPurchasePayload(bc, fourn, cfg, opts);
+  try{
+    const resp = await fneCall(cfg, '/external/invoices/sign', payload);
+    await updRec(S.BCS, bc.id, {
+      ...bc,
+      fneReference: resp.reference, fneNcc: resp.ncc, fneToken: resp.token,
+      fneInvoiceId: resp.invoice?.id || null, fneStatus:'certifie', fneDate:new Date().toISOString(),
+      fneStickerBalance: resp.balance_sticker ?? null,
+    });
+    toast('✅ Bordereau d\'achat certifié FNE — n° ' + resp.reference);
+    return resp;
+  }catch(e){
+    toast(String(e.message||e), 'err');
+    return null;
+  }
+};
+
+window.fneToggleNccField = function(){
+  const t = document.getElementById('fne_m_template')?.value;
+  const wrap = document.getElementById('fneNccWrap');
+  if(wrap) wrap.style.display = (t==='B2B') ? '' : 'none';
+};
+
+// ── Ouvrir le modal de confirmation avant télédéclaration ──
+window.openFneSendModal = async function(type, id){
+  const cfg = await getExploitationSettings();
+  if(!cfg.fneActive){
+    if(confirm('La télédéclaration FNE n\'est pas activée. Ouvrir Paramétrage → FNE (DGI) maintenant ?')){
+      goTo('settings'); settingsTab='fne'; await switchSettingsTab('fne');
+    }
+    return;
+  }
+  document.getElementById('fneType').value = type;
+  document.getElementById('fneRecId').value = id;
+  document.getElementById('fne_m_pos').value = cfg.fnePointOfSale||'';
+  document.getElementById('fne_m_etab').value = cfg.fneEtablissement||cfg.nomExploitation||'';
+  document.getElementById('fne_m_tax').value = cfg.fneTaxDefault||'TVA';
+  document.getElementById('fne_m_pay').value = cfg.fnePaymentDefault||'cash';
+
+  const recap = document.getElementById('fneRecapBox');
+  const templateWrap = document.getElementById('fneTemplateWrap');
+  const taxWrap = document.getElementById('fneTaxWrap');
+
+  if(type==='sale'){
+    const [sales, clients] = await Promise.all([getAll(S.SALES), getAll(S.CLIENTS)]);
+    const s = sales.find(x=>x.id===id); const client = clients.find(c=>c.id===s?.clientId);
+    document.getElementById('mFneTitle').innerHTML = '<i class="fas fa-stamp"></i> Télédéclarer la facture';
+    document.getElementById('fne_m_template').value = client?.ncc ? 'B2B' : (cfg.fneTemplateDefault||'B2C');
+    document.getElementById('fne_m_ncc').value = client?.ncc||'';
+    document.getElementById('fne_m_pay').value = fnePaymentMethod(s?.paie, cfg.fnePaymentDefault);
+    templateWrap.style.display=''; taxWrap.style.display='';
+    recap.innerHTML = '<strong>'+esc(s?.numFacture||s?.ref||('#'+id))+'</strong> — '+esc(client?.nom||'Client comptant')
+      +'<br>Total HT : '+(s?.totalHT||0).toLocaleString('fr-FR')+' '+(cfg.devise||'F');
+  } else {
+    const [bcs, fourns] = await Promise.all([getAll(S.BCS), getAll(S.FOURNISSEURS)]);
+    const bc = bcs.find(x=>x.id===id); const fourn = fourns.find(f=>f.id===bc?.fournId);
+    document.getElementById('mFneTitle').innerHTML = '<i class="fas fa-stamp"></i> Télédéclarer le bordereau d\'achat';
+    document.getElementById('fne_m_template').value = 'B2B';
+    document.getElementById('fne_m_ncc').value = '';
+    document.getElementById('fne_m_pay').value = fnePaymentMethod(fourn?.paie, cfg.fnePaymentDefault);
+    templateWrap.style.display='none'; taxWrap.style.display='none';
+    recap.innerHTML = '<strong>'+esc(bc?.ref||('#'+id))+'</strong> — '+esc(fourn?.nom||'Fournisseur')
+      +'<br>Total HT : '+(bc?.totalHT||0).toLocaleString('fr-FR')+' '+(cfg.devise||'F');
+  }
+  fneToggleNccField();
+  openOverlay('mFne');
+};
+
+// ── Confirmer et envoyer ──
+window.confirmFneSend = async function(){
+  const type = document.getElementById('fneType').value;
+  const id = parseInt(document.getElementById('fneRecId').value);
+  const btn = document.getElementById('fneConfirmBtn');
+  const opts = {
+    template: document.getElementById('fne_m_template')?.value,
+    clientNcc: document.getElementById('fne_m_ncc')?.value.trim(),
+    paymentMethod: document.getElementById('fne_m_pay')?.value,
+    taxes: document.getElementById('fne_m_tax')?.value,
+    pointOfSale: document.getElementById('fne_m_pos')?.value.trim(),
+    establishment: document.getElementById('fne_m_etab')?.value.trim(),
+  };
+  if(opts.template==='B2B' && !opts.clientNcc){ toast('NCC du client requis pour une facture B2B','err'); return; }
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Envoi…'; }
+  let resp;
+  try{
+    resp = (type==='sale') ? await window.fneSignSale(id, opts) : await window.fneSignPurchaseBordereau(id, opts);
+  } finally {
+    if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i> Télédéclarer'; }
+  }
+  if(resp){
+    closeOverlay('mFne');
+    if(type==='sale') await renderCommandes(document.getElementById('contentArea'));
+    else await renderBCs(document.getElementById('contentArea'));
+  }
+};
+
 function buildAndPrintFacture(s, c, cfg){
   const tvaApp   = cfg.tvaApplicable !== false;
   const tauxTva  = cfg.tauxTva ?? 18;
@@ -9808,6 +10258,7 @@ function buildAndPrintFacture(s, c, cfg){
     </div>
   </div>
   ${retard>0?`<div class="retard-box">⚠️ Facture en retard de <strong>${retard} jour(s)</strong> (échéance : ${s.dateEcheance})</div>`:''}
+  ${s.fneReference?`<div style="background:#f0fdf4;border:1.5px solid #166534;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#166534;display:flex;align-items:center;gap:8px"><i class="fas fa-check-double"></i> <strong>Facture Normalisée Électronique certifiée DGI</strong> — Réf. FNE : <strong>${esc(s.fneReference)}</strong> · NCC : ${esc(s.fneNcc||cfg.fneNcc||'—')}</div>`:''}
   <div class="parties">
     <div class="party party-em">
       <div class="plbl">Émetteur</div>
@@ -9845,7 +10296,7 @@ function buildAndPrintFacture(s, c, cfg){
       ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}<br>
       ${cfg.mentionLegale||'Tout paiement tardif entraîne des pénalités légales.'}
     </div>
-    ${buildSecurityQR(cfg, 'FACTURE', s.numFacture||s.ref, totalTTC, s.dateFacture||s.date)}
+    ${s.fneReference ? buildFneSticker(s.fneToken, s.fneReference, s.fneNcc||cfg.fneNcc) : buildSecurityQR(cfg, 'FACTURE', s.numFacture||s.ref, totalTTC, s.dateFacture||s.date)}
   </div>
   </div></body></html>`;
 
@@ -9993,7 +10444,10 @@ window.renderCreances = async function(ca) {
         + (s.statut==='invoiced'
             ? '<button class="btn btn-sm btn-gh" onclick="printFacture('+s.id+')" title="Facture"><i class="fas fa-print"></i></button> '
             : '<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente('+s.id+')" title="Facturer"><i class="fas fa-file-invoice"></i></button> ')
-        + '<button class="btn btn-sm btn-gh" onclick="printBL('+s.id+')" title="BL"><i class="fas fa-file-alt"></i></button>'
+        + '<button class="btn btn-sm btn-gh" onclick="printBL('+s.id+')" title="BL"><i class="fas fa-file-alt"></i></button> '
+        + (s.statut==='invoiced' ? (s.fneReference
+            ? '<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open(\''+(s.fneToken||'')+'\',\'_blank\')" title="Certifiee FNE"><i class="fas fa-check-double"></i></button>'
+            : '<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal(\'sale\','+s.id+')" title="Teledeclarer FNE"><i class="fas fa-stamp"></i></button>') : '')
         + '</td></tr>';
     }).join('');
   ca.innerHTML = '<div class="page-header"><div class="page-header-title"><i class="fas fa-hourglass-half" style="color:#5b21b6"></i> Creances clients</div></div>'
