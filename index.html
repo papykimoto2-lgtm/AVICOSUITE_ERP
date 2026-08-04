@@ -1451,6 +1451,12 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Seuil d'alerte</label><input id="prodSeuil" type="number" placeholder="0"></div>
     <div class="fg"><label>Fournisseur habituel</label><select id="prodFourn"><option value="">—</option></select></div>
     <div class="fg"><label>Référence</label><input id="prodRef" placeholder="ALI-001"></div>
+    <div class="fg fg-full">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+        <input type="checkbox" id="prodAlerteOff" style="width:auto">
+        🔕 Désactiver l'alerte stock critique pour ce produit
+      </label>
+    </div>
     <div class="fg fg-full"><label>Description</label><textarea id="prodDesc"></textarea></div>
   </div>
   <div class="modal-footer">
@@ -2549,6 +2555,12 @@ async function getStockTotal(){
   const bal=await getBalance();const tot={};
   for(const[k,v] of Object.entries(bal)){const pid=parseInt(k.split('_')[0]);tot[pid]=(tot[pid]||0)+v;}
   return tot;
+}
+// Un produit est "en alerte stock critique" si sa quantité est sous le seuil ET
+// que l'alerte n'a pas été désactivée manuellement pour ce produit (S.PRODUITS.alerteDesactivee).
+function stockEnAlerte(p,qty){
+  if(!p||p.alerteDesactivee) return false;
+  return qty<=(p.seuil||0);
 }
 
 // ════════════════════════════════════════════════════════
@@ -5921,9 +5933,9 @@ async function renderDash(ca){
     : '<svg width="44" height="44" viewBox="0 0 44 44" style="flex-shrink:0" aria-hidden="true"><rect width="44" height="44" rx="12" fill="rgba(0,0,0,.3)"/><path d="M7 32 Q22 39 37 32" stroke="#52b788" stroke-width="3" fill="none" stroke-linecap="round"/><ellipse cx="22" cy="21" rx="7" ry="8.5" fill="rgba(61,186,124,.15)" stroke="#52b788" stroke-width="2"/><path d="M18 13 Q15 7 19.5 7 Q19.5 10.5 18 13Z" fill="#52b788"/><circle cx="22" cy="21" r="2.3" fill="#52b788"/><circle cx="22" cy="21" r="1" fill="#d8f3dc"/></svg>';
 
   let valeur=0,critiques=0;
-  for(const p of prods){const q=stockTot[p.id]||0;valeur+=q*(p.prix||0);if(q<=p.seuil) critiques++;}
+  for(const p of prods){const q=stockTot[p.id]||0;valeur+=q*(p.prix||0);if(stockEnAlerte(p,q)) critiques++;}
   const bcWait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
-  const crit=prods.filter(p=>(stockTot[p.id]||0)<=p.seuil);
+  const crit=prods.filter(p=>stockEnAlerte(p,stockTot[p.id]||0));
   const today=new Date().toISOString().slice(0,10).slice(0,7);
   const mvtsMois=mvts.filter(m=>m.date&&m.date.startsWith(today)).length;
 
@@ -6002,7 +6014,7 @@ async function renderDepots(ca){
     const dep=deps.find(d=>d.id===selDepot);
     if(dep){
       const items=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===selDepot&&(bal[k]||0)>0);
-      const pRows=items.map(([k,qty])=>{const pid=parseInt(k.split('_')[0]);const p=prods.find(x=>x.id===pid);if(!p) return '';const al=qty<=p.seuil;const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦'}[p.categorie]||'📦';return `<div class="prod-row"><div class="prod-icon" style="background:${al?'var(--red-bg)':'var(--g4)'}">${ci}</div><div style="flex:1"><div class="prod-name">${p.nom} ${al?'<span class="badge b-r">⚠ Critique</span>':''}</div><div class="prod-meta">${p.ref||'—'} · Seuil: ${p.seuil} ${p.unite}</div></div><div style="text-align:right"><div class="prod-qty-val" style="color:${al?'var(--red)':'inherit'}">${qty.toFixed(1)}</div><div class="prod-qty-unit">${p.unite}</div><div style="font-size:10px;color:var(--text3)">${Math.round(qty*(p.prix||0)).toLocaleString()} F</div></div></div>`;}).join('');
+      const pRows=items.map(([k,qty])=>{const pid=parseInt(k.split('_')[0]);const p=prods.find(x=>x.id===pid);if(!p) return '';const al=stockEnAlerte(p,qty);const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦'}[p.categorie]||'📦';return `<div class="prod-row"><div class="prod-icon" style="background:${al?'var(--red-bg)':'var(--g4)'}">${ci}</div><div style="flex:1"><div class="prod-name">${p.nom} ${al?'<span class="badge b-r">⚠ Critique</span>':''}</div><div class="prod-meta">${p.ref||'—'} · Seuil: ${p.seuil} ${p.unite}</div></div><div style="text-align:right"><div class="prod-qty-val" style="color:${al?'var(--red)':'inherit'}">${qty.toFixed(1)}</div><div class="prod-qty-unit">${p.unite}</div><div style="font-size:10px;color:var(--text3)">${Math.round(qty*(p.prix||0)).toLocaleString()} F</div></div></div>`;}).join('');
       detail=`<div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">${dep.nom}</div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',null,${selDepot})"><i class="fas fa-plus"></i> Entrée</button></div>${pRows||'<div style="color:var(--text3);text-align:center;padding:20px">Aucun article</div>'}`;
     }
   }
@@ -6454,10 +6466,11 @@ async function renderStocks(ca){
   for(const cat of cats){
     const cp=prods.filter(p=>p.categorie===cat);if(!cp.length) continue;
     const rows=cp.map(p=>{
-      const q=stockTot[p.id]||0;const al=q<=p.seuil;const pct=p.seuil>0?Math.min(100,q/p.seuil*100):100;
-      const cl=al?'var(--red)':q<p.seuil*2?'var(--amber)':'var(--g3)';
+      const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const faible=!p.alerteDesactivee&&q<p.seuil*1.5;const pct=p.seuil>0?Math.min(100,q/p.seuil*100):100;
+      const cl=al?'var(--red)':(!p.alerteDesactivee&&q<p.seuil*2)?'var(--amber)':'var(--g3)';
+      const offTag=p.alerteDesactivee?' <span class="badge b-gr" style="font-size:9px" title="Alerte stock critique désactivée">🔕</span>':'';
       const perDep=deps.map(d=>{const v=bal[`${p.id}_${d.id}`]||0;return v>0?`<span class="badge b-gr" style="font-size:9px">${d.nom.split(' ')[0]}: ${v.toFixed(0)}</span>`:''}).filter(Boolean).join(' ');
-      return `<tr><td><strong>${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td>${perDep||'—'}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)} <span style="font-size:10px;font-weight:400;color:var(--text3)">${p.unite}</span></td><td><div style="width:70px"><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${cl}"></div></div><div style="font-size:9px;color:var(--text3);margin-top:2px">Min: ${p.seuil}</div></div></td><td>${al?'<span class="badge b-r">⚠ Critique</span>':q<p.seuil*1.5?'<span class="badge b-a">Faible</span>':'<span class="badge b-g">OK</span>'}</td><td style="color:var(--text3)">${Math.round(q*(p.prix||0)).toLocaleString()} F</td><td><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',${p.id})">📥</button> <button class="btn btn-sm btn-gh" onclick="openMvtModal('sortie',${p.id})">📤</button></td></tr>`;
+      return `<tr><td><strong>${p.nom}</strong>${offTag}<div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td>${perDep||'—'}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)} <span style="font-size:10px;font-weight:400;color:var(--text3)">${p.unite}</span></td><td><div style="width:70px"><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${cl}"></div></div><div style="font-size:9px;color:var(--text3);margin-top:2px">Min: ${p.seuil}</div></div></td><td>${al?'<span class="badge b-r">⚠ Critique</span>':faible?'<span class="badge b-a">Faible</span>':'<span class="badge b-g">OK</span>'}</td><td style="color:var(--text3)">${Math.round(q*(p.prix||0)).toLocaleString()} F</td><td><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',${p.id})">📥</button> <button class="btn btn-sm btn-gh" onclick="openMvtModal('sortie',${p.id})">📤</button></td></tr>`;
     }).join('');
     html+=`<div class="card"><div class="card-hd"><span>${catL[cat]}</span><span style="font-size:11px;color:var(--text3)">${cp.length} réf.</span></div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Produit</th><th>Par dépôt</th><th>Stock total</th><th>Niveau</th><th>Statut</th><th>Valeur</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }
@@ -6605,20 +6618,20 @@ window.saveRec=saveRec;
 async function renderProds(ca){
   const[prods,fourns]=await Promise.all([getAll(S.PRODUITS),getAll(S.FOURNISSEURS)]);const stockTot=await getStockTotal();
   const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦'};
-  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const q=stockTot[p.id]||0;const al=q<=p.seuil;return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span></td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span></td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
 }
 async function openProdModal(id=null){
   const fourns=await getAll(S.FOURNISSEURS);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
   document.getElementById('prodFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
-  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';}
-  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';}}
+  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;}
+  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;}}
   openOverlay('mProd');
 }
 window.openProdModal=openProdModal;
 async function saveProd(){
   const id=document.getElementById('prodId').value;
-  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim()};
+  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
   if(!data.nom){toast('Nom requis','err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
   closeOverlay('mProd');toast(id?'Produit mis à jour':'Produit créé');await renderProds(document.getElementById('contentArea'));
@@ -12939,7 +12952,7 @@ async function collectRapportData(type, customMin=null, customMax=null){
 
   // Stocks critiques
   const stockTot = await getStockTotal();
-  const critiques = prods.filter(p=>(stockTot[p.id]||0) <= (p.seuil||0));
+  const critiques = prods.filter(p=>stockEnAlerte(p,stockTot[p.id]||0));
 
   // Entrées/Sorties stock
   const mvtsP = mvts.filter(m=>inPeriod(m.date));
@@ -12983,7 +12996,7 @@ async function collectRapportData(type, customMin=null, customMax=null){
   const stockDetail = prods.map(p=>({
     nom:p.nom, categorie:p.categorie, unite:p.unite,
     stock:stockTot2[p.id]||0, seuil:p.seuil||0,
-    alerte:(stockTot2[p.id]||0)<=(p.seuil||0)
+    alerte:stockEnAlerte(p,stockTot2[p.id]||0)
   }));
 
   const nbPersonnel = staff.length;
@@ -14049,7 +14062,10 @@ async function analyseReappro(){
     const stockSousSeuil=stock<=seuilAlerte;
     const stockCritique=stock<=seuilCritique;
 
-    if(stockCritique){
+    if(prod.alerteDesactivee){
+      // Alerte stock critique désactivée pour ce produit : jamais remonté en alerte/critique, jamais de BC auto.
+      statut='ok';urgence=0;motif='Alerte désactivée pour ce produit';
+    } else if(stockCritique){
       statut='critique';urgence=3;
       motif=`Stock critique (${stock} ${prod.unite}) — seuil: ${seuilCritique} ${prod.unite}`;
     } else if(stockSousSeuil){
