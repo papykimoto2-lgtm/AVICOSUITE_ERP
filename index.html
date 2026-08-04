@@ -1721,6 +1721,20 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 </div></div>
 
 <!-- COMMANDE CLIENT MODAL — MULTILIGNES v8 -->
+<div class="overlay" id="mFneAvoir">
+<div class="modal">
+  <h3><i class="fas fa-rotate-left"></i> Émettre un avoir FNE</h3>
+  <input type="hidden" id="fneAvoirSaleId">
+  <div id="fneAvoirRecapBox" style="background:#fff3e0;border:1px solid #f4a261;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px"></div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Cochez les articles retournés et ajustez la quantité si le retour est partiel.</div>
+  <div id="fneAvoirLinesDiv" style="max-height:320px;overflow-y:auto"></div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mFneAvoir')">Annuler</button>
+    <button class="btn btn-p" id="fneAvoirConfirmBtn" onclick="confirmFneAvoir()"><i class="fas fa-paper-plane"></i> Télédéclarer l'avoir</button>
+  </div>
+</div></div>
+
+<!-- COMMANDE CLIENT MODAL — MULTILIGNES v8 -->
 <div class="overlay" id="mSale">
 <div class="modal modal-xl">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
@@ -6736,7 +6750,7 @@ async function renderCommandes(ca){
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
         ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -6795,7 +6809,7 @@ window.filterCommandes=async function(clientId){
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
         ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
       </td>
@@ -10063,13 +10077,46 @@ window.fneSignSale = async function(saleId, opts){
   const payload = fneBuildSalePayload(s, client, cfg, opts);
   try{
     const resp = await fneCall(cfg, '/external/invoices/sign', payload);
+    const fneItems = (resp.invoice?.items||[]).map(it=>({
+      id: it.id, description: it.description, quantity: it.quantity, quantityRefunded: 0
+    }));
     await updRec(S.SALES, s.id, {
       ...s,
       fneReference: resp.reference, fneNcc: resp.ncc, fneToken: resp.token,
       fneInvoiceId: resp.invoice?.id || null, fneStatus:'certifie', fneDate:new Date().toISOString(),
-      fneStickerBalance: resp.balance_sticker ?? null,
+      fneStickerBalance: resp.balance_sticker ?? null, fneItems,
+      avoirsFne: s.avoirsFne || [],
     });
     toast('✅ Facture certifiée FNE — n° ' + resp.reference);
+    return resp;
+  }catch(e){
+    toast(String(e.message||e), 'err');
+    return null;
+  }
+};
+
+// ── Certifier une facture d'AVOIR (retour / annulation partielle d'une facture déjà certifiée) ──
+// Réf. API #2 de la procédure DGI : POST $url/external/invoices/{id}/refund
+window.fneRefundSale = async function(saleId, itemsToRefund){
+  const cfg = await getExploitationSettings();
+  if(!cfg.fneActive){ toast('Activez la FNE dans Paramétrage → FNE (DGI) avant de télédéclarer','err'); return null; }
+  const sales = await getAll(S.SALES);
+  const s = sales.find(x=>x.id===saleId); if(!s){ toast('Vente introuvable','err'); return null; }
+  if(!s.fneInvoiceId){ toast('Cette facture n\'a pas été certifiée FNE — impossible d\'émettre un avoir','err'); return null; }
+  if(!itemsToRefund || !itemsToRefund.length){ toast('Sélectionnez au moins un article à retourner','err'); return null; }
+  try{
+    const resp = await fneCall(cfg, '/external/invoices/'+s.fneInvoiceId+'/refund', { items: itemsToRefund });
+    // Mettre à jour les quantités déjà retournées sur chaque item FNE de la facture
+    const fneItems = (s.fneItems||[]).map(it=>{
+      const ref = itemsToRefund.find(r=>r.id===it.id);
+      return ref ? { ...it, quantityRefunded: (it.quantityRefunded||0) + ref.quantity } : it;
+    });
+    const avoirsFne = (s.avoirsFne || []).concat([{
+      reference: resp.reference, token: resp.token, ncc: resp.ncc,
+      date: new Date().toISOString(), items: itemsToRefund, balanceSticker: resp.balance_sticker ?? null
+    }]);
+    await updRec(S.SALES, s.id, { ...s, fneItems, avoirsFne });
+    toast('✅ Avoir certifié FNE — n° ' + resp.reference);
     return resp;
   }catch(e){
     toast(String(e.message||e), 'err');
@@ -10180,6 +10227,52 @@ window.confirmFneSend = async function(){
   }
 };
 
+// ── Ouvrir le modal de création d'un avoir FNE ──
+window.openFneAvoirModal = async function(saleId){
+  const sales = await getAll(S.SALES);
+  const s = sales.find(x=>x.id===saleId); if(!s) return;
+  if(!s.fneInvoiceId || !s.fneItems || !s.fneItems.length){
+    toast('Cette facture n\'a pas (encore) été certifiée FNE avec le détail des articles — impossible d\'émettre un avoir','err');
+    return;
+  }
+  document.getElementById('fneAvoirSaleId').value = saleId;
+  document.getElementById('fneAvoirRecapBox').innerHTML = '<strong>'+esc(s.numFacture||s.ref||('#'+saleId))+'</strong> — Réf. FNE : '+esc(s.fneReference||'—');
+  const linesDiv = document.getElementById('fneAvoirLinesDiv');
+  linesDiv.innerHTML = s.fneItems.map((it,i)=>{
+    const restant = (it.quantity||0) - (it.quantityRefunded||0);
+    if(restant<=0) return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text3)"><s>${esc(it.description)}</s> — déjà intégralement retourné</div>`;
+    return `<div style="display:grid;grid-template-columns:auto 2fr 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <input type="checkbox" id="fav_chk_${i}" data-idx="${i}">
+      <div><strong>${esc(it.description)}</strong><div style="font-size:10px;color:var(--text3)">Facturé : ${it.quantity} · Déjà retourné : ${it.quantityRefunded||0} · Restant : ${restant}</div></div>
+      <input type="number" id="fav_qty_${i}" value="${restant}" max="${restant}" min="0" step="0.01" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px">
+    </div>`;
+  }).join('') || '<div style="color:var(--text3);font-size:12px">Aucun article disponible pour un avoir.</div>';
+  openOverlay('mFneAvoir');
+};
+
+// ── Confirmer et envoyer l'avoir ──
+window.confirmFneAvoir = async function(){
+  const saleId = parseInt(document.getElementById('fneAvoirSaleId').value);
+  const sales = await getAll(S.SALES);
+  const s = sales.find(x=>x.id===saleId); if(!s) return;
+  const items = [];
+  (s.fneItems||[]).forEach((it,i)=>{
+    const chk = document.getElementById('fav_chk_'+i);
+    const qtyEl = document.getElementById('fav_qty_'+i);
+    if(chk && chk.checked){
+      const qty = parseFloat(qtyEl?.value)||0;
+      if(qty>0) items.push({ id: it.id, quantity: qty });
+    }
+  });
+  if(!items.length){ toast('Cochez au moins un article à retourner','err'); return; }
+  const btn = document.getElementById('fneAvoirConfirmBtn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Envoi…'; }
+  let resp;
+  try{ resp = await window.fneRefundSale(saleId, items); }
+  finally{ if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i> Télédéclarer l\'avoir'; } }
+  if(resp){ closeOverlay('mFneAvoir'); await renderCommandes(document.getElementById('contentArea')); }
+};
+
 function buildAndPrintFacture(s, c, cfg){
   const tvaApp   = cfg.tvaApplicable !== false;
   const tauxTva  = cfg.tauxTva ?? 18;
@@ -10259,6 +10352,7 @@ function buildAndPrintFacture(s, c, cfg){
   </div>
   ${retard>0?`<div class="retard-box">⚠️ Facture en retard de <strong>${retard} jour(s)</strong> (échéance : ${s.dateEcheance})</div>`:''}
   ${s.fneReference?`<div style="background:#f0fdf4;border:1.5px solid #166534;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#166534;display:flex;align-items:center;gap:8px"><i class="fas fa-check-double"></i> <strong>Facture Normalisée Électronique certifiée DGI</strong> — Réf. FNE : <strong>${esc(s.fneReference)}</strong> · NCC : ${esc(s.fneNcc||cfg.fneNcc||'—')}</div>`:''}
+  ${(s.avoirsFne&&s.avoirsFne.length)?`<div style="background:#fff3e0;border:1.5px solid #f4a261;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:10px;color:#b45309"><strong><i class="fas fa-rotate-left"></i> Avoir(s) FNE émis :</strong> ${s.avoirsFne.map(a=>esc(a.reference)+' ('+(a.date||'').slice(0,10)+')').join(' · ')}</div>`:''}
   <div class="parties">
     <div class="party party-em">
       <div class="plbl">Émetteur</div>
@@ -10446,7 +10540,7 @@ window.renderCreances = async function(ca) {
             : '<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente('+s.id+')" title="Facturer"><i class="fas fa-file-invoice"></i></button> ')
         + '<button class="btn btn-sm btn-gh" onclick="printBL('+s.id+')" title="BL"><i class="fas fa-file-alt"></i></button> '
         + (s.statut==='invoiced' ? (s.fneReference
-            ? '<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open(\''+(s.fneToken||'')+'\',\'_blank\')" title="Certifiee FNE"><i class="fas fa-check-double"></i></button>'
+            ? '<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open(\''+(s.fneToken||'')+'\',\'_blank\')" title="Certifiee FNE"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal('+s.id+')" title="Emettre un avoir FNE"><i class="fas fa-rotate-left"></i></button>'
             : '<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal(\'sale\','+s.id+')" title="Teledeclarer FNE"><i class="fas fa-stamp"></i></button>') : '')
         + '</td></tr>';
     }).join('');
