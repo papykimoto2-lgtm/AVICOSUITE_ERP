@@ -1442,6 +1442,12 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <option value="materiel">Matériel</option><option value="oeuf">Œufs</option>
       <option value="viande">Viande</option><option value="intrant">Intrant divers</option>
     </select></div>
+    <div class="fg"><label>Stade *</label><select id="prodStade">
+      <option value="matiere_premiere">🌾 Matière première</option>
+      <option value="encours">⚙️ Encours (semi-fini)</option>
+      <option value="produit_fini">📦 Produit fini (vendable)</option>
+    </select></div>
+    <div class="fg"><label>Dépôt d'affectation *</label><select id="prodDepotAffecte"><option value="">—</option></select></div>
     <div class="fg"><label>Unité</label><select id="prodUnite">
       <option value="kg">kg</option><option value="g">g</option><option value="L">L</option>
       <option value="mL">mL</option><option value="dose">dose</option><option value="unité">unité</option>
@@ -6616,23 +6622,29 @@ window.saveRec=saveRec;
 
 // ══ PRODUITS ══
 async function renderProds(ca){
-  const[prods,fourns]=await Promise.all([getAll(S.PRODUITS),getAll(S.FOURNISSEURS)]);const stockTot=await getStockTotal();
+  const[prods,fourns,deps]=await Promise.all([getAll(S.PRODUITS),getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);const stockTot=await getStockTotal();
   const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦'};
-  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span></td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
+  const stadeLbl={matiere_premiere:'🌾 MP',encours:'⚙️ Encours',produit_fini:'📦 Produit fini'};
+  const stadeCss={matiere_premiere:'b-a',encours:'b-bl',produit_fini:'b-g'};
+  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span></td><td><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></td><td style="font-size:11px;color:var(--text3)">${d?d.nom:'—'}</td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
 }
 async function openProdModal(id=null){
-  const fourns=await getAll(S.FOURNISSEURS);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
+  const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
   document.getElementById('prodFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
-  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;}
-  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;}}
+  document.getElementById('prodDepotAffecte').innerHTML='<option value="">—</option>'+deps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
+  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodStade').value='matiere_premiere';document.getElementById('prodDepotAffecte').value='';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;}
+  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodStade').value=p.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=p.depotAffecteId||'';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;}}
   openOverlay('mProd');
 }
 window.openProdModal=openProdModal;
 async function saveProd(){
   const id=document.getElementById('prodId').value;
-  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
+  const stade=document.getElementById('prodStade').value;
+  const depotAffecteId=document.getElementById('prodDepotAffecte').value?parseInt(document.getElementById('prodDepotAffecte').value):null;
+  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
   if(!data.nom){toast('Nom requis','err');return;}
+  if(!depotAffecteId){toast('Dépôt d\'affectation requis','err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
   closeOverlay('mProd');toast(id?'Produit mis à jour':'Produit créé');await renderProds(document.getElementById('contentArea'));
 }
@@ -6886,7 +6898,9 @@ window.salePaieFromClient = async function(sel) {
 
 // Ajouter une ligne produit
 window.addSaleLine = async function() {
-  var prods = await getAll(S.PRODUITS);
+  var allProds = await getAll(S.PRODUITS);
+  var prods = allProds.filter(function(p){ return p.stade==='produit_fini'; });
+  if (!prods.length) prods = allProds; // repli si aucun produit fini n'a encore été qualifié
   var idx = saleLines.length;
   var fp = prods[0] || {};
   saleLines.push({ produitId: fp.id||null, qte: 0, prixUnit: fp.prix||0, remisePct: 0 });
@@ -6964,7 +6978,9 @@ window.calcSaleTotal = window.calcSaleGrandTotal;
 
 // ── Restaurer les lignes dans le DOM (mode edit) ────────────────────────
 async function restoreSaleLines(lignes) {
-  var prods = await getAll(S.PRODUITS);
+  var allProds = await getAll(S.PRODUITS);
+  var prods = allProds.filter(function(p){ return p.stade==='produit_fini'; });
+  if (!prods.length) prods = allProds;
   saleLines = [];
   document.getElementById('saleLinesDiv').innerHTML = '';
   for (var i = 0; i < lignes.length; i++) {
@@ -6976,7 +6992,9 @@ async function restoreSaleLines(lignes) {
     div.id = 'saleL' + idx;
     div.style.cssText = 'display:grid;grid-template-columns:2.5fr 0.8fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 6px;border-bottom:1px solid var(--border)';
 
-    var opts = prods.map(function(p){
+    var lineProds = prods.some(function(p){ return p.id===l.produitId; }) ? prods
+      : prods.concat(allProds.filter(function(p){ return p.id===l.produitId; }));
+    var opts = lineProds.map(function(p){
       return '<option value="'+p.id+'" data-px="'+(p.prix||0)+'" data-u="'+esc(p.unite||'')+'"'
         + (p.id===l.produitId?' selected':'') + '>'
         + esc(p.nom) + ' (' + (p.prix||0).toLocaleString('fr-FR') + ' F/'+esc(p.unite||'u')+')</option>';
@@ -9641,7 +9659,8 @@ window.saveReforme = async function() {
       if (!pViande) {
         const newId = await addRec(S.PRODUITS, {
           nom: 'Viande lot ' + (window._lot?.nom || flockId),
-          categorie: 'viande', unite: 'kg', prix: prixCarcasse || 0, seuil: 0, ref: 'VIA-AUTO'
+          categorie: 'viande', stade: 'produit_fini', depotAffecteId: depotViandeId,
+          unite: 'kg', prix: prixCarcasse || 0, seuil: 0, ref: 'VIA-AUTO'
         });
         pViande = { id: newId };
       }
@@ -12123,7 +12142,7 @@ window.saveOF=async function(statut){
       const ps=await getAll(S.PRODUITS);
       let pa=ps.find(p=>p.nom===r.nom&&p.categorie==='aliment');
       if(!pa){
-        const newId=await addRec(S.PRODUITS,{nom:r.nom,categorie:'aliment',unite:'kg',prix:0,seuil:100,ref:'FAB-AUTO'});
+        const newId=await addRec(S.PRODUITS,{nom:r.nom,categorie:'aliment',stade:'encours',depotAffecteId:depotId,unite:'kg',prix:0,seuil:100,ref:'FAB-AUTO'});
         pa={id:newId};
       }
       await addRec(S.MVTS,{
