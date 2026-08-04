@@ -1442,7 +1442,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <option value="materiel">Matériel</option><option value="oeuf">Œufs</option>
       <option value="viande">Viande</option><option value="intrant">Intrant divers</option>
     </select></div>
-    <div class="fg"><label>Stade *</label><select id="prodStade">
+    <div class="fg"><label>Stade *</label><select id="prodStade" onchange="toggleProdComposantsSection()">
       <option value="matiere_premiere">🌾 Matière première</option>
       <option value="encours">⚙️ Encours (semi-fini)</option>
       <option value="produit_fini">📦 Produit fini (vendable)</option>
@@ -1464,6 +1464,14 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       </label>
     </div>
     <div class="fg fg-full"><label>Description</label><textarea id="prodDesc"></textarea></div>
+  </div>
+  <div class="fg fg-full" id="prodComposantsSection" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <label style="text-transform:none;font-size:12px;font-weight:700;color:var(--text)">📐 Nomenclature — composants consommés au conditionnement (pour 1 unité)</label>
+      <button type="button" class="btn btn-sm btn-p" onclick="window._prodComposants.push({produitId:'',qte:0,unite:'kg'});document.getElementById('prodCompDiv').dispatchEvent(new Event('rerender'))"><i class="fas fa-plus"></i> Composant</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Lorsque ce produit fini est livré (vente), la quantité de chaque composant ci-dessous × la quantité vendue sera automatiquement défalquée du stock. Laisser vide si ce produit n'a pas de nomenclature.</div>
+    <div id="prodCompDiv"></div>
   </div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mProd')">Annuler</button>
@@ -1587,12 +1595,14 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 <!-- CONDITIONNEMENT MODAL -->
 <div class="overlay" id="mCond">
 <div class="modal modal-lg">
-  <h3 id="mCondTitle">Nouvelle session de conditionnement</h3>
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h3 id="mCondTitle" style="margin:0">Nouvelle session de conditionnement</h3>
+    <button type="button" class="btn btn-sm btn-gh" onclick="openCondConfigModal()" title="Configurer la nomenclature de conditionnement"><i class="fas fa-gear"></i> Nomenclature</button>
+  </div>
   <input type="hidden" id="condLotId">
-  <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px">
-    <strong>📐 Règles de conditionnement :</strong>
-    1 Plateau = 30 œufs + 1 alvéole &nbsp;|&nbsp; 1 Carton = 12 plateaux (360 œufs)
-    &nbsp;|&nbsp; <strong>Calibres :</strong> Petit &lt;53g · Moyen 53-63g · Gros 63-73g · TG 73g+
+  <div id="condRulesBox" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px">
+    <strong>📐 Règles de conditionnement (définies par vous) :</strong>
+    <span id="condRulesText">Configurez votre nomenclature via le bouton « ⚙️ Nomenclature » ci-dessus.</span>
   </div>
   <div class="form-grid" style="margin-bottom:14px">
     <div class="fg"><label>Date *</label><input id="condDate" type="date"></div>
@@ -1666,6 +1676,39 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mCond')">Annuler</button>
     <button class="btn btn-p" onclick="saveCond()"><i class="fas fa-boxes-stacked"></i> Valider le conditionnement</button>
+  </div>
+</div></div>
+
+<!-- NOMENCLATURE CONDITIONNEMENT — CONFIGURATION (100% utilisateur, aucun produit codé en dur) -->
+<div class="overlay" id="mCondConfig">
+<div class="modal">
+  <h3>⚙️ Nomenclature de conditionnement</h3>
+  <div style="font-size:12px;color:var(--text3);margin-bottom:14px">
+    Associez ici vos produits du catalogue aux rôles utilisés par le module de conditionnement. Les quantités (œufs par plateau, plateaux par carton) et les prix sont ensuite lus automatiquement dans la <strong>nomenclature</strong> que vous définissez sur chaque fiche produit (Produits & Matières). Rien n'est figé : créez vos propres produits et composants.
+  </div>
+  <div class="form-grid">
+    <div class="fg fg-full"><label>Produit « Œufs bruts » (matière première consommée)</label><select id="ccBruts"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>Produit « Alvéole carton » (optionnel, pour affichage stock)</label><select id="ccAlveole"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>Produit fini « Plateau » générique (sans calibrage)</label><select id="ccPlateauGen"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>Produit fini « Carton » générique (sans calibrage)</label><select id="ccCartonGen"><option value="">— Aucun —</option></select></div>
+  </div>
+  <div style="margin-top:14px;font-weight:700;font-size:12px;color:var(--text)">Produits par calibre (optionnel — laisser vide si vous ne calibrez pas)</div>
+  <div class="form-grid" style="margin-top:6px">
+    <div class="fg"><label>🟡 Plateau — Petit</label><select id="ccPltPetit"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🟡 Carton — Petit</label><select id="ccCarPetit"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🟢 Plateau — Moyen</label><select id="ccPltMoyen"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🟢 Carton — Moyen</label><select id="ccCarMoyen"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🟠 Plateau — Gros</label><select id="ccPltGros"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🟠 Carton — Gros</label><select id="ccCarGros"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🔴 Plateau — Très gros</label><select id="ccPltTresGros"><option value="">— Aucun —</option></select></div>
+    <div class="fg"><label>🔴 Carton — Très gros</label><select id="ccCarTresGros"><option value="">— Aucun —</option></select></div>
+  </div>
+  <div style="margin-top:12px;font-size:11px;color:var(--text3);background:#f9f9f9;border-radius:8px;padding:10px">
+    💡 Astuce : ouvrez la fiche de chaque produit « Plateau » / « Carton » (Produits & Matières) et ajoutez sa nomenclature — ex. Plateau = 30 × Œufs bruts + 1 × Alvéole carton ; Carton = 12 × Plateau. Ces quantités piloteront automatiquement les calculs et la défalcation de stock ici.
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mCondConfig')">Annuler</button>
+    <button class="btn btn-p" onclick="saveCondConfigModal()"><i class="fas fa-save"></i> Enregistrer</button>
   </div>
 </div></div>
 
@@ -2781,6 +2824,37 @@ async function saveRoleOverrides(){
   if(rec) await updRec(S.SETTINGS_APP, rec.id, data);
   else await addRec(S.SETTINGS_APP, data);
 }
+
+// ── Nomenclature de conditionnement (œufs) — configuration 100% utilisateur, aucun produit codé en dur ──
+// Associe des "rôles" (bruts, plateau/carton génériques, plateau/carton par calibre) à des produits du catalogue
+// choisis par l'utilisateur. Les ratios (œufs/plateau, plateaux/carton) et les prix sont lus dans la
+// nomenclature (composants) définie par l'utilisateur sur la fiche de chaque produit fini — jamais codés en dur.
+function defaultCondConfig(){
+  return {
+    key:'cond_nomenclature_config',
+    brutsId:null, alveoleId:null, plateauGenId:null, cartonGenId:null,
+    calibres:{
+      petit:{plateauId:null,cartonId:null}, moyen:{plateauId:null,cartonId:null},
+      gros:{plateauId:null,cartonId:null}, tresGros:{plateauId:null,cartonId:null}
+    }
+  };
+}
+async function getCondConfig(){
+  const all = await getAll(S.SETTINGS_APP);
+  const rec = all.find(s=>s.key==='cond_nomenclature_config');
+  if(!rec) return defaultCondConfig();
+  const def = defaultCondConfig();
+  return Object.assign({}, def, rec, {calibres:Object.assign({}, def.calibres, rec.calibres||{})});
+}
+window.getCondConfig = getCondConfig;
+async function saveCondConfigData(data){
+  const all = await getAll(S.SETTINGS_APP);
+  const rec = all.find(s=>s.key==='cond_nomenclature_config');
+  const payload = Object.assign({key:'cond_nomenclature_config'}, data);
+  if(rec) await updRec(S.SETTINGS_APP, rec.id, payload);
+  else await addRec(S.SETTINGS_APP, payload);
+}
+window.saveCondConfigData = saveCondConfigData;
 
 const SESSION_KEY = 'sanixavi_session';
 let currentUser = null;
@@ -6517,7 +6591,19 @@ async function saveMvt(){
   if(!date||!prodId||!qty||qty<=0){toast('Produit, date, quantité requis','err');return;}
   const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===prodId);
   await addRec(S.MVTS,{type,produitId:prodId,depotSrcId:src,depotDestId:dest,quantite:qty,unite:p?.unite||'',prixUnit:prix,fournId,ref,motif,date,ts:Date.now()});
-  closeOverlay('mMvt');toast('Mouvement enregistré');await render();
+  closeOverlay('mMvt');
+  // ── Conditionnement : une ENTREE de stock sur un produit fini ayant une nomenclature défalque automatiquement ses composants ──
+  if(type==='entree' && p && p.stade==='produit_fini' && p.composants && p.composants.length){
+    const r = await window.defalquerComposantsConditionnement(p, qty, ref||('COND-'+p.nom), date);
+    if(r.mvtCount>0){
+      toast('Mouvement enregistré — ' + r.mvtCount + ' composant(s) défalqué(s) du stock (conditionnement)' + (r.manques.length?' (stock insuffisant: '+r.manques.join(', ')+')':''), r.manques.length?'err':'ok');
+    } else {
+      toast('Mouvement enregistré');
+    }
+  } else {
+    toast('Mouvement enregistré');
+  }
+  await render();
 }
 window.saveMvt=saveMvt;
 async function exportMvtCSV(){
@@ -6627,22 +6713,53 @@ async function renderProds(ca){
   const stadeLbl={matiere_premiere:'🌾 MP',encours:'⚙️ Encours',produit_fini:'📦 Produit fini'};
   const stadeCss={matiere_premiere:'b-a',encours:'b-bl',produit_fini:'b-g'};
   const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span></td><td><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></td><td style="font-size:11px;color:var(--text3)">${d?d.nom:'—'}</td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><div style="display:flex;gap:8px"><button class="btn btn-s btn-sm" onclick="printNomenclatureProduitsFinis()"><i class="fas fa-print"></i> Nomenclature produits finis</button><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
 }
 async function openProdModal(id=null){
-  const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
+  const[fourns,deps,allProdsForComp]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS),getAll(S.PRODUITS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
   document.getElementById('prodFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
   document.getElementById('prodDepotAffecte').innerHTML='<option value="">—</option>'+deps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
+  let curProd=null;
   if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodStade').value='matiere_premiere';document.getElementById('prodDepotAffecte').value='';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;}
-  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodStade').value=p.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=p.depotAffecteId||'';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;}}
+  else{curProd=allProdsForComp.find(x=>x.id===id);if(curProd){document.getElementById('prodNom').value=curProd.nom||'';document.getElementById('prodCat').value=curProd.categorie||'aliment';document.getElementById('prodStade').value=curProd.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=curProd.depotAffecteId||'';document.getElementById('prodUnite').value=curProd.unite||'kg';document.getElementById('prodPrix').value=curProd.prix||'';document.getElementById('prodSeuil').value=curProd.seuil||'';document.getElementById('prodFourn').value=curProd.fournId||'';document.getElementById('prodRef').value=curProd.ref||'';document.getElementById('prodDesc').value=curProd.description||'';document.getElementById('prodAlerteOff').checked=!!curProd.alerteDesactivee;}}
+
+  // ── Nomenclature (composants) — uniquement pour les produits finis ──
+  const compOpts=allProdsForComp.filter(p=>p.id!==id).map(p=>`<option value="${p.id}">${esc(p.nom)} (${p.unite||'kg'})</option>`).join('');
+  window._prodComposants=(curProd&&curProd.composants&&curProd.composants.length)?curProd.composants.map(c=>({...c})):[];
+  const renderProdComp=()=>{
+    const div=document.getElementById('prodCompDiv');
+    if(!div)return;
+    div.innerHTML=window._prodComposants.length?window._prodComposants.map((l,i)=>`
+      <div style="display:grid;grid-template-columns:1fr 90px 70px 32px;gap:6px;margin-bottom:6px;align-items:center">
+        <select style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" onchange="window._prodComposants[${i}].produitId=parseInt(this.value)||null;window._prodComposants[${i}].designation=this.options[this.selectedIndex].text.split('(')[0].trim()">
+          <option value="">— Composant (produit catalogue) —</option>${compOpts.replace('value="'+l.produitId+'"','value="'+l.produitId+'" selected')}
+        </select>
+        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;text-align:right" type="number" value="${l.qte||0}" min="0" step="0.01" placeholder="Qté" oninput="window._prodComposants[${i}].qte=parseFloat(this.value)||0">
+        <input style="border:1.5px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit" value="${esc(l.unite||'kg')}" placeholder="kg" oninput="window._prodComposants[${i}].unite=this.value">
+        <button type="button" class="btn-del" onclick="window._prodComposants.splice(${i},1);document.getElementById('prodCompDiv').dispatchEvent(new Event('rerender'))"><i class="fas fa-times"></i></button>
+      </div>`).join('') : '<div style="font-size:11px;color:var(--text3);padding:6px 0">Aucun composant — ce produit fini sera vendu sans défalcation automatique de stock.</div>';
+  };
+  const compDiv=document.getElementById('prodCompDiv');
+  compDiv.removeEventListener('rerender',compDiv._rerenderHandler||(()=>{}));
+  compDiv._rerenderHandler=renderProdComp;
+  compDiv.addEventListener('rerender',renderProdComp);
+  renderProdComp();
+  toggleProdComposantsSection();
+
   openOverlay('mProd');
 }
 window.openProdModal=openProdModal;
+window.toggleProdComposantsSection=function(){
+  const sec=document.getElementById('prodComposantsSection');
+  const stade=document.getElementById('prodStade').value;
+  if(sec) sec.style.display = stade==='produit_fini' ? 'block' : 'none';
+};
 async function saveProd(){
   const id=document.getElementById('prodId').value;
   const stade=document.getElementById('prodStade').value;
   const depotAffecteId=document.getElementById('prodDepotAffecte').value?parseInt(document.getElementById('prodDepotAffecte').value):null;
-  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
+  const composants=(stade==='produit_fini')?(window._prodComposants||[]).filter(l=>l.produitId&&l.qte>0).map(l=>({produitId:parseInt(l.produitId),qte:l.qte,unite:l.unite||'kg',designation:l.designation||''})):[];
+  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked,composants:composants};
   if(!data.nom){toast('Nom requis','err');return;}
   if(!depotAffecteId){toast('Dépôt d\'affectation requis','err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
@@ -6650,6 +6767,73 @@ async function saveProd(){
 }
 window.saveProd=saveProd;
 window.delProd=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(document.getElementById('contentArea'));}};
+
+// ── Rapport imprimable : Nomenclature des produits finis ──
+window.printNomenclatureProduitsFinis = async function(){
+  var [prods, deps, fourns, cfg, stockTot] = await Promise.all([
+    getAll(S.PRODUITS), getAll(S.DEPOTS), getAll(S.FOURNISSEURS), getExploitationSettings(), getStockTotal()
+  ]);
+  var pf = prods.filter(function(p){return p.stade==='produit_fini';})
+    .sort(function(a,b){return (a.nom||'').localeCompare(b.nom||'');});
+  if(!pf.length){ toast('Aucun produit fini dans le catalogue','err'); return; }
+
+  var rows = pf.map(function(p){
+    var d = deps.find(function(x){return x.id===p.depotAffecteId;});
+    var f = fourns.find(function(x){return x.id===p.fournId;});
+    var q = stockTot[p.id]||0;
+    var al = stockEnAlerte(p,q);
+    var compHtml = (p.composants && p.composants.length)
+      ? '<ul style="margin:0;padding-left:16px">' + p.composants.map(function(c){
+          var cp = prods.find(function(x){return x.id===c.produitId;});
+          return '<li>'+esc(cp?cp.nom:(c.designation||'—'))+' — <strong>'+(c.qte||0)+' '+esc(c.unite||(cp?cp.unite:'')||'')+'</strong></li>';
+        }).join('') + '</ul>'
+      : '<span style="color:#9ca3af;font-style:italic">Aucune (vendu tel quel)</span>';
+    return '<tr>'
+      + '<td><strong>'+esc(p.ref||'—')+'</strong></td>'
+      + '<td><strong>'+esc(p.nom)+'</strong></td>'
+      + '<td>'+esc(p.categorie||'—')+'</td>'
+      + '<td>'+esc(d?d.nom:'—')+'</td>'
+      + '<td style="text-align:right">'+q.toFixed(1)+' '+esc(p.unite||'')+(al?' ⚠️':'')+'</td>'
+      + '<td style="text-align:right">'+(p.prix?(p.prix).toLocaleString('fr-FR')+' F':'—')+'</td>'
+      + '<td>'+esc(f?f.nom:'—')+'</td>'
+      + '<td>'+compHtml+'</td>'
+      + '</tr>';
+  }).join('');
+
+  var html = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">'
+    + '<title>Nomenclature produits finis</title>'
+    + '<style>'
+    + '*{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111}'
+    + '.doc{max-width:297mm;margin:0 auto;padding:12mm}'
+    + '.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e40af;padding-bottom:14px;margin-bottom:16px;gap:20px}'
+    + '.doc-type{font-size:20px;font-weight:800;color:#1e40af;letter-spacing:1px}'
+    + '.doc-meta{text-align:right;font-size:11px;color:#444;line-height:1.7;margin-top:4px}'
+    + 'table{width:100%;border-collapse:collapse;margin-bottom:16px}'
+    + 'thead th{background:#1e40af;color:#fff;padding:8px 10px;font-size:10px;text-align:left;text-transform:uppercase}'
+    + 'tbody td{padding:8px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}'
+    + 'tbody tr:nth-child(even){background:#f9fafb}'
+    + '.ftr{border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center}'
+    + '.preview-bar{position:sticky;top:0;background:#1e40af;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;z-index:10}'
+    + '.preview-bar button{background:#fff;color:#1e40af;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;font-family:inherit}'
+    + '@media print{.preview-bar{display:none}@page{margin:10mm;size:A4 landscape}button{display:none}}'
+    + '</style></head><body>'
+    + '<div class="preview-bar no-print"><span>📄 Aperçu avant impression — vérifiez le document ci-dessous</span><button onclick="window.print()">🖨️ Imprimer</button></div>'
+    + '<div class="doc">'
+    + '<div class="hdr">' + buildEmetteurHeader(cfg)
+    + '<div style="text-align:right"><div class="doc-type">NOMENCLATURE DES PRODUITS FINIS</div>'
+    + '<div class="doc-meta">Catalogue au ' + new Date().toLocaleDateString('fr-FR') + '<br>'
+    + pf.length + ' produit(s) fini(s)</div></div></div>'
+    + '<table><thead><tr><th>Référence</th><th>Désignation</th><th>Catégorie</th><th>Dépôt</th>'
+    + '<th style="text-align:right">Stock actuel</th><th style="text-align:right">Prix unit.</th>'
+    + '<th>Fournisseur</th><th>Nomenclature (composants / unité)</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody></table>'
+    + '<div class="ftr">' + (cfg.nomExploitation||'AviNest Pro') + ' — Édité le ' + new Date().toLocaleDateString('fr-FR') + '</div>'
+    + '</div></body></html>';
+
+  var w = window.open('','_blank','width=1100,height=750');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+};
 
 // ══ PERSONNEL ══
 async function renderStaff(ca){
@@ -7153,23 +7337,140 @@ function toast(msg,type='ok'){const t=document.getElementById('toast'),m=documen
 //  CONDITIONNEMENT
 // ════════════════════════════════════════════════════════
 
-// Calcul en temps réel dans le modal
-// Tarifs calibres (FCFA par plateau de 30 oeufs / carton de 360 oeufs)
-var CALIBRE_TARIFS = {
-  petit:    {label:'Petit <53g',    prixPlateau:1800,  prixCarton:21600},
-  moyen:    {label:'Moyen 53-63g',  prixPlateau:2250,  prixCarton:27000},
-  gros:     {label:'Gros 63-73g',   prixPlateau:2700,  prixCarton:32400},
-  tresGros: {label:'Tres Gros 73g+',prixPlateau:3200,  prixCarton:38400}
-};
+// ════════════════════════════════════════════════════════
+//  CONDITIONNEMENT — 100% piloté par la nomenclature définie par l'utilisateur
+//  (aucun nom/référence de produit codé en dur ; voir getCondConfig() + fiche produit → composants)
+// ════════════════════════════════════════════════════════
+
+const CALIBRE_KEYS = ['petit','moyen','gros','tresGros'];
+const CALIBRE_LABELS = {petit:'Petit <53g', moyen:'Moyen 53-63g', gros:'Gros 63-73g', tresGros:'Tres Gros 73g+'};
+
+// Construit le contexte de conditionnement (produits + ratios + prix) à partir de la config utilisateur
+// et de la nomenclature (composants) que l'utilisateur a définie sur ses fiches produit.
+async function buildCondContext(){
+  const [config, prods] = await Promise.all([getCondConfig(), getAll(S.PRODUITS)]);
+  const findP = function(id){ return id ? prods.find(function(p){return p.id===id;}) : null; };
+  const bruts = findP(config.brutsId);
+  const alveole = findP(config.alveoleId);
+  const genPlateau = findP(config.plateauGenId);
+  const genCarton  = findP(config.cartonGenId);
+
+  function ratioFor(plateauProd, cartonProd){
+    var oeufsParPlateau = 30, plateauxParCarton = 12; // valeurs par défaut tant qu'aucune nomenclature n'est définie
+    if(plateauProd && bruts && plateauProd.composants && plateauProd.composants.length){
+      var c = plateauProd.composants.find(function(x){return x.produitId===bruts.id;});
+      if(c && c.qte>0) oeufsParPlateau = c.qte;
+    }
+    if(cartonProd && plateauProd && cartonProd.composants && cartonProd.composants.length){
+      var c2 = cartonProd.composants.find(function(x){return x.produitId===plateauProd.id;});
+      if(c2 && c2.qte>0) plateauxParCarton = c2.qte;
+    }
+    return {oeufsParPlateau:oeufsParPlateau, plateauxParCarton:plateauxParCarton};
+  }
+
+  var calibres = {};
+  CALIBRE_KEYS.forEach(function(k){
+    var cfgK = config.calibres[k] || {};
+    var plt = findP(cfgK.plateauId);
+    var car = findP(cfgK.cartonId);
+    var r = ratioFor(plt, car);
+    calibres[k] = {
+      plateau:plt, carton:car,
+      oeufsParPlateau:r.oeufsParPlateau, plateauxParCarton:r.plateauxParCarton,
+      prixPlateau: plt ? (plt.prix||0) : 0,
+      prixCarton: car ? (car.prix||0) : 0
+    };
+  });
+  var genRatio = ratioFor(genPlateau, genCarton);
+
+  return {
+    config:config, prods:prods, bruts:bruts, alveole:alveole, genPlateau:genPlateau, genCarton:genCarton,
+    genOeufsParPlateau: genRatio.oeufsParPlateau, genPlateauxParCarton: genRatio.plateauxParCarton,
+    genPrixPlateau: genPlateau?(genPlateau.prix||0):0, genPrixCarton: genCarton?(genCarton.prix||0):0,
+    calibres:calibres
+  };
+}
+window.buildCondContext = buildCondContext;
+
+// ── Configuration de la nomenclature de conditionnement ──
+async function openCondConfigModal(){
+  const prods = await getAll(S.PRODUITS);
+  const matieres = prods.filter(function(p){return p.stade==='matiere_premiere'||p.stade==='encours';});
+  const finis = prods.filter(function(p){return p.stade==='produit_fini';});
+  const optMat = '<option value="">— Aucun —</option>' + matieres.map(function(p){return '<option value="'+p.id+'">'+esc(p.nom)+' ('+(p.unite||'')+')</option>';}).join('');
+  const optFin = '<option value="">— Aucun —</option>' + finis.map(function(p){return '<option value="'+p.id+'">'+esc(p.nom)+' ('+(p.unite||'')+')</option>';}).join('');
+
+  const cfg = await getCondConfig();
+  document.getElementById('ccBruts').innerHTML = optMat;
+  document.getElementById('ccAlveole').innerHTML = optMat;
+  document.getElementById('ccPlateauGen').innerHTML = optFin;
+  document.getElementById('ccCartonGen').innerHTML = optFin;
+  document.getElementById('ccPltPetit').innerHTML = optFin;
+  document.getElementById('ccCarPetit').innerHTML = optFin;
+  document.getElementById('ccPltMoyen').innerHTML = optFin;
+  document.getElementById('ccCarMoyen').innerHTML = optFin;
+  document.getElementById('ccPltGros').innerHTML = optFin;
+  document.getElementById('ccCarGros').innerHTML = optFin;
+  document.getElementById('ccPltTresGros').innerHTML = optFin;
+  document.getElementById('ccCarTresGros').innerHTML = optFin;
+
+  document.getElementById('ccBruts').value = cfg.brutsId||'';
+  document.getElementById('ccAlveole').value = cfg.alveoleId||'';
+  document.getElementById('ccPlateauGen').value = cfg.plateauGenId||'';
+  document.getElementById('ccCartonGen').value = cfg.cartonGenId||'';
+  document.getElementById('ccPltPetit').value = (cfg.calibres.petit||{}).plateauId||'';
+  document.getElementById('ccCarPetit').value = (cfg.calibres.petit||{}).cartonId||'';
+  document.getElementById('ccPltMoyen').value = (cfg.calibres.moyen||{}).plateauId||'';
+  document.getElementById('ccCarMoyen').value = (cfg.calibres.moyen||{}).cartonId||'';
+  document.getElementById('ccPltGros').value = (cfg.calibres.gros||{}).plateauId||'';
+  document.getElementById('ccCarGros').value = (cfg.calibres.gros||{}).cartonId||'';
+  document.getElementById('ccPltTresGros').value = (cfg.calibres.tresGros||{}).plateauId||'';
+  document.getElementById('ccCarTresGros').value = (cfg.calibres.tresGros||{}).cartonId||'';
+
+  openOverlay('mCondConfig');
+}
+window.openCondConfigModal = openCondConfigModal;
+
+async function saveCondConfigModal(){
+  const val = function(id){ var v=document.getElementById(id).value; return v?parseInt(v):null; };
+  const data = {
+    brutsId: val('ccBruts'), alveoleId: val('ccAlveole'), plateauGenId: val('ccPlateauGen'), cartonGenId: val('ccCartonGen'),
+    calibres: {
+      petit:{plateauId:val('ccPltPetit'), cartonId:val('ccCarPetit')},
+      moyen:{plateauId:val('ccPltMoyen'), cartonId:val('ccCarMoyen')},
+      gros:{plateauId:val('ccPltGros'), cartonId:val('ccCarGros')},
+      tresGros:{plateauId:val('ccPltTresGros'), cartonId:val('ccCarTresGros')}
+    }
+  };
+  await saveCondConfigData(data);
+  closeOverlay('mCondConfig');
+  toast('Nomenclature de conditionnement enregistrée');
+  // Rafraîchir le contexte si le modal de conditionnement est ouvert derrière
+  window._condCtx = await buildCondContext();
+  if(document.getElementById('mCond') && document.getElementById('mCond').classList.contains('open')){
+    var rt = document.getElementById('condRulesText');
+    if(rt) rt.textContent = '1 Plateau = '+(window._condCtx.genOeufsParPlateau||30)+' œufs — 1 Carton = '+(window._condCtx.genPlateauxParCarton||12)+' plateaux (valeurs issues de votre nomenclature).';
+    calcCond();
+  }
+  if(curPage === 'cond'){ await renderCond(document.getElementById('contentArea')); }
+}
+window.saveCondConfigModal = saveCondConfigModal;
 
 function calcCond(){
+  var ctx = window._condCtx || {genOeufsParPlateau:30, genPlateauxParCarton:12, genPrixPlateau:0, genPrixCarton:0,
+    calibres:{petit:{oeufsParPlateau:30,plateauxParCarton:12,prixPlateau:0,prixCarton:0},
+      moyen:{oeufsParPlateau:30,plateauxParCarton:12,prixPlateau:0,prixCarton:0},
+      gros:{oeufsParPlateau:30,plateauxParCarton:12,prixPlateau:0,prixCarton:0},
+      tresGros:{oeufsParPlateau:30,plateauxParCarton:12,prixPlateau:0,prixCarton:0}}};
   var bruts = parseInt(document.getElementById('condBruts')?.value)||0;
   var casses = parseInt(document.getElementById('condCasses')?.value)||0;
   var nets = Math.max(0, bruts - casses);
-  var plateaux = Math.floor(nets / 30);
-  var cartons = Math.floor(plateaux / 12);
-  var pltRestants = plateaux % 12;
-  var oeufsRestants = nets % 30;
+  var oeufsParPlateau = ctx.genOeufsParPlateau||30;
+  var plateauxParCarton = ctx.genPlateauxParCarton||12;
+  var plateaux = Math.floor(nets / oeufsParPlateau);
+  var cartons = Math.floor(plateaux / plateauxParCarton);
+  var pltRestants = plateaux % plateauxParCarton;
+  var oeufsRestants = nets % oeufsParPlateau;
   var pertePct = bruts > 0 ? ((casses / bruts) * 100).toFixed(1) : 0;
 
   var setEl = function(id, val) { var el = document.getElementById(id); if(el) el.textContent = val; };
@@ -7179,13 +7480,13 @@ function calcCond(){
   setEl('calcPltRestants', pltRestants);
   setEl('calcPerte', pertePct + '%');
 
-  // Afficher prix des calibres
+  // Afficher prix des calibres (lus depuis la fiche produit de chaque Plateau, pas une constante)
   var keys = ['petit','moyen','gros','tresGros'];
   var domIds = ['Petit','Moyen','Gros','TresGros'];
   for(var ki=0;ki<keys.length;ki++){
-    var t = CALIBRE_TARIFS[keys[ki]];
+    var c = ctx.calibres[keys[ki]];
     var elPp = document.getElementById('prixPlat'+domIds[ki]);
-    if(elPp) elPp.textContent = t.prixPlateau.toLocaleString();
+    if(elPp) elPp.textContent = (c && c.prixPlateau) ? c.prixPlateau.toLocaleString() : (c && c.plateau ? '0' : '— (non configuré)');
   }
 
   // Validation calibres
@@ -7211,24 +7512,23 @@ function calcCond(){
   // Preview mouvements
   var preview = document.getElementById('condMvtsPreview');
   if(preview && bruts > 0){
-    var pltPetit=Math.floor(cPetit/30);
-    var pltMoyen=Math.floor(cMoyen/30);
-    var pltGros=Math.floor(cGros/30);
-    var pltTresGros=Math.floor(cTresGros/30);
-    var valeurTotale=pltPetit*CALIBRE_TARIFS.petit.prixPlateau+pltMoyen*CALIBRE_TARIFS.moyen.prixPlateau+pltGros*CALIBRE_TARIFS.gros.prixPlateau+pltTresGros*CALIBRE_TARIFS.tresGros.prixPlateau;
+    var pltPetit=Math.floor(cPetit/(ctx.calibres.petit.oeufsParPlateau||30));
+    var pltMoyen=Math.floor(cMoyen/(ctx.calibres.moyen.oeufsParPlateau||30));
+    var pltGros=Math.floor(cGros/(ctx.calibres.gros.oeufsParPlateau||30));
+    var pltTresGros=Math.floor(cTresGros/(ctx.calibres.tresGros.oeufsParPlateau||30));
+    var valeurTotale=pltPetit*(ctx.calibres.petit.prixPlateau||0)+pltMoyen*(ctx.calibres.moyen.prixPlateau||0)+pltGros*(ctx.calibres.gros.prixPlateau||0)+pltTresGros*(ctx.calibres.tresGros.prixPlateau||0);
     var calibreDetails = sommeCal>0
       ? '<br><strong>Repartition calibres:</strong>'
-        +(cPetit>0?'<br>&nbsp;&nbsp;🟡 Petit: '+cPetit+' oeufs → '+pltPetit+' plateaux @ '+CALIBRE_TARIFS.petit.prixPlateau.toLocaleString()+' FCFA/plt':'')
-        +(cMoyen>0?'<br>&nbsp;&nbsp;🟢 Moyen: '+cMoyen+' oeufs → '+pltMoyen+' plateaux @ '+CALIBRE_TARIFS.moyen.prixPlateau.toLocaleString()+' FCFA/plt':'')
-        +(cGros>0?'<br>&nbsp;&nbsp;🟠 Gros: '+cGros+' oeufs → '+pltGros+' plateaux @ '+CALIBRE_TARIFS.gros.prixPlateau.toLocaleString()+' FCFA/plt':'')
-        +(cTresGros>0?'<br>&nbsp;&nbsp;🔴 Tres Gros: '+cTresGros+' oeufs → '+pltTresGros+' plateaux @ '+CALIBRE_TARIFS.tresGros.prixPlateau.toLocaleString()+' FCFA/plt':'')
+        +(cPetit>0?'<br>&nbsp;&nbsp;🟡 Petit: '+cPetit+' oeufs → '+pltPetit+' plateaux'+(ctx.calibres.petit.plateau?' @ '+(ctx.calibres.petit.prixPlateau||0).toLocaleString()+' FCFA/plt':' (produit non configuré)'):'')
+        +(cMoyen>0?'<br>&nbsp;&nbsp;🟢 Moyen: '+cMoyen+' oeufs → '+pltMoyen+' plateaux'+(ctx.calibres.moyen.plateau?' @ '+(ctx.calibres.moyen.prixPlateau||0).toLocaleString()+' FCFA/plt':' (produit non configuré)'):'')
+        +(cGros>0?'<br>&nbsp;&nbsp;🟠 Gros: '+cGros+' oeufs → '+pltGros+' plateaux'+(ctx.calibres.gros.plateau?' @ '+(ctx.calibres.gros.prixPlateau||0).toLocaleString()+' FCFA/plt':' (produit non configuré)'):'')
+        +(cTresGros>0?'<br>&nbsp;&nbsp;🔴 Tres Gros: '+cTresGros+' oeufs → '+pltTresGros+' plateaux'+(ctx.calibres.tresGros.plateau?' @ '+(ctx.calibres.tresGros.prixPlateau||0).toLocaleString()+' FCFA/plt':' (produit non configuré)'):'')
         +'<br><strong>Valeur estimee: '+valeurTotale.toLocaleString()+' FCFA</strong>'
       : '';
     preview.innerHTML = '<strong>Mouvements automatiques:</strong><br>'
-      + 'Sortie: <strong>'+bruts+' oeufs bruts</strong> du stock<br>'
-      + 'Sortie: <strong>'+plateaux+' alveoles</strong> du stock<br>'
       + 'Entree: <strong>'+plateaux+' plateaux</strong> en produits finis<br>'
-      + 'Entree: <strong>'+cartons+' cartons</strong> en produits finis'
+      + 'Entree: <strong>'+cartons+' cartons</strong> en produits finis<br>'
+      + 'Sortie automatique des composants (selon la nomenclature de chaque produit — voir ⚙️ Nomenclature)'
       + (oeufsRestants > 0 ? '<br><span style="color:var(--amber-d)">'+oeufsRestants+' oeuf(s) non places dans un plateau</span>' : '')
       + (pltRestants > 0 ? '<br><span style="color:var(--amber-d)">'+pltRestants+' plateau(x) incomplet(s) pour un carton</span>' : '')
       + calibreDetails;
@@ -7236,7 +7536,7 @@ function calcCond(){
 }
 window.calcCond = calcCond;
 
-// Hint calibre pour saisie du jour
+// Hint calibre pour saisie du jour (collecte de production)
 window.updateCalibreHint=function(){
   var eggs=parseInt(document.getElementById('sEggs')?.value)||0;
   var petit=parseInt(document.getElementById('sCalPetit')?.value)||0;
@@ -7254,7 +7554,9 @@ window.updateCalibreHint=function(){
 
 // Ouvrir le modal depuis le lot
 async function openCondModal(flockId){
-  const [deps, staff, prods] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF), getAll(S.PRODUITS)]);
+  const [deps, staff] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF)]);
+  window._condCtx = await buildCondContext();
+  const ctx = window._condCtx;
   document.getElementById('condLotId').value = flockId||'';
   document.getElementById('condDate').value = new Date().toISOString().slice(0,10);
   document.getElementById('condBruts').value = '';
@@ -7265,42 +7567,46 @@ async function openCondModal(flockId){
   var ab=document.getElementById('calibreAlertBox');if(ab)ab.style.display='none';
   var ob=document.getElementById('calibreOkBox');if(ob)ob.style.display='none';
 
-  const pBruts = prods.find(p => p.nom === 'Œufs bruts');
-  const pAlv   = prods.find(p => p.nom === 'Alvéole carton');
   const depOpts = deps.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
 
-  // condDepotSrc : filtrer sur les dépôts ayant des œufs bruts en stock
+  // condDepotSrc : filtrer sur les dépôts ayant le produit "bruts" configuré en stock
   const stockBal = await getBalance();
-  const pBrutsId = pBruts ? pBruts.id : null;
+  const brutsId = ctx.bruts ? ctx.bruts.id : null;
   const srcOpts = deps.map(d=>{
-    const q = pBrutsId ? Math.max(0, stockBal[`${pBrutsId}_${d.id}`]||0) : 0;
+    const q = brutsId ? Math.max(0, stockBal[`${brutsId}_${d.id}`]||0) : 0;
     const label = q > 0 ? `${d.nom} (${Math.round(q)} œufs)` : `${d.nom} (0)`;
     const col = q <= 0 ? ' style="color:var(--text3)"' : '';
     return `<option value="${d.id}"${col}>${label}</option>`;
   }).join('');
   document.getElementById('condDepotSrc').innerHTML = srcOpts;
-  // Présélectionner le dépôt avec le plus d'œufs
-  const bestSrc = deps.map(d=>({id:d.id,q:pBrutsId?Math.max(0,stockBal[`${pBrutsId}_${d.id}`]||0):0}))
+  const bestSrc = deps.map(d=>({id:d.id,q:brutsId?Math.max(0,stockBal[`${brutsId}_${d.id}`]||0):0}))
     .sort((a,b)=>b.q-a.q)[0];
   if(bestSrc) document.getElementById('condDepotSrc').value = bestSrc.id;
 
   document.getElementById('condDepotDest').innerHTML = depOpts;
-  // Sélectionner produits finis par défaut pour destination
   const destDep = deps.find(d => d.type === 'produit_fini');
   if(destDep) document.getElementById('condDepotDest').value = destDep.id;
 
   document.getElementById('condOp').innerHTML = '<option value="">—</option>' +
     staff.map(s => `<option value="${s.id}">${s.nom} (${s.role})</option>`).join('');
 
-  // Afficher le stock d'œufs bruts disponible
+  // Afficher le stock du produit "bruts" configuré
   const stockTot = await getStockTotal();
-  const qBruts = pBruts ? (stockTot[pBruts.id]||0) : 0;
-  const qAlv   = pAlv   ? (stockTot[pAlv.id]  ||0) : 0;
+  const qBruts = brutsId ? (stockTot[brutsId]||0) : 0;
+
+  // Règles affichées : entièrement dynamiques, issues de la nomenclature définie par l'utilisateur
+  const configured = ctx.bruts && (ctx.genPlateau || CALIBRE_KEYS.some(function(k){return ctx.calibres[k].plateau;}));
+  const rt = document.getElementById('condRulesText');
+  if(rt){
+    rt.textContent = configured
+      ? '1 Plateau = '+(ctx.genOeufsParPlateau||30)+' œufs — 1 Carton = '+(ctx.genPlateauxParCarton||12)+' plateaux (valeurs lues dans la nomenclature de vos produits). Calibres : Petit <53g · Moyen 53-63g · Gros 63-73g · TG 73g+'
+      : 'Aucune nomenclature configurée — cliquez sur « ⚙️ Nomenclature » ci-dessus pour choisir vos produits (Œufs bruts, Plateau, Carton) et définir leur composition.';
+  }
 
   document.getElementById('mCondTitle').innerHTML =
-    `📦 Conditionnement — Stocks disponibles : <span style="color:var(--g2)">${Math.round(qBruts)} œufs bruts</span> · <span style="color:var(--blue)">${Math.round(qAlv)} alvéoles</span>`;
+    ctx.bruts ? `📦 Conditionnement — Stock disponible : <span style="color:var(--g2)">${Math.round(qBruts)} ${esc(ctx.bruts.nom)}</span>` : `📦 Conditionnement`;
 
-  if(pBruts) document.getElementById('condBruts').value = Math.round(qBruts);
+  if(ctx.bruts) document.getElementById('condBruts').value = Math.round(qBruts);
   calcCond();
   openOverlay('mCond');
 }
@@ -7324,49 +7630,37 @@ async function saveCond(){
   var cTresGros = parseInt(document.getElementById('calTresGros')?.value)||0;
   var sommeCal  = cPetit+cMoyen+cGros+cTresGros;
 
-  if(!date || bruts <= 0){ toast('Date et nombre d’oeufs requis', 'err'); return; }
+  if(!date || bruts <= 0){ toast('Date et nombre d\'oeufs requis', 'err'); return; }
+
+  var ctx = window._condCtx || await buildCondContext();
+  var oeufsParPlateau = ctx.genOeufsParPlateau||30;
+  var plateauxParCarton = ctx.genPlateauxParCarton||12;
 
   var nets = Math.max(0, bruts - casses);
-  var plateaux = Math.floor(nets / 30);
-  var cartons = Math.floor(plateaux / 12);
-  var pltRestants = plateaux % 12;
+  var plateaux = Math.floor(nets / oeufsParPlateau);
+  var cartons = Math.floor(plateaux / plateauxParCarton);
+  var pltRestants = plateaux % plateauxParCarton;
 
-  if(plateaux === 0){ toast('Pas assez d’oeufs pour un plateau (min. 30)', 'err'); return; }
+  if(plateaux === 0){ toast('Pas assez d\'oeufs pour un plateau (min. '+oeufsParPlateau+')', 'err'); return; }
   if(sommeCal > nets){ toast('Erreur: total calibres ('+sommeCal+') superieur aux oeufs nets ('+nets+')','err'); return; }
 
   // Si calibres partiellement remplis, completer par Moyen
   if(sommeCal > 0 && sommeCal < nets){ cMoyen += (nets - sommeCal); }
 
-  // Calculer plateaux par calibre
-  var pltPetit    = Math.floor(cPetit/30);
-  var pltMoyen    = Math.floor(cMoyen/30);
-  var pltGros     = Math.floor(cGros/30);
-  var pltTresGros = Math.floor(cTresGros/30);
-  var carPetit    = Math.floor(pltPetit/12);
-  var carMoyen    = Math.floor(pltMoyen/12);
-  var carGros     = Math.floor(pltGros/12);
-  var carTresGros = Math.floor(pltTresGros/12);
-
-  var prods = await getAll(S.PRODUITS);
-  var pBruts = prods.find(function(p){return p.nom==='Oeufs bruts';});
-  var pAlv   = prods.find(function(p){return p.nom==='Alveole carton';});
-  var pPlt   = prods.find(function(p){return p.nom==='Plateau 30 oeufs';});
-  var pCar   = prods.find(function(p){return p.nom==='Carton 12 plateaux';});
-
-  // Produits calibres
-  var pPltPetit    = prods.find(function(p){return p.ref==='CAL-PLT-P';});
-  var pPltMoyen    = prods.find(function(p){return p.ref==='CAL-PLT-M';});
-  var pPltGros     = prods.find(function(p){return p.ref==='CAL-PLT-G';});
-  var pPltTresGros = prods.find(function(p){return p.ref==='CAL-PLT-TG';});
-  var pCarPetit    = prods.find(function(p){return p.ref==='CAL-CAR-P';});
-  var pCarMoyen    = prods.find(function(p){return p.ref==='CAL-CAR-M';});
-  var pCarGros     = prods.find(function(p){return p.ref==='CAL-CAR-G';});
-  var pCarTresGros = prods.find(function(p){return p.ref==='CAL-CAR-TG';});
+  // Calculer plateaux/cartons par calibre selon la nomenclature propre à chaque calibre
+  var pltPetit    = Math.floor(cPetit/(ctx.calibres.petit.oeufsParPlateau||30));
+  var pltMoyen    = Math.floor(cMoyen/(ctx.calibres.moyen.oeufsParPlateau||30));
+  var pltGros     = Math.floor(cGros/(ctx.calibres.gros.oeufsParPlateau||30));
+  var pltTresGros = Math.floor(cTresGros/(ctx.calibres.tresGros.oeufsParPlateau||30));
+  var carPetit    = Math.floor(pltPetit/(ctx.calibres.petit.plateauxParCarton||12));
+  var carMoyen    = Math.floor(pltMoyen/(ctx.calibres.moyen.plateauxParCarton||12));
+  var carGros     = Math.floor(pltGros/(ctx.calibres.gros.plateauxParCarton||12));
+  var carTresGros = Math.floor(pltTresGros/(ctx.calibres.tresGros.plateauxParCarton||12));
 
   var ts = Date.now();
   var ref = 'COND-' + date.replace(/-/g,'') + '-' + String(ts).slice(-4);
 
-  // Enregistrer la session avec calibres
+  // Enregistrer la session avec calibres (historique / reporting)
   await addRec(S.COND, {
     flockId:flockId, date:date, oeufs_bruts: bruts, oeufs_casses: casses,
     oeufs_nets: nets, plateaux:plateaux, cartons:cartons, plt_restants: pltRestants,
@@ -7376,44 +7670,68 @@ async function saveCond(){
     car_petit:carPetit, car_moyen:carMoyen, car_gros:carGros, car_tres_gros:carTresGros
   });
 
-  // Mouvements de stock automatiques
   var lot = (await getAll(S.FLOCKS)).find(function(f){return f.id === flockId;});
   var nomLot = lot ? ' - lot '+lot.nom : '';
   var motifBase = 'Conditionnement '+ref+nomLot;
 
-  var mvtTs = ts;
-  if(pBruts)
-    await addRec(S.MVTS,{type:'sortie',produitId:pBruts.id,depotSrcId:depotSrcId,depotDestId:null,
-      quantite:bruts,unite:'unite',prixUnit:pBruts.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie bruts)',date:date,ts:mvtTs++});
+  var totalDefalque = 0, allManques = [];
 
-  if(pAlv)
-    await addRec(S.MVTS,{type:'sortie',produitId:pAlv.id,depotSrcId:depotSrcId,depotDestId:null,
-      quantite:plateaux,unite:'unite',prixUnit:pAlv.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles)',date:date,ts:mvtTs++});
-
-  // Mouvements par calibre si calibres saisis
+  // ── Entrées de stock produits finis + défalcation automatique des composants (nomenclature) ──
   if(sommeCal > 0){
-    // Plateaux par calibre
-    if(pltPetit>0&&pPltPetit) await addRec(S.MVTS,{type:'entree',produitId:pPltPetit.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltPetit,unite:'plateau',prixUnit:CALIBRE_TARIFS.petit.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Petit)',date:date,ts:mvtTs++});
-    if(pltMoyen>0&&pPltMoyen) await addRec(S.MVTS,{type:'entree',produitId:pPltMoyen.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltMoyen,unite:'plateau',prixUnit:CALIBRE_TARIFS.moyen.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Moyen)',date:date,ts:mvtTs++});
-    if(pltGros>0&&pPltGros) await addRec(S.MVTS,{type:'entree',produitId:pPltGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.gros.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Gros)',date:date,ts:mvtTs++});
-    if(pltTresGros>0&&pPltTresGros) await addRec(S.MVTS,{type:'entree',produitId:pPltTresGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltTresGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.tresGros.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Tres Gros)',date:date,ts:mvtTs++});
-    // Cartons par calibre
-    if(carPetit>0&&pCarPetit) await addRec(S.MVTS,{type:'entree',produitId:pCarPetit.id,depotSrcId:null,depotDestId:depotDestId,quantite:carPetit,unite:'carton',prixUnit:CALIBRE_TARIFS.petit.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Petit)',date:date,ts:mvtTs++});
-    if(carMoyen>0&&pCarMoyen) await addRec(S.MVTS,{type:'entree',produitId:pCarMoyen.id,depotSrcId:null,depotDestId:depotDestId,quantite:carMoyen,unite:'carton',prixUnit:CALIBRE_TARIFS.moyen.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Moyen)',date:date,ts:mvtTs++});
-    if(carGros>0&&pCarGros) await addRec(S.MVTS,{type:'entree',produitId:pCarGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:carGros,unite:'carton',prixUnit:CALIBRE_TARIFS.gros.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Gros)',date:date,ts:mvtTs++});
-    if(carTresGros>0&&pCarTresGros) await addRec(S.MVTS,{type:'entree',produitId:pCarTresGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:carTresGros,unite:'carton',prixUnit:CALIBRE_TARIFS.tresGros.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Tres Gros)',date:date,ts:mvtTs++});
+    var entries = [
+      {cal:'petit',    plt:pltPetit,    car:carPetit,    label:'Petit'},
+      {cal:'moyen',    plt:pltMoyen,    car:carMoyen,    label:'Moyen'},
+      {cal:'gros',     plt:pltGros,     car:carGros,     label:'Gros'},
+      {cal:'tresGros', plt:pltTresGros, car:carTresGros, label:'Tres Gros'}
+    ];
+    for (const e of entries) {
+      var c = ctx.calibres[e.cal];
+      if (e.plt > 0) {
+        if (c.plateau) {
+          await addRec(S.MVTS,{type:'entree',produitId:c.plateau.id,depotSrcId:null,depotDestId:depotDestId,quantite:e.plt,unite:c.plateau.unite||'plateau',prixUnit:c.prixPlateau||0,fournId:null,ref:ref,motif:motifBase+' (plateaux '+e.label+')',date:date,ts:ts++});
+          var r1 = await defalquerComposantsConditionnement(c.plateau, e.plt, ref, date, depotSrcId);
+          totalDefalque += r1.mvtCount; allManques = allManques.concat(r1.manques);
+        } else {
+          allManques.push('Produit "Plateau '+e.label+'" non configuré (⚙️ Nomenclature)');
+        }
+      }
+      if (e.car > 0) {
+        if (c.carton) {
+          await addRec(S.MVTS,{type:'entree',produitId:c.carton.id,depotSrcId:null,depotDestId:depotDestId,quantite:e.car,unite:c.carton.unite||'carton',prixUnit:c.prixCarton||0,fournId:null,ref:ref,motif:motifBase+' (cartons '+e.label+')',date:date,ts:ts++});
+          var r2 = await defalquerComposantsConditionnement(c.carton, e.car, ref, date, depotDestId);
+          totalDefalque += r2.mvtCount; allManques = allManques.concat(r2.manques);
+        } else if (e.car > 0) {
+          allManques.push('Produit "Carton '+e.label+'" non configuré (⚙️ Nomenclature)');
+        }
+      }
+    }
   } else {
-    // Sans calibre: mouvements generiques
-    if(pPlt)
-      await addRec(S.MVTS,{type:'entree',produitId:pPlt.id,depotSrcId:null,depotDestId:depotDestId,
-        quantite:plateaux,unite:'plateau',prixUnit:pPlt.prix||0,fournId:null,ref:ref,motif:motifBase+' (entree plateaux)',date:date,ts:mvtTs++});
-    if(pCar && cartons > 0)
-      await addRec(S.MVTS,{type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:depotDestId,
-        quantite:cartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:ref,motif:motifBase+' (entree cartons)',date:date,ts:mvtTs++});
+    if (plateaux > 0) {
+      if (ctx.genPlateau) {
+        await addRec(S.MVTS,{type:'entree',produitId:ctx.genPlateau.id,depotSrcId:null,depotDestId:depotDestId,
+          quantite:plateaux,unite:ctx.genPlateau.unite||'plateau',prixUnit:ctx.genPrixPlateau||0,fournId:null,ref:ref,motif:motifBase+' (entree plateaux)',date:date,ts:ts++});
+        var r3 = await defalquerComposantsConditionnement(ctx.genPlateau, plateaux, ref, date, depotSrcId);
+        totalDefalque += r3.mvtCount; allManques = allManques.concat(r3.manques);
+      } else {
+        allManques.push('Produit "Plateau" générique non configuré (⚙️ Nomenclature)');
+      }
+    }
+    if (cartons > 0) {
+      if (ctx.genCarton) {
+        await addRec(S.MVTS,{type:'entree',produitId:ctx.genCarton.id,depotSrcId:null,depotDestId:depotDestId,
+          quantite:cartons,unite:ctx.genCarton.unite||'carton',prixUnit:ctx.genPrixCarton||0,fournId:null,ref:ref,motif:motifBase+' (entree cartons)',date:date,ts:ts++});
+        var r4 = await defalquerComposantsConditionnement(ctx.genCarton, cartons, ref, date, depotDestId);
+        totalDefalque += r4.mvtCount; allManques = allManques.concat(r4.manques);
+      } else {
+        allManques.push('Produit "Carton" générique non configuré (⚙️ Nomenclature)');
+      }
+    }
   }
 
   closeOverlay('mCond');
-  toast(plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
+  var msg = plateaux+' plateaux - '+cartons+' cartons - stock mis a jour';
+  if (totalDefalque > 0) msg += ' — ' + totalDefalque + ' composant(s) défalqué(s) via la nomenclature';
+  toast(msg + (allManques.length ? ' — ' + allManques.join(' · ') : ''), allManques.length ? 'err' : 'ok');
 
   // Refresh selon le contexte
   if(flockId && curLotId === flockId && activeLotTab === 'cond'){
@@ -7439,11 +7757,8 @@ async function renderLotCond(lot, kpi, el){
     .sort((a,b) => b.date.localeCompare(a.date));
 
   const stockTot = await getStockTotal();
-  const prods = await getAll(S.PRODUITS);
-  const pBruts = prods.find(p => p.nom === 'Œufs bruts');
-  const pAlv   = prods.find(p => p.nom === 'Alvéole carton');
-  const pPlt   = prods.find(p => p.nom === 'Plateau 30 œufs');
-  const pCar   = prods.find(p => p.nom === 'Carton 12 plateaux');
+  const ctx = await buildCondContext();
+  const pBruts = ctx.bruts, pAlv = ctx.alveole, pPlt = ctx.genPlateau, pCar = ctx.genCarton;
 
   const qBruts = pBruts ? (stockTot[pBruts.id]||0) : 0;
   const qAlv   = pAlv ? (stockTot[pAlv.id]||0) : 0;
@@ -7572,13 +7887,11 @@ async function renderLotCond(lot, kpi, el){
 
 // ── PAGE CONDITIONNEMENT GLOBALE ──
 async function renderCond(ca){
-  const [sessions, lots, prods] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS)]);
+  const [sessions, lots] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS)]);
   const stockTot = await getStockTotal();
+  const ctx = await buildCondContext();
 
-  const pBruts = prods.find(p => p.nom === 'Œufs bruts');
-  const pAlv   = prods.find(p => p.nom === 'Alvéole carton');
-  const pPlt   = prods.find(p => p.nom === 'Plateau 30 œufs');
-  const pCar   = prods.find(p => p.nom === 'Carton 12 plateaux');
+  const pBruts = ctx.bruts, pAlv = ctx.alveole, pPlt = ctx.genPlateau, pCar = ctx.genCarton;
   const qBruts = pBruts ? Math.round(stockTot[pBruts.id]||0) : 0;
   const qAlv   = pAlv ? Math.round(stockTot[pAlv.id]||0) : 0;
   const qPlt   = pPlt ? Math.round(stockTot[pPlt.id]||0) : 0;
@@ -7615,6 +7928,7 @@ async function renderCond(ca){
         <select id="condLotFilter" class="btn btn-gh" style="padding:6px 10px;font-size:12px">
           <option value="">Tous les lots</option>${lotSelect}
         </select>
+        <button class="btn btn-gh btn-sm" onclick="openCondConfigModal()"><i class="fas fa-gear"></i> Nomenclature</button>
         <button class="btn btn-p btn-sm" onclick="openCondModal()"><i class="fas fa-plus"></i> Nouvelle session</button>
       </div>
     </div>
@@ -9852,6 +10166,79 @@ function agingClass(j) {
   return 'aging-90';
 }
 
+// ── Défalcation automatique du stock du PRODUIT FINI lui-même lors d'une livraison de vente ──
+// (les composants de la nomenclature, eux, sont défalqués au CONDITIONNEMENT — voir saveMvt / saveCond)
+async function defalquerProduitFiniVente(sale, numBL) {
+  var prods = await getAll(S.PRODUITS);
+  var deps = await getAll(S.DEPOTS);
+  var stockBal = await getBalance();
+  var ts = Date.now();
+  var mvtCount = 0;
+  var manques = [];
+  for (const ligne of (sale.lignes||[])) {
+    var p = prods.find(function(x){return x.id===ligne.produitId;});
+    if (!p || p.stade !== 'produit_fini') continue; // seuls les produits finis sont défalqués à la vente
+    var qteADeduire = ligne.qte||0;
+    if (qteADeduire <= 0) continue;
+    // Dépôt source : dépôt d'affectation du produit, sinon dépôt ayant le plus de stock disponible
+    var depotId = p.depotAffecteId;
+    var dispo = depotId ? Math.max(0, stockBal[p.id+'_'+depotId]||0) : 0;
+    if (!depotId || dispo < qteADeduire) {
+      var best = deps.map(function(d){return {id:d.id,q:Math.max(0,stockBal[p.id+'_'+d.id]||0)};}).sort(function(a,b){return b.q-a.q;})[0];
+      if (best && best.q > dispo) { depotId = best.id; dispo = best.q; }
+    }
+    if (!depotId) continue;
+    if (dispo < qteADeduire) manques.push(p.nom+' (besoin '+qteADeduire+' '+(p.unite||'')+', dispo '+dispo.toFixed(1)+')');
+    await addRec(S.MVTS,{type:'sortie',produitId:p.id,depotSrcId:depotId,depotDestId:null,
+      quantite:qteADeduire,unite:p.unite||'',prixUnit:p.prix||0,fournId:null,
+      ref:numBL||sale.ref||('VENTE-'+sale.id),
+      motif:'Vente — sortie produit fini (BL '+(numBL||sale.ref||('#'+sale.id))+')',
+      date:sale.dateLiv||sale.date, ts:ts++});
+    mvtCount++;
+  }
+  return {mvtCount:mvtCount, manques:manques};
+}
+window.defalquerProduitFiniVente = defalquerProduitFiniVente;
+
+// ── Défalcation automatique des composants de nomenclature lors du CONDITIONNEMENT ──
+// (production/empaquetage d'un produit fini = quand on enregistre une ENTREE de stock pour un produit fini ayant une nomenclature)
+async function defalquerComposantsConditionnement(produit, qteConditionnee, refMotif, date, preferredDepotId) {
+  if (!produit || produit.stade !== 'produit_fini' || !produit.composants || !produit.composants.length || qteConditionnee <= 0) {
+    return {mvtCount:0, manques:[]};
+  }
+  var prods = await getAll(S.PRODUITS);
+  var deps = await getAll(S.DEPOTS);
+  var stockBal = await getBalance();
+  var ts = Date.now();
+  var mvtCount = 0;
+  var manques = [];
+  for (const comp of produit.composants) {
+    var compProd = prods.find(function(x){return x.id===comp.produitId;});
+    if (!compProd) continue;
+    var qteADeduire = (comp.qte||0) * qteConditionnee;
+    if (qteADeduire <= 0) continue;
+    var depotId = null, dispo = 0;
+    if (preferredDepotId) { depotId = preferredDepotId; dispo = Math.max(0, stockBal[compProd.id+'_'+preferredDepotId]||0); }
+    if (!depotId || dispo < qteADeduire) {
+      var fallbackId = compProd.depotAffecteId;
+      var fallbackDispo = fallbackId ? Math.max(0, stockBal[compProd.id+'_'+fallbackId]||0) : 0;
+      if (fallbackDispo > dispo) { depotId = fallbackId; dispo = fallbackDispo; }
+      var best = deps.map(function(d){return {id:d.id,q:Math.max(0,stockBal[compProd.id+'_'+d.id]||0)};}).sort(function(a,b){return b.q-a.q;})[0];
+      if (best && best.q > dispo) { depotId = best.id; dispo = best.q; }
+    }
+    if (!depotId) continue;
+    if (dispo < qteADeduire) manques.push(compProd.nom+' (besoin '+qteADeduire+' '+(comp.unite||compProd.unite||'')+', dispo '+dispo.toFixed(1)+')');
+    await addRec(S.MVTS,{type:'sortie',produitId:compProd.id,depotSrcId:depotId,depotDestId:null,
+      quantite:qteADeduire,unite:comp.unite||compProd.unite||'',prixUnit:compProd.prix||0,fournId:null,
+      ref:refMotif,
+      motif:'Nomenclature — défalcation au conditionnement (' + (refMotif||'') + ' — ' + (produit.nom||'') + ')',
+      date:date, ts:ts++});
+    mvtCount++;
+  }
+  return {mvtCount:mvtCount, manques:manques};
+}
+window.defalquerComposantsConditionnement = defalquerComposantsConditionnement;
+
 window.livrerVente = async function(id) {
   var sales = await getAll(S.SALES);
   var s = sales.find(function(x){return x.id===id;});
@@ -9859,9 +10246,16 @@ window.livrerVente = async function(id) {
   var numBL = s.numBL || await genNumBL();
   var dateLiv = new Date().toISOString().slice(0,10);
   await updRec(S.SALES, id, Object.assign({},s,{statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()}));
-  toast('Livraison enregistree -- ' + numBL);
+  var r = await defalquerProduitFiniVente(Object.assign({},s,{dateLiv:dateLiv}), numBL);
+  if (r.mvtCount > 0) {
+    toast('Livraison enregistree -- ' + numBL + ' — ' + r.mvtCount + ' produit(s) fini(s) defalque(s) du stock' + (r.manques.length ? ' (stock insuffisant: '+r.manques.join(', ')+')' : ''), r.manques.length?'err':'ok');
+  } else {
+    toast('Livraison enregistree -- ' + numBL);
+  }
   await renderCommandes(document.getElementById('contentArea'));
 };
+
+
 
 window.facturerVente = async function(id) {
   var sales = await getAll(S.SALES);
