@@ -812,6 +812,76 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 .semaine-nav button:hover{background:var(--g4);border-color:var(--g3)}
 .semaine-nav button.sem-nav-active{background:var(--g2);color:#fff;border-color:var(--g2)}
 .semaine-nav .sem-label{font-weight:700;font-size:14px;color:var(--g1);min-width:120px;text-align:center}
+
+/* ══ MESSAGERIE INTERNE (style repris d'ImmoSuite ERP) ══ */
+.msg-layout{display:grid;grid-template-columns:280px 1fr;gap:0;height:calc(100vh - 180px);min-height:500px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
+.msg-sidebar{border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--card);overflow:hidden}
+.msg-search-bar{padding:10px 12px;border-bottom:1px solid var(--border);background:var(--bg)}
+.msg-search-input{width:100%;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:20px;font-size:13px;color:var(--text);outline:none;-webkit-appearance:none}
+.msg-search-input:focus{border-color:var(--g3)}
+.msg-tabs{display:flex;border-bottom:1px solid var(--border)}
+.msg-tab{flex:1;padding:10px 8px;border:none;cursor:pointer;font-size:12px;font-weight:600;background:none;color:var(--text3);transition:.15s;border-bottom:2px solid transparent;font-family:inherit}
+.msg-tab.active{color:var(--g2);border-bottom-color:var(--g2)}
+.msg-tab:hover{background:var(--bg)}
+.msg-list{flex:1;overflow-y:auto}
+.msg-empty{padding:24px 16px;text-align:center;color:var(--text3);font-size:12px;line-height:1.6}
+.msg-conv-item{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s;position:relative}
+.msg-conv-item:hover{background:var(--bg)}
+.msg-conv-item.active{background:var(--g4);border-left:3px solid var(--g2)}
+.msg-conv-avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0}
+.msg-conv-avatar.groupe{border-radius:10px}
+.msg-conv-info{flex:1;min-width:0}
+.msg-conv-nom{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msg-conv-preview{font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.msg-conv-time{font-size:10px;color:var(--text3);white-space:nowrap}
+.msg-unread-badge{background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:10px;min-width:16px;text-align:center;flex-shrink:0}
+.msg-chat{display:flex;flex-direction:column;background:#F8F9FC;overflow:hidden}
+.msg-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);text-align:center;padding:24px}
+.msg-entete{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);box-shadow:0 1px 4px rgba(0,0,0,.06);flex-shrink:0}
+.msg-entete-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;background:linear-gradient(135deg,var(--g2),var(--g1))}
+.msg-entete-avatar.groupe{border-radius:9px}
+.msg-entete-nom{font-size:14px;font-weight:700;color:var(--text)}
+.msg-entete-sub{font-size:11px;color:var(--text3)}
+.msg-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.msg-bubble-wrap{display:flex;gap:8px;align-items:flex-end;animation:fadeInUp .18s ease both}
+.msg-bubble-wrap.mine{flex-direction:row-reverse}
+.msg-bubble-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.msg-bubble{max-width:70%;padding:8px 12px;border-radius:16px 16px 16px 4px;background:var(--card);border:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.msg-bubble-wrap.mine .msg-bubble{border-radius:16px 16px 4px 16px;background:linear-gradient(135deg,var(--g2),var(--g1));color:#fff;border:none}
+.msg-bubble-sender{font-size:10px;font-weight:700;color:var(--blue);margin-bottom:3px;display:block}
+.msg-bubble-wrap.mine .msg-bubble-sender{display:none}
+.msg-bubble-text{font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.msg-bubble-wrap.mine .msg-bubble-text{color:#fff}
+.msg-bubble-time{font-size:10px;color:var(--text3);margin-top:4px}
+.msg-bubble-wrap.mine .msg-bubble-time{text-align:right;color:rgba(255,255,255,.75)}
+.msg-date-sep{text-align:center;font-size:11px;color:var(--text3);margin:8px 0;display:flex;align-items:center;gap:8px}
+.msg-date-sep::before,.msg-date-sep::after{content:'';flex:1;height:1px;background:var(--border)}
+.msg-composer{background:var(--card);border-top:1px solid var(--border);padding:10px 12px;flex-shrink:0;position:relative}
+.msg-composer-inner{display:flex;gap:8px;align-items:flex-end}
+.msg-textarea{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:20px;resize:none;font-family:inherit;font-size:13px;color:var(--text);background:var(--bg);outline:none;min-height:38px;max-height:120px;overflow-y:auto;transition:border-color .15s;-webkit-appearance:none}
+.msg-textarea:focus{border-color:var(--g3);background:#fff}
+.msg-send-btn{width:38px;height:38px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;min-height:0;border:none;background:var(--g2);color:#fff;cursor:pointer}
+.msg-send-btn:hover{background:var(--g1)}
+.msg-info-panel{width:240px;border-left:1px solid var(--border);background:var(--card);overflow-y:auto;flex-shrink:0}
+.msg-info-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.grp-membre-item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:var(--r);cursor:pointer;transition:background .15s}
+.grp-membre-item:hover{background:var(--bg)}
+.grp-membre-item.selected{background:var(--g4)}
+.grp-membre-check{width:18px;height:18px;border-radius:4px;border:2px solid var(--border);background:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.grp-membre-item.selected .grp-membre-check{background:var(--g2);border-color:var(--g2)}
+.grp-membre-check::after{content:'✓';color:#fff;font-size:11px;font-weight:700;display:none}
+.grp-membre-item.selected .grp-membre-check::after{display:block}
+.grp-membre-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.grp-membre-nom{font-size:13px;font-weight:600}
+.grp-membre-role{font-size:10px;color:var(--text3)}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@media (max-width:767px){
+  .msg-layout{grid-template-columns:1fr;height:auto;min-height:600px}
+  .msg-sidebar{max-height:220px;border-right:none;border-bottom:1px solid var(--border)}
+  .msg-chat{min-height:380px}
+  .msg-bubble{max-width:85%}
+  .msg-info-panel{display:none}
+}
 </style>
 </head>
 <body>
@@ -1069,6 +1139,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="nav-section">① Pilotage</div>
   <div class="nav-item" id="nav-dash"      onclick="goTo('dash')"><i class="fas fa-tachometer-alt"></i> Tableau de bord</div>
   <div class="nav-item" id="nav-rapports"  onclick="goTo('rapports')"><i class="fas fa-paper-plane"></i> Rapports &amp; Envoi</div>
+  <div class="nav-item" id="nav-messagerie" onclick="goTo('messagerie')" style="position:relative"><i class="fas fa-comments"></i> Messagerie <span id="msgNavBadge" style="display:none;position:absolute;right:14px;top:50%;transform:translateY(-50%);background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px"></span></div>
 
   <!-- 2. REPRODUCTION & COUVOIR — origine du flux : géniteurs → œufs → poussins d'un jour -->
   <div class="nav-section">② Reproduction &amp; Couvoir</div>
@@ -1328,6 +1399,32 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mLine')">Annuler</button>
     <button class="btn btn-p" onclick="saveLine()"><i class="fas fa-save"></i> Enregistrer</button>
+  </div>
+</div></div>
+
+<!-- NOUVEAU MESSAGE DIRECT -->
+<div class="overlay" id="mNewMsg">
+<div class="modal">
+  <h3>Nouveau message</h3>
+  <input class="msg-search-input" style="margin-bottom:10px" id="newMsgSearch" placeholder="🔍 Rechercher un collègue…" oninput="msgFiltrerContacts()">
+  <div id="newMsgList" style="max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"></div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mNewMsg')">Annuler</button>
+  </div>
+</div></div>
+
+<!-- NOUVEAU GROUPE -->
+<div class="overlay" id="mNewGroup">
+<div class="modal">
+  <h3>Nouveau groupe</h3>
+  <div class="form-grid">
+    <div class="fg fg-full"><label>Nom du groupe *</label><input id="newGroupNom" placeholder="ex: Direction, Équipe terrain…"></div>
+  </div>
+  <div style="font-size:11px;font-weight:700;color:var(--text3);margin:8px 0 4px">Membres</div>
+  <div id="newGroupList" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"></div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mNewGroup')">Annuler</button>
+    <button class="btn btn-p" onclick="msgCreerGroupe()"><i class="fas fa-users"></i> Créer le groupe</button>
   </div>
 </div></div>
 
@@ -1832,6 +1929,7 @@ const S={
   WATER:'water_consumption', PROTOCOLS:'protocols',
   PROPHY:'prophylaxis_tasks', NUTRITION:'nutrition_protocols',
   BUILDINGS:'buildings', LINES:'lines',
+  CONVERSATIONS:'conversations', MESSAGES:'messages_internes',
   STAFF:'staff', CLIENTS:'clients', SALES:'sales',
   DEPOTS:'depots', PRODUITS:'produits', MVTS:'stock_mvts',
   FOURNISSEURS:'fournisseurs', BCS:'bons_commande', RECS:'receptions',
@@ -2028,6 +2126,7 @@ async function loadMembership(){
 function startSync(){
   flushPendingOps();
   setupRealtimeSync();
+  if(typeof updateBadgeMessages==='function') updateBadgeMessages();
 }
 
 // ── Mise à jour live des tableaux de bord : quand un autre utilisateur modifie une donnée,
@@ -2052,6 +2151,11 @@ function setupRealtimeSync(){
         lastSyncTime = new Date();
         if(curPage==='dash') await render();
         else if(curPage==='lots' && activeLotTab==='overview'){ await refreshLot(); }
+        else if(curPage==='messagerie' && typeof msgRenderSidebar==='function'){
+          await msgRenderSidebar();
+          if(msgState.activeConvId) await msgOuvrirConversation(msgState.activeConvId, true);
+        }
+        if(typeof updateBadgeMessages==='function') await updateBadgeMessages();
       }, 800);
     })
     .subscribe();
@@ -2676,6 +2780,7 @@ function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch{} }
 
 function canAccessPage(page){
   if(!currentUser) return false;
+  if(page==='messagerie') return true; // communication interne — accessible à tous les rôles authentifiés
   const rp = ROLE_PERMS[currentUser.role];
   if(!rp) return false;
   if(rp.pages==='all') return true;
@@ -3795,6 +3900,7 @@ async function render(){
   else if(curPage==='simubande') await renderSimuBande(ca);
   else if(curPage==='settings')  await renderSettings(ca);
   else if(curPage==='reprocouvoir') await renderReproCouvoir(ca);
+  else if(curPage==='messagerie') await renderMessagerie(ca);
 }
 
 // ════════════════════════════════════════════════════════
@@ -5791,6 +5897,314 @@ window.delLine=async function(id){
   await delRec(S.LINES,id); toast('Ligne supprimée');
   settingsTab='batiments'; await switchSettingsTab('batiments');
 };
+
+// ══════════════════════════════════════════════════════════
+//  MESSAGERIE INTERNE (style repris d'ImmoSuite ERP)
+//  Conversations directes + groupes, stockées via S.CONVERSATIONS/S.MESSAGES
+// ══════════════════════════════════════════════════════════
+let msgState = { tab:'direct', activeConvId:null, groupSelection:[] };
+const MSG_PALETTE = ['#2d6a4f','#1565c0','#b45309','#6a1b9a','#c1121f','#0f766e','#7c3aed','#be185d'];
+function msgAvatarColor(seed){
+  const s=String(seed||''); let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+  return MSG_PALETTE[h%MSG_PALETTE.length];
+}
+function msgInitiales(nom){ return (nom||'?').trim().charAt(0).toUpperCase(); }
+function msgFmtHeure(iso){ try{ return new Date(iso).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch{ return ''; } }
+function msgFmtDateSep(iso){ try{ return new Date(iso).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'}); }catch{ return ''; } }
+
+async function msgUsers(){
+  const users=await getAll(S.USERS);
+  return users.filter(u=>u.actif!==false && u.id!==currentUser?.id);
+}
+function msgDestinatairesDefaut(users){
+  return users.filter(u=>u.role==='admin'||u.role==='manager').map(u=>u.id);
+}
+
+// ── Résolution / création de conversation ──
+async function msgGetOrCreateDirectConversation(otherUserId){
+  const convs=await getAll(S.CONVERSATIONS);
+  const existing=convs.find(c=>c.type==='direct' && c.participants.length===2 &&
+    c.participants.includes(currentUser.id) && c.participants.includes(otherUserId));
+  if(existing) return existing.id;
+  const users=await getAll(S.USERS);
+  const other=users.find(u=>u.id===otherUserId);
+  const id=await addRec(S.CONVERSATIONS,{
+    type:'direct', nom:other?.nom||'Utilisateur', participants:[currentUser.id, otherUserId],
+    admin_id:currentUser.id, date_creation:new Date().toISOString()
+  });
+  return id;
+}
+async function msgCreerGroupeConversation(nom, participantIds){
+  const membres=[currentUser.id, ...participantIds].filter((v,i,a)=>a.indexOf(v)===i);
+  return await addRec(S.CONVERSATIONS,{
+    type:'groupe', nom, emoji:'👥', participants:membres, admin_id:currentUser.id, date_creation:new Date().toISOString()
+  });
+}
+// Conversation dédiée « Rapports & Alertes » réutilisée par le module Rapports (📨 envoyerRapport)
+async function msgGetOrCreateRapportConversation(){
+  const cfg=getRapportConfig();
+  const convs=await getAll(S.CONVERSATIONS);
+  let conv = cfg.rapportConvId ? convs.find(c=>c.id===cfg.rapportConvId) : null;
+  if(conv){
+    const users=await msgUsers();
+    const dest=msgDestinatairesDefaut(users);
+    const manquants=dest.filter(id=>!conv.participants.includes(id));
+    if(manquants.length){ conv.participants=[...conv.participants,...manquants]; await updRec(S.CONVERSATIONS,conv.id,conv); }
+    return conv.id;
+  }
+  const users=await msgUsers();
+  const membres=[currentUser.id, ...msgDestinatairesDefaut(users)].filter((v,i,a)=>a.indexOf(v)===i);
+  const id=await addRec(S.CONVERSATIONS,{
+    type:'groupe', nom:'📊 Rapports & Alertes', emoji:'📊',
+    description:'Rapports périodiques transmis automatiquement.',
+    participants:membres, admin_id:currentUser.id, date_creation:new Date().toISOString()
+  });
+  saveRapportConfig({...cfg, rapportConvId:id});
+  return id;
+}
+async function envoyerMessageInterne(convId, texte){
+  await addRec(S.MESSAGES,{ conversation_id:convId, expediteur_id:currentUser.id, contenu:texte, date:new Date().toISOString(), lu:false });
+  if(curPage==='messagerie') await renderMessagerie(document.getElementById('contentArea'));
+  await updateBadgeMessages();
+}
+
+// ── Badge non-lus (nav) ──
+async function updateBadgeMessages(){
+  const badge=document.getElementById('msgNavBadge'); if(!badge||!currentUser) return;
+  const [convs,msgs]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.MESSAGES)]);
+  const mesConvIds=new Set(convs.filter(c=>c.participants.includes(currentUser.id)).map(c=>c.id));
+  const nb=msgs.filter(m=>mesConvIds.has(m.conversation_id) && m.expediteur_id!==currentUser.id && !m.lu).length;
+  if(nb>0){ badge.textContent=nb>99?'99+':nb; badge.style.display='inline-block'; } else badge.style.display='none';
+}
+
+// ── Page principale ──
+async function renderMessagerie(ca){
+  ca.innerHTML = `
+    <div class="page-header" style="margin-bottom:12px">
+      <div><div style="font-size:18px;font-weight:800;color:var(--g1)">💬 Messagerie interne</div>
+      <div style="font-size:12px;color:var(--text3)">Conversations directes · Groupes</div></div>
+      <div style="flex:1"></div>
+      <button class="btn btn-s" onclick="msgOuvrirNouveauGroupe()"><i class="fas fa-users"></i> Nouveau groupe</button>
+      <button class="btn btn-p" onclick="ouvrirNouveauMessage()"><i class="fas fa-envelope"></i> Message direct</button>
+    </div>
+    <div class="msg-layout" id="msg-layout">
+      <div class="msg-sidebar">
+        <div class="msg-search-bar"><input class="msg-search-input" id="msg-search" placeholder="🔍 Rechercher..." oninput="msgFiltrerConversations()"></div>
+        <div class="msg-tabs">
+          <button class="msg-tab ${msgState.tab==='direct'?'active':''}" id="msgtab-direct" onclick="msgSwitchTab('direct')">💬 Direct</button>
+          <button class="msg-tab ${msgState.tab==='groupe'?'active':''}" id="msgtab-groupes" onclick="msgSwitchTab('groupe')">👥 Groupes</button>
+        </div>
+        <div id="msg-list" class="msg-list"></div>
+      </div>
+      <div class="msg-chat" id="msg-chat">
+        <div id="msg-chat-inner"></div>
+      </div>
+      <div class="msg-info-panel" id="msg-info-panel" style="display:none">
+        <div class="msg-info-header"><div style="font-weight:700;font-size:14px">Informations</div>
+          <button class="btn btn-gh btn-sm" onclick="msgFermerInfos()">✕</button></div>
+        <div id="msg-info-content" style="padding:12px"></div>
+      </div>
+    </div>`;
+  await msgRenderSidebar();
+  if(msgState.activeConvId) await msgOuvrirConversation(msgState.activeConvId, true);
+  else document.getElementById('msg-chat-inner').innerHTML = `
+    <div class="msg-chat-empty">
+      <div style="font-size:48px;margin-bottom:12px">💬</div>
+      <div style="font-size:16px;font-weight:700;color:var(--text)">Sélectionnez une conversation</div>
+      <div style="font-size:13px;color:var(--text3);margin-top:6px">ou créez un nouveau message</div>
+    </div>`;
+}
+
+window.msgSwitchTab=function(tab){
+  msgState.tab=tab;
+  document.getElementById('msgtab-direct').classList.toggle('active',tab==='direct');
+  document.getElementById('msgtab-groupes').classList.toggle('active',tab==='groupe');
+  msgRenderSidebar();
+};
+window.msgFiltrerConversations=function(){ msgRenderSidebar(); };
+
+async function msgRenderSidebar(){
+  const list=document.getElementById('msg-list'); if(!list||!currentUser) return;
+  const q=(document.getElementById('msg-search')?.value||'').toLowerCase();
+  const [convs,msgs,users]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.MESSAGES),getAll(S.USERS)]);
+  const mine=convs.filter(c=>c.type===msgState.tab && c.participants.includes(currentUser.id));
+  const rows=mine.map(c=>{
+    const cMsgs=msgs.filter(m=>m.conversation_id===c.id).sort((a,b)=>new Date(a.date)-new Date(b.date));
+    const last=cMsgs[cMsgs.length-1];
+    const unread=cMsgs.filter(m=>m.expediteur_id!==currentUser.id && !m.lu).length;
+    let nom=c.nom, avatarColor=msgAvatarColor(c.id);
+    if(c.type==='direct'){
+      const otherId=c.participants.find(p=>p!==currentUser.id);
+      const other=users.find(u=>u.id===otherId);
+      nom=other?.nom||c.nom||'Utilisateur'; avatarColor=msgAvatarColor(otherId);
+    }
+    return {c,nom,avatarColor,last,unread,ts:last?new Date(last.date).getTime():0};
+  }).filter(r=>!q||r.nom.toLowerCase().includes(q)).sort((a,b)=>b.ts-a.ts);
+
+  if(!rows.length){
+    list.innerHTML=`<div class="msg-empty">Aucune ${msgState.tab==='direct'?'conversation':'groupe'}.<br><small>Cliquez sur ${msgState.tab==='direct'?'✉️ Message direct':'👥 Nouveau groupe'}</small></div>`;
+    return;
+  }
+  list.innerHTML=rows.map(r=>`
+    <div class="msg-conv-item ${msgState.activeConvId===r.c.id?'active':''}" onclick="msgOuvrirConversation(${r.c.id})">
+      <div class="msg-conv-avatar ${r.c.type==='groupe'?'groupe':''}" style="background:${r.avatarColor}">${r.c.type==='groupe'?(r.c.emoji||'👥'):msgInitiales(r.nom)}</div>
+      <div class="msg-conv-info">
+        <div class="msg-conv-nom">${esc(r.nom)}</div>
+        <div class="msg-conv-preview">${r.last?esc(r.last.contenu).slice(0,40):'Aucun message'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <span class="msg-conv-time">${r.last?msgFmtHeure(r.last.date):''}</span>
+        ${r.unread?`<span class="msg-unread-badge">${r.unread}</span>`:''}
+      </div>
+    </div>`).join('');
+}
+
+window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
+  msgState.activeConvId=convId;
+  const [convs,msgs,users]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.MESSAGES),getAll(S.USERS)]);
+  const conv=convs.find(c=>c.id===convId); if(!conv) return;
+  // Marquer comme lus les messages reçus
+  const aMarquer=msgs.filter(m=>m.conversation_id===convId && m.expediteur_id!==currentUser.id && !m.lu);
+  await Promise.all(aMarquer.map(m=>updRec(S.MESSAGES,m.id,{...m,lu:true})));
+  if(aMarquer.length) await updateBadgeMessages();
+
+  let nom=conv.nom, avatarColor=msgAvatarColor(conv.id), sous='';
+  if(conv.type==='direct'){
+    const otherId=conv.participants.find(p=>p!==currentUser.id);
+    const other=users.find(u=>u.id===otherId);
+    nom=other?.nom||'Utilisateur'; avatarColor=msgAvatarColor(otherId);
+    sous=(ROLE_PERMS[other?.role]||{}).label||'';
+  } else {
+    sous=conv.participants.length+' membre(s)';
+  }
+
+  const cMsgs=msgs.filter(m=>m.conversation_id===convId).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  let lastDateSep='';
+  const bulles=cMsgs.map(m=>{
+    const sender=users.find(u=>u.id===m.expediteur_id);
+    const mine=m.expediteur_id===currentUser.id;
+    const jour=(m.date||'').slice(0,10);
+    let sepHtml='';
+    if(jour!==lastDateSep){ sepHtml=`<div class="msg-date-sep">${msgFmtDateSep(m.date)}</div>`; lastDateSep=jour; }
+    return sepHtml+`
+      <div class="msg-bubble-wrap ${mine?'mine':''}">
+        <div class="msg-bubble-avatar" style="background:${msgAvatarColor(m.expediteur_id)}">${msgInitiales(mine?currentUser.nom:sender?.nom)}</div>
+        <div class="msg-bubble">
+          ${(!mine && conv.type==='groupe')?`<span class="msg-bubble-sender">${esc(sender?.nom||'—')}</span>`:''}
+          <div class="msg-bubble-text">${esc(m.contenu)}</div>
+          <div class="msg-bubble-time">${msgFmtHeure(m.date)}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('msg-chat-inner').innerHTML = `
+    <div class="msg-entete">
+      <div class="msg-entete-avatar ${conv.type==='groupe'?'groupe':''}" style="background:${conv.type==='groupe'?'':avatarColor}">${conv.type==='groupe'?(conv.emoji||'👥'):msgInitiales(nom)}</div>
+      <div class="msg-entete-info"><div class="msg-entete-nom">${esc(nom)}</div><div class="msg-entete-sub">${esc(sous)}</div></div>
+      <div style="flex:1"></div>
+      <button class="btn btn-gh btn-sm" onclick="msgVoirInfos()" title="Infos"><i class="fas fa-info-circle"></i></button>
+    </div>
+    <div id="messages-liste" class="msg-messages">${bulles || '<div class="msg-empty">Aucun message. Dites bonjour 👋</div>'}</div>
+    <div class="msg-composer">
+      <div class="msg-composer-inner">
+        <textarea id="message-input" class="msg-textarea" placeholder="Écrivez votre message... (Entrée = envoyer)"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();envoyerMessage();}"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+        <button class="msg-send-btn" onclick="envoyerMessage()" title="Envoyer">📨</button>
+      </div>
+    </div>`;
+  const ml=document.getElementById('messages-liste'); if(ml) ml.scrollTop=ml.scrollHeight;
+  if(!skipSidebarRefresh) await msgRenderSidebar();
+};
+
+window.envoyerMessage=async function(){
+  const input=document.getElementById('message-input'); if(!input) return;
+  const texte=input.value.trim(); if(!texte || !msgState.activeConvId) return;
+  input.value=''; input.style.height='auto';
+  await envoyerMessageInterne(msgState.activeConvId, texte);
+};
+
+window.msgVoirInfos=async function(){
+  const panel=document.getElementById('msg-info-panel'); if(!panel) return;
+  const [convs,users]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.USERS)]);
+  const conv=convs.find(c=>c.id===msgState.activeConvId); if(!conv) return;
+  const membres=conv.participants.map(pid=>users.find(u=>u.id===pid)||(pid===currentUser.id?currentUser:{nom:'—'}));
+  document.getElementById('msg-info-content').innerHTML = `
+    ${conv.description?`<div style="font-size:12px;color:var(--text3);margin-bottom:12px">${esc(conv.description)}</div>`:''}
+    <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:8px">MEMBRES (${membres.length})</div>
+    ${membres.map(m=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0">
+        <div class="grp-membre-avatar" style="background:${msgAvatarColor(m.id)}">${msgInitiales(m.nom)}</div>
+        <div><div class="grp-membre-nom">${esc(m.nom||'—')}${m.id===currentUser.id?' <span style="color:var(--text3);font-weight:400">(moi)</span>':''}</div>
+        <div class="grp-membre-role">${(ROLE_PERMS[m.role]||{}).label||''}</div></div>
+      </div>`).join('')}`;
+  panel.style.display='block';
+};
+window.msgFermerInfos=function(){ const p=document.getElementById('msg-info-panel'); if(p) p.style.display='none'; };
+
+// ── Nouveau message direct ──
+window.ouvrirNouveauMessage=async function(){
+  const users=await msgUsers();
+  window._msgContactsCache=users;
+  msgRenderContactsList(users);
+  openOverlay('mNewMsg');
+};
+function msgRenderContactsList(users){
+  const list=document.getElementById('newMsgList');
+  if(!users.length){ list.innerHTML='<div class="msg-empty">Aucun autre utilisateur dans l\'organisation.</div>'; return; }
+  list.innerHTML=users.map(u=>`
+    <div class="grp-membre-item" onclick="msgDemarrerDirect(${u.id})">
+      <div class="grp-membre-avatar" style="background:${msgAvatarColor(u.id)}">${msgInitiales(u.nom)}</div>
+      <div><div class="grp-membre-nom">${esc(u.nom||'—')}</div><div class="grp-membre-role">${(ROLE_PERMS[u.role]||{}).label||''}</div></div>
+    </div>`).join('');
+}
+window.msgFiltrerContacts=function(){
+  const q=(document.getElementById('newMsgSearch').value||'').toLowerCase();
+  msgRenderContactsList((window._msgContactsCache||[]).filter(u=>(u.nom||'').toLowerCase().includes(q)));
+};
+window.msgDemarrerDirect=async function(otherUserId){
+  closeOverlay('mNewMsg');
+  const convId=await msgGetOrCreateDirectConversation(otherUserId);
+  msgState.tab='direct';
+  if(curPage!=='messagerie') goTo('messagerie'); else await renderMessagerie(document.getElementById('contentArea'));
+  await msgOuvrirConversation(convId);
+};
+
+// ── Nouveau groupe ──
+window.msgOuvrirNouveauGroupe=async function(){
+  msgState.groupSelection=[];
+  document.getElementById('newGroupNom').value='';
+  const users=await msgUsers();
+  window._msgGroupCandidats=users;
+  msgRenderGroupList(users);
+  openOverlay('mNewGroup');
+};
+function msgRenderGroupList(users){
+  const list=document.getElementById('newGroupList');
+  list.innerHTML=users.map(u=>`
+    <div class="grp-membre-item ${msgState.groupSelection.includes(u.id)?'selected':''}" onclick="msgToggleGroupMembre(${u.id})">
+      <div class="grp-membre-check"></div>
+      <div class="grp-membre-avatar" style="background:${msgAvatarColor(u.id)}">${msgInitiales(u.nom)}</div>
+      <div><div class="grp-membre-nom">${esc(u.nom||'—')}</div><div class="grp-membre-role">${(ROLE_PERMS[u.role]||{}).label||''}</div></div>
+    </div>`).join('');
+}
+window.msgToggleGroupMembre=function(uid){
+  const i=msgState.groupSelection.indexOf(uid);
+  if(i>=0) msgState.groupSelection.splice(i,1); else msgState.groupSelection.push(uid);
+  msgRenderGroupList(window._msgGroupCandidats||[]);
+};
+window.msgCreerGroupe=async function(){
+  const nom=document.getElementById('newGroupNom').value.trim();
+  if(!nom){ toast('Nom du groupe requis','err'); return; }
+  if(!msgState.groupSelection.length){ toast('Sélectionnez au moins un membre','err'); return; }
+  const convId=await msgCreerGroupeConversation(nom, msgState.groupSelection);
+  closeOverlay('mNewGroup'); toast('Groupe créé');
+  msgState.tab='groupe';
+  if(curPage!=='messagerie') goTo('messagerie'); else await renderMessagerie(document.getElementById('contentArea'));
+  await msgOuvrirConversation(convId);
+};
+
+// ══════════════════════════════════════════════════════════
 
 // ══ STOCKS ══
 async function renderStocks(ca){
@@ -12249,6 +12663,16 @@ window.envoyerRapport = async function(type, canal){
   toast('📤 '+lbl+' préparé pour envoi');
 };
 
+// ── Rapport → Messagerie interne (même mécanisme que Caisse/RH/Foncier dans ImmoSuite ERP) ──
+window.envoyerRapportMessagerie = async function(type){
+  const data = await collectRapportData(type);
+  const texte = genRapportTexte(data, 'whatsapp'); // formatage *gras* lisible dans les bulles de chat
+  const titres = {jour:'Rapport journalier', semaine:'Rapport hebdomadaire', mois:'Rapport mensuel', annee:'Rapport annuel'};
+  const convId = await msgGetOrCreateRapportConversation();
+  await envoyerMessageInterne(convId, texte);
+  toast('📨 '+(titres[type]||'Rapport')+' envoyé dans la messagerie interne (admin & manager)');
+};
+
 // ── Enregistrer destinations + planification d'envoi auto (un seul formulaire réparti sur 2 cartes) ──
 window.sauvegarderCfgRapport = function(){
   const cfg = getRapportConfig();
@@ -12465,6 +12889,7 @@ async function renderRapports(ca){
               <div style="display:flex;gap:5px;justify-content:center;flex-wrap:wrap">
                 <button class="btn btn-p btn-sm" onclick="envoyerRapport('${t}','whatsapp')"><i class="fab fa-whatsapp"></i> WA</button>
                 <button class="btn btn-gh btn-sm" onclick="envoyerRapport('${t}','email')"><i class="fas fa-envelope"></i> Email</button>
+                <button class="btn btn-gh btn-sm" onclick="envoyerRapportMessagerie('${t}')" title="Envoyer dans la messagerie interne (admin &amp; manager)"><i class="fas fa-comments"></i></button>
                 <button class="btn btn-s btn-sm" onclick="previewRapport('${t}')"><i class="fas fa-eye"></i> Aperçu</button>
               </div>
             </div>`).join('')}
