@@ -160,9 +160,27 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 .btn-del{background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px}
 
 /* ── MODAL ── */
-.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center}
-.overlay.open{display:flex}
-.modal{background:#fff;border-radius:16px;padding:22px;width:90%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:var(--sh2)}
+.overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;
+  align-items:center;justify-content:center;
+  opacity:0;pointer-events:none;
+  transition:opacity .2s ease-out,backdrop-filter .2s ease-out;
+  will-change:opacity;
+  backdrop-filter:blur(0px)
+}
+.overlay.open{
+  opacity:1;pointer-events:auto;
+  backdrop-filter:blur(2px)
+}
+.modal{
+  background:#fff;border-radius:16px;padding:22px;width:90%;max-width:520px;
+  max-height:92vh;overflow-y:auto;box-shadow:var(--sh2);
+  transform:scale(.95) translateY(20px);
+  transition:transform .25s cubic-bezier(.34,.1,.68,.55);
+  will-change:transform;
+  origin:center center
+}
+.overlay.open .modal{transform:scale(1) translateY(0)}
 .modal-lg{max-width:700px}.modal-xl{max-width:860px}
 .modal h3{font-size:16px;font-weight:700;margin-bottom:16px}
 .modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
@@ -495,7 +513,11 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     max-height:90dvh;max-height:90vh;
     padding:20px 16px;
     padding-bottom:calc(16px + env(safe-area-inset-bottom));
+    transform:translateY(100%);
+    transition:transform .3s cubic-bezier(.34,.1,.68,.55);
+    will-change:transform;
   }
+  .overlay.open .modal{transform:translateY(0)}
 
   /* Lot header */
   .lot-header{padding:8px 12px 8px 14px}
@@ -7286,10 +7308,16 @@ window.delSale=async(id)=>{
 
 // ══ UTILITIES ══
 function openOverlay(id){
-  document.getElementById(id).classList.add('open');
+  const el=document.getElementById(id);
+  if(!el){console.warn(`Overlay not found: ${id}`);return;}
+  requestAnimationFrame(()=>el.classList.add('open'));
   if(id==='ovBootstrap'){ const l=document.getElementById('bsOrgLabel'); if(l) l.textContent=SUPA_ORG; }
 }
-function closeOverlay(id){document.getElementById(id).classList.remove('open');}
+function closeOverlay(id){
+  const el=document.getElementById(id);
+  if(!el){console.warn(`Overlay not found: ${id}`);return;}
+  el.classList.remove('open');
+}
 window.closeOverlay=closeOverlay;
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o) o.classList.remove('open');}));
 function toast(msg,type='ok'){const t=document.getElementById('toast'),m=document.getElementById('toastMsg');m.textContent=msg;t.style.background=type==='err'?'var(--red)':'var(--g1)';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
