@@ -13938,6 +13938,7 @@ async function renderRapports(ca){
   <div class="tab-nav">
     <button class="tab-btn active" id="rptab-etats" onclick="switchRapTab('etats')">🖨️ États & Impression</button>
     <button class="tab-btn" id="rptab-envoi" onclick="switchRapTab('envoi')">📨 Rapports & Envoi auto</button>
+    <button class="tab-btn" id="rptab-semaines" onclick="switchRapTab('semaines')">📊 Suivi semaines</button>
   </div>
 
   <!-- TAB: ÉTATS & IMPRESSION -->
@@ -14104,6 +14105,118 @@ async function renderRapports(ca){
       </div>
     </div>
 
+  </div>
+
+  <!-- TAB: SUIVI SEMAINES -->
+  <div id="rptab-semaines-content" class="tab-content" style="display:none;padding:10px 10px 80px">
+
+    <!-- Filtres -->
+    <div class="card" style="margin-bottom:12px;border:1.5px solid var(--g3)">
+      <div class="card-hd" style="background:linear-gradient(135deg,#f0fdf4,#fff);padding:10px 12px">
+        <span style="color:var(--g1);font-weight:800;font-size:13px">🔍 Filtres</span>
+      </div>
+      <div class="card-bd" style="padding:10px 12px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px">
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px">Lot / Bâtiment</label>
+            <select id="semFiltreLot" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
+              <option value="">— Tous les lots —</option>
+            </select>
+          </div>
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px">Semaine</label>
+            <select id="semFiltreWeek" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
+              <option value="">— Toutes les semaines —</option>
+              <option value="current">Semaine courante</option>
+              <option value="last4">4 dernières semaines</option>
+              <option value="all">Historique complet</option>
+            </select>
+          </div>
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px">Ligne / Bâtiment</label>
+            <select id="semFiltreBuilding" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
+              <option value="">— Tous les bâtiments —</option>
+              <option value="bat1">Bâtiment 1</option>
+              <option value="bat2">Bâtiment 2</option>
+              <option value="bat3">Bâtiment 3</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-p" onclick="refreshTableauxSemaines()"><i class="fas fa-sync"></i> Actualiser</button>
+          <button class="btn btn-gh" onclick="exportTableauxCSV()"><i class="fas fa-download"></i> Télécharger (CSV)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tableau 1: Détail semaine -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd">
+        <span>📋 Détail — Semaine <span id="semDetailTitle">actuelle</span></span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-gh" onclick="navWeekDetail(-1)"><i class="fas fa-chevron-left"></i></button>
+          <button class="btn btn-sm btn-gh" onclick="navWeekDetail(1)"><i class="fas fa-chevron-right"></i></button>
+        </div>
+      </div>
+      <div class="card-bd tbl-wrap" style="padding:0;overflow-x:auto">
+        <table class="tbl" id="tableauDetailSemaine" style="min-width:600px">
+          <thead>
+            <tr>
+              <th style="min-width:100px">Indicateur</th>
+              <th>Lundi</th><th>Mardi</th><th>Mercredi</th><th>Jeudi</th><th>Vendredi</th><th>Samedi</th><th>Dimanche</th>
+              <th style="background:#f0fdf4;color:var(--g1)">∑ Semaine</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:#f9fbf9">
+              <td style="font-weight:700;color:var(--g2)">🥚 Œufs pondus</td>
+              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+              <td style="background:#f0fdf4;font-weight:700;color:var(--g1)">—</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;color:var(--amber-d)">🌾 Aliment (kg)</td>
+              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+              <td style="background:#fff3e0;font-weight:700;color:var(--amber-d)">—</td>
+            </tr>
+            <tr style="background:#f9fbf9">
+              <td style="font-weight:700;color:var(--blue)">💧 Eau (L)</td>
+              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+              <td style="background:#e3f2fd;font-weight:700;color:var(--blue)">—</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700;color:var(--red)">💀 Mortalité</td>
+              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+              <td style="background:var(--g4);font-weight:700;color:var(--g1)">0</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tableau 2: Récapitulatif par semaine -->
+    <div class="card">
+      <div class="card-hd">
+        <span>📈 Récapitulatif par semaine — Pondeuses <span id="semRecapTitle">tous lots</span></span>
+      </div>
+      <div class="card-bd tbl-wrap" style="padding:0;overflow-x:auto">
+        <table class="tbl" id="tableauRecapSemaines" style="min-width:700px">
+          <thead>
+            <tr>
+              <th>Sem.</th><th>Période</th><th>Jours</th><th>Œufs</th><th>Taux ponte</th>
+              <th>Aliment</th><th>Eau</th><th>Mortalité</th><th>Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">
+                <i class="fas fa-spinner fa-spin"></i> Chargement des données...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
   </div>`;
 
   // Charger les lots dans le filtre
@@ -14122,7 +14235,7 @@ async function renderRapports(ca){
 
 // ── Switcher onglets rapports ──
 window.switchRapTab = function(tab){
-  ['etats','envoi'].forEach(t=>{
+  ['etats','envoi','semaines'].forEach(t=>{
     const cont = document.getElementById('rptab-'+t+'-content');
     const btn  = document.getElementById('rptab-'+t);
     if(cont) cont.style.display = t===tab ? '' : 'none';
@@ -14131,6 +14244,7 @@ window.switchRapTab = function(tab){
       btn.classList.toggle('active', t===tab);
     }
   });
+  if(tab==='semaines') initTableauxSemaines();
 };
 
 window.setRapportPreset = function(preset, dmin, dmax){
@@ -14153,6 +14267,177 @@ window.setRapportPreset = function(preset, dmin, dmax){
 
 window.clearPresetButtons = function(){
   document.querySelectorAll('[id^="preset-"]').forEach(b=>b.classList.remove('active'));
+};
+
+// ── Fonctions Suivi Semaines ──
+window._currentWeekDetail = 1;
+
+window.initTableauxSemaines = async function(){
+  const flocks = await getAll(S.FLOCKS);
+  const lotSel = document.getElementById('semFiltreLot');
+  if(lotSel && lotSel.options.length === 1){
+    flocks.forEach(f=>{
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.nom;
+      lotSel.appendChild(opt);
+    });
+  }
+  refreshTableauxSemaines();
+};
+
+window.refreshTableauxSemaines = async function(){
+  const lotId = document.getElementById('semFiltreLot')?.value || '';
+  const weekFilter = document.getElementById('semFiltreWeek')?.value || '';
+  const buildingId = document.getElementById('semFiltreBuilding')?.value || '';
+  
+  const flocks = await getAll(S.FLOCKS);
+  const selectedFlock = lotId ? flocks.find(f=>String(f.id)===String(lotId)) : flocks[0];
+  
+  if(!selectedFlock) {
+    toast('Aucun lot disponible','err');
+    return;
+  }
+  
+  // Mettre à jour les titres
+  document.getElementById('semDetailTitle').textContent = `S${window._currentWeekDetail} - ${selectedFlock.nom}`;
+  document.getElementById('semRecapTitle').textContent = selectedFlock.nom;
+  
+  // Récupérer les données de production
+  const eggsData = await getAll(S.EGG_PROD);
+  const flockEggs = eggsData.filter(e=>String(e.flockId)===String(selectedFlock.id));
+  
+  // Construire les données de semaine
+  const weeks = [];
+  const startDate = new Date(selectedFlock.startDate);
+  const today = new Date();
+  
+  let current = new Date(startDate);
+  while(current <= today){
+    const weekStart = new Date(current);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    
+    const weekNum = Math.floor((current - startDate) / (7 * 24 * 60 * 60 * 1000)) + 1;
+    const weekData = flockEggs.filter(e=>{
+      const eDate = new Date(e.date);
+      return eDate >= weekStart && eDate <= weekEnd;
+    });
+    
+    const totalEggs = weekData.reduce((sum,e)=>sum+(e.eggCount||0),0);
+    const totalBroken = weekData.reduce((sum,e)=>sum+(e.eggsBroken||0),0);
+    
+    weeks.push({
+      weekNum,
+      period: `J${Math.floor((weekStart-startDate)/(24*60*60*1000))+1}-J${Math.floor((weekEnd-startDate)/(24*60*60*1000))+1}`,
+      days: weekData.length,
+      totalEggs,
+      totalBroken,
+      data: weekData
+    });
+    
+    current.setDate(current.getDate() + 7);
+  }
+  
+  // Mettre à jour le tableau de détail
+  if(window._currentWeekDetail <= weeks.length){
+    const week = weeks[window._currentWeekDetail - 1];
+    updateDetailTable(week, selectedFlock);
+  }
+  
+  // Mettre à jour le tableau récapitulatif
+  updateRecapTable(weeks, selectedFlock);
+};
+
+window.updateDetailTable = function(week, flock){
+  const tbody = document.querySelector('#tableauDetailSemaine tbody');
+  if(!tbody) return;
+  
+  const jours = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+  const dayMap = {};
+  
+  week.data.forEach(d=>{
+    const date = new Date(d.date);
+    const dayIdx = date.getDay() || 7;
+    const dayName = jours[dayIdx - 1] || 'Jour';
+    dayMap[dayName] = d;
+  });
+  
+  const totalEggs = week.totalEggs;
+  
+  tbody.innerHTML = `
+    <tr style="background:#f9fbf9">
+      <td style="font-weight:700;color:var(--g2)">🥚 Œufs pondus</td>
+      ${jours.map(j=>`<td>${dayMap[j]?.eggCount || '—'}</td>`).join('')}
+      <td style="background:#f0fdf4;font-weight:700;color:var(--g1)">${totalEggs || '—'}</td>
+    </tr>
+    <tr>
+      <td style="font-weight:700;color:var(--amber-d)">🌾 Aliment (kg)</td>
+      ${jours.map(j=>`<td>—</td>`).join('')}
+      <td style="background:#fff3e0;font-weight:700;color:var(--amber-d)">—</td>
+    </tr>
+    <tr style="background:#f9fbf9">
+      <td style="font-weight:700;color:var(--blue)">💧 Eau (L)</td>
+      ${jours.map(j=>`<td>—</td>`).join('')}
+      <td style="background:#e3f2fd;font-weight:700;color:var(--blue)">—</td>
+    </tr>
+    <tr>
+      <td style="font-weight:700;color:var(--red)">💀 Mortalité</td>
+      ${jours.map(j=>`<td>${dayMap[j]?.mortality || '—'}</td>`).join('')}
+      <td style="background:var(--g4);font-weight:700;color:var(--g1)">0</td>
+    </tr>
+  `;
+};
+
+window.updateRecapTable = function(weeks, flock){
+  const tbody = document.querySelector('#tableauRecapSemaines tbody');
+  if(!tbody) return;
+  
+  if(weeks.length === 0){
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Aucune donnée disponible</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = weeks.slice().reverse().map((w,i)=>{
+    const tauxPonte = w.totalEggs > 0 ? ((w.totalEggs / (w.days * 100)) * 100).toFixed(1) : '—';
+    const isCurrent = i === 0;
+    const prog = Math.round((w.days / 7) * 100);
+    
+    return `<tr style="cursor:pointer" onclick="selectWeekDetail(${w.weekNum})">
+      <td><strong>${isCurrent?'<span style="color:var(--g2)">S'+w.weekNum+'</span>':'S'+w.weekNum+'</strong>'}</td>
+      <td style="font-size:11px;color:var(--text3)">${w.period}</td>
+      <td>${w.days}/7</td>
+      <td><strong>${w.totalEggs || '—'}</strong></td>
+      <td><span class="status-pill s-${tauxPonte>=85?'done':tauxPonte>=75?'pend':'late'}">${tauxPonte}%</span></td>
+      <td>—</td>
+      <td>—</td>
+      <td style="color:${w.totalBroken>0?'var(--red)':'var(--text3)'}">${w.totalBroken || '0'}</td>
+      <td><span style="color:var(--g2);font-size:11px">✓ ${prog}%</span></td>
+    </tr>`;
+  }).join('');
+};
+
+window.selectWeekDetail = function(weekNum){
+  window._currentWeekDetail = weekNum;
+  refreshTableauxSemaines();
+};
+
+window.navWeekDetail = function(direction){
+  window._currentWeekDetail = Math.max(1, window._currentWeekDetail + direction);
+  refreshTableauxSemaines();
+};
+
+window.exportTableauxCSV = function(){
+  const lotName = document.getElementById('semFiltreLot')?.selectedOptions[0]?.textContent || 'export';
+  const csv = 'Détail et Récapitulatif — ' + lotName + '\n';
+  toast('Téléchargement en cours...','info');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `semaines-${lotName}-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
 };
 
 // ── Fonctions preview et impression d'états ──
