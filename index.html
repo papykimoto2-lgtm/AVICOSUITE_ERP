@@ -1594,6 +1594,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 <div class="modal modal-lg">
   <h3 id="mCondTitle">Nouvelle session de conditionnement</h3>
   <input type="hidden" id="condLotId">
+  <input type="hidden" id="condEditId">
   <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px">
     <strong>📐 Règles de conditionnement :</strong>
     1 Plateau = 30 œufs + 1 alvéole &nbsp;|&nbsp; 1 Carton = 12 plateaux (360 œufs)
@@ -1996,6 +1997,24 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('ovReforme')">Annuler</button>
     <button class="btn btn-r" onclick="saveReforme()"><i class="fas fa-check"></i> Valider la sortie</button>
+  </div>
+</div></div>
+
+<!-- ÉDITION D'UN ENREGISTREMENT DE SAISIE PRODUCTION (Ponte / Pesée) -->
+<div class="overlay" id="mPEdit">
+<div class="modal">
+  <h3 id="mPEditTitle">Modifier l'enregistrement</h3>
+  <input type="hidden" id="peType">
+  <input type="hidden" id="peId">
+  <div class="form-grid">
+    <div class="fg"><label>Date *</label><input id="peDate" type="date"></div>
+    <div class="fg" id="peEggsWrap"><label>Œufs pondus *</label><input id="peEggs" type="number" min="0" placeholder="0"></div>
+    <div class="fg" id="peCassesWrap"><label>Casses collecte</label><input id="peCasses" type="number" min="0" placeholder="0"></div>
+    <div class="fg" id="pePoidsWrap"><label>Poids moyen (g) *</label><input id="pePoids" type="number" min="0" placeholder="0"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mPEdit')">Annuler</button>
+    <button class="btn btn-p" onclick="savePEdit()"><i class="fas fa-save"></i> Enregistrer</button>
   </div>
 </div></div>
 
@@ -5188,14 +5207,18 @@ window.savePonte=async function(){
   var cassesColl=parseInt(document.getElementById('sCassesColl')?.value)||0;
   var depotDestId=parseInt(document.getElementById('sDepotDest')?.value)||0;
   if(!date||eggs<0){toast('Date et oeufs requis','err');return;}
-  await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:getSjResponsableId()});
+  // Référence unique du mouvement de stock généré, stockée sur l'enregistrement lui-même :
+  // permet de retrouver et d'annuler précisément ce mouvement lors d'une future édition/suppression
+  // (contrairement à l'ancien ref:'AUTO' partagé par toutes les collectes).
+  var mvtRef='PONTE-'+lot.id+'-'+Date.now();
+  await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:getSjResponsableId(),mvtRef:mvtRef,depotDestId:depotDestId||null});
   // Entree stock oeufs bruts dans le depot selectionne
   if(eggs>0&&depotDestId){
     var prods=await getAll(S.PRODUITS);
     var pBruts=findCondProduit(prods,'bruts');
     if(pBruts) await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
       quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,
-      fournId:null,ref:'AUTO',motif:'Collecte lot '+lot.nom,date:date,ts:Date.now()});
+      fournId:null,ref:mvtRef,motif:'Collecte lot '+lot.nom,date:date,ts:Date.now()});
   }
   toast('Ponte enregistree - '+eggs+' oeufs');
   await refreshLot();
@@ -5206,6 +5229,85 @@ window.savePesee=async()=>{
   if(!date||poids<=0){toast('Date et poids requis','err');return;}
   await addRec(S.GROWTH_PROD,{flockId:lot.id,date,avgWeight:poids,mortality:0,operatorId:getSjResponsableId()});
   toast('✓ Pesée — '+poids+'g');await refreshLot();
+};
+
+// ── ÉDITION / SUPPRESSION des enregistrements de saisie production (Ponte / Pesée) ──
+// depuis l'onglet Historique du lot.
+window.openPEditModal=async function(type,id){
+  const store = type==='egg' ? S.EGG_PROD : S.GROWTH_PROD;
+  const all = await getAll(store);
+  const rec = all.find(function(r){return r.id===id;});
+  if(!rec){ toast('Enregistrement introuvable','err'); return; }
+  document.getElementById('peType').value = type;
+  document.getElementById('peId').value = id;
+  document.getElementById('peDate').value = rec.date||'';
+  const eggsWrap=document.getElementById('peEggsWrap'), cassesWrap=document.getElementById('peCassesWrap'), poidsWrap=document.getElementById('pePoidsWrap');
+  if(type==='egg'){
+    eggsWrap.style.display=''; cassesWrap.style.display=''; poidsWrap.style.display='none';
+    document.getElementById('peEggs').value = rec.eggCount||0;
+    document.getElementById('peCasses').value = rec.eggsBroken||0;
+    document.getElementById('mPEditTitle').textContent = '✏️ Modifier la ponte du '+(rec.date||'');
+  } else {
+    eggsWrap.style.display='none'; cassesWrap.style.display='none'; poidsWrap.style.display='';
+    document.getElementById('pePoids').value = rec.avgWeight||0;
+    document.getElementById('mPEditTitle').textContent = '✏️ Modifier la pesée du '+(rec.date||'');
+  }
+  openOverlay('mPEdit');
+};
+window.savePEdit=async function(){
+  const type = document.getElementById('peType').value;
+  const id = parseInt(document.getElementById('peId').value);
+  const date = document.getElementById('peDate').value;
+  if(!date){ toast('Date requise','err'); return; }
+  const lot = window._lot;
+  if(type==='egg'){
+    const eggs = parseInt(document.getElementById('peEggs').value)||0;
+    const casses = parseInt(document.getElementById('peCasses').value)||0;
+    if(eggs<0){ toast('Nombre d\'oeufs invalide','err'); return; }
+    const all = await getAll(S.EGG_PROD);
+    const rec = all.find(function(r){return r.id===id;});
+    if(!rec){ toast('Enregistrement introuvable','err'); return; }
+    // Régénérer le mouvement de stock lié (si mvtRef connu — sinon enregistrement legacy, non touché)
+    if(rec.mvtRef){
+      const mvts = await getAll(S.MVTS);
+      const linked = mvts.filter(function(m){return m.ref===rec.mvtRef;});
+      await Promise.all(linked.map(function(m){return delRec(S.MVTS,m.id);}));
+      const depotDestId = rec.depotDestId;
+      if(eggs>0 && depotDestId){
+        const prods = await getAll(S.PRODUITS);
+        const pBruts = findCondProduit(prods,'bruts');
+        if(pBruts) await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
+          quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,
+          fournId:null,ref:rec.mvtRef,motif:'Collecte lot '+(lot?.nom||''),date:date,ts:Date.now()});
+      }
+    }
+    await updRec(S.EGG_PROD,id,{...rec,date:date,eggCount:eggs,eggsBroken:casses});
+  } else {
+    const poids = parseInt(document.getElementById('pePoids').value)||0;
+    if(poids<=0){ toast('Poids requis','err'); return; }
+    const all = await getAll(S.GROWTH_PROD);
+    const rec = all.find(function(r){return r.id===id;});
+    if(!rec){ toast('Enregistrement introuvable','err'); return; }
+    await updRec(S.GROWTH_PROD,id,{...rec,date:date,avgWeight:poids});
+  }
+  closeOverlay('mPEdit');
+  toast('Enregistrement modifié');
+  await refreshLot();
+};
+window.delPEditRecord=async function(type,id){
+  if(!confirm('Supprimer cet enregistrement ?')) return;
+  const store = type==='egg' ? S.EGG_PROD : S.GROWTH_PROD;
+  const all = await getAll(store);
+  const rec = all.find(function(r){return r.id===id;});
+  if(!rec){ toast('Enregistrement introuvable','err'); return; }
+  if(type==='egg' && rec.mvtRef){
+    const mvts = await getAll(S.MVTS);
+    const linked = mvts.filter(function(m){return m.ref===rec.mvtRef;});
+    await Promise.all(linked.map(function(m){return delRec(S.MVTS,m.id);}));
+  }
+  await delRec(store,id);
+  toast('Enregistrement supprimé');
+  await refreshLot();
 };
 window.saveAbattage=async()=>{
   const lot=window._lot;const date=document.getElementById('aDate').value;
@@ -5775,13 +5877,14 @@ async function renderLotHistory(lot,kpi,el){
   const mortMap={};
   kpi.mortRecords.forEach(m=>{mortMap[m.date]=(mortMap[m.date]||0)+(m.nbMorts||0);});
   const hdr=isLayer
-    ?'<th>Date</th><th>Œufs</th><th>Taux ponte</th><th>Casse collecte</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Eau</th>'
-    :'<th>Date</th><th>Poids moy.</th><th>Gain/j</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th>';
+    ?'<th>Date</th><th>Œufs</th><th>Taux ponte</th><th>Casse collecte</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Eau</th><th>Actions</th>'
+    :'<th>Date</th><th>Poids moy.</th><th>Gain/j</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Actions</th>';
   const rows=slice.map((d,i)=>{
     const feed=kpi.feeds.find(f=>f.date===d.date);const water=kpi.waters?.find(w=>w.date===d.date);
     const datesBefore=recs.slice(0,recs.indexOf(d)).map(r=>r.date);
     const mortBefore=datesBefore.reduce((a,dt)=>a+(mortMap[dt]||0),0);
     const eff=Math.max(0,lot.initialStock-mortBefore);
+    const actionsTd=`<td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openPEditModal('${isLayer?'egg':'growth'}',${d.id})" title="Modifier"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delPEditRecord('${isLayer?'egg':'growth'}',${d.id})" title="Supprimer"><i class="fas fa-trash"></i></button></td>`;
     if(isLayer){
       const tx=eff>0?(d.eggCount/eff*100).toFixed(1):'—';
       const cls=parseFloat(tx)>=85?'s-done':parseFloat(tx)<75?'s-late':'s-pend';
@@ -5794,6 +5897,7 @@ async function renderLotHistory(lot,kpi,el){
         <td style="font-size:11px;color:var(--text3)">${eff}</td>
         <td>${feed?feed.quantityKg+'kg':'—'}</td>
         <td>${water?water.waterLiters+'L':'—'}</td>
+        ${actionsTd}
       </tr>`;
     } else {
       const prev=recs[recs.indexOf(d)+1];const gain=prev?d.avgWeight-prev.avgWeight:null;
@@ -5804,6 +5908,7 @@ async function renderLotHistory(lot,kpi,el){
         <td style="color:${d.mortality>0?'var(--red)':'var(--text3)'}"><strong style="color:${d.mortality>0?'var(--red)':'inherit'}">${d.mortality||0}</strong></td>
         <td style="font-size:11px;color:var(--text3)">${eff}</td>
         <td>${feed?feed.quantityKg+'kg':'—'}</td>
+        ${actionsTd}
       </tr>`;
     }
   }).join('');
@@ -5813,7 +5918,7 @@ async function renderLotHistory(lot,kpi,el){
   }).join('');
   el.innerHTML=`
     <div class="card"><div class="card-hd"><span>📋 Historique complet</span><button class="btn btn-sm btn-gh" onclick="exportCSV()"><i class="fas fa-download"></i> CSV</button></div>
-      <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr>${hdr}</tr></thead><tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucune donnée enregistrée</td></tr>'}</tbody></table>${pagerHtml}</div>
+      <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr>${hdr}</tr></thead><tbody>${rows||`<tr><td colspan="${isLayer?9:7}" style="text-align:center;color:var(--text3)">Aucune donnée enregistrée</td></tr>`}</tbody></table>${pagerHtml}</div>
     </div>
     <div class="card" style="margin-top:14px"><div class="card-hd"><span>💀 Historique mortalité</span><span style="font-size:12px;color:var(--text3)">${kpi.mortCum} morts cumulés (${kpi.mortPct.toFixed(2)}%)</span></div>
       <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Nb morts</th><th>Cause</th><th>Observations</th></tr></thead><tbody>${mortHistRows||'<tr><td colspan="4" style="text-align:center;color:var(--text3)">Aucune mortalité enregistrée</td></tr>'}</tbody></table></div>
@@ -7280,16 +7385,26 @@ function calcCond(){
 window.calcCond = calcCond;
 
 // Ouvrir le modal depuis le lot
-async function openCondModal(flockId){
+async function openCondModal(flockId, sessionId){
   const [deps, staff, prods, bom] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF), getAll(S.PRODUITS), getCondBom()]);
   window._condBom = bom;
+  let editSession = null;
+  if(sessionId){
+    const sessions = await getAll(S.COND);
+    editSession = sessions.find(s => s.id === sessionId) || null;
+  }
   document.getElementById('condLotId').value = flockId||'';
-  document.getElementById('condDate').value = new Date().toISOString().slice(0,10);
-  document.getElementById('condBruts').value = '';
-  document.getElementById('condCasses').value = '0';
-  document.getElementById('condNotes').value = '';
-  // Reset calibres
-  ['calPetit','calMoyen','calGros','calTresGros'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('condEditId').value = editSession ? editSession.id : '';
+  document.getElementById('condDate').value = editSession ? editSession.date : new Date().toISOString().slice(0,10);
+  document.getElementById('condBruts').value = editSession ? editSession.oeufs_bruts : '';
+  document.getElementById('condCasses').value = editSession ? (editSession.oeufs_casses||0) : '0';
+  document.getElementById('condNotes').value = editSession ? (editSession.notes||'') : '';
+  // Calibres (repris si édition, sinon reset)
+  ['calPetit','calMoyen','calGros','calTresGros'].forEach(function(id){
+    var el=document.getElementById(id); if(!el) return;
+    var key={calPetit:'cal_petit',calMoyen:'cal_moyen',calGros:'cal_gros',calTresGros:'cal_tres_gros'}[id];
+    el.value = editSession && editSession[key] ? editSession[key] : '';
+  });
   var ab=document.getElementById('calibreAlertBox');if(ab)ab.style.display='none';
   var ob=document.getElementById('calibreOkBox');if(ob)ob.style.display='none';
 
@@ -7320,15 +7435,24 @@ async function openCondModal(flockId){
   document.getElementById('condOp').innerHTML = '<option value="">—</option>' +
     staff.map(s => `<option value="${s.id}">${s.nom} (${s.role})</option>`).join('');
 
+  // Édition : réappliquer les dépôts/opérateur d'origine de la session par-dessus les présélections
+  if(editSession){
+    if(editSession.depotSrcId)  document.getElementById('condDepotSrc').value  = editSession.depotSrcId;
+    if(editSession.depotDestId) document.getElementById('condDepotDest').value = editSession.depotDestId;
+    document.getElementById('condOp').value = editSession.operatorId || '';
+  }
+
   // Afficher le stock d'œufs bruts disponible
   const stockTot = await getStockTotal();
   const qBruts = pBruts ? (stockTot[pBruts.id]||0) : 0;
   const qAlv   = pAlv   ? (stockTot[pAlv.id]  ||0) : 0;
 
-  document.getElementById('mCondTitle').innerHTML =
-    `📦 Conditionnement — Stocks disponibles : <span style="color:var(--g2)">${Math.round(qBruts)} œufs bruts</span> · <span style="color:var(--blue)">${Math.round(qAlv)} alvéoles</span>`;
+  document.getElementById('mCondTitle').innerHTML = editSession
+    ? `✏️ Modifier la session ${editSession.ref||''} — les mouvements de stock d'origine seront annulés puis recréés`
+    : `📦 Conditionnement — Stocks disponibles : <span style="color:var(--g2)">${Math.round(qBruts)} œufs bruts</span> · <span style="color:var(--blue)">${Math.round(qAlv)} alvéoles</span>`;
 
-  if(pBruts) document.getElementById('condBruts').value = Math.round(qBruts);
+  // Pré-remplissage du stock dispo uniquement en création (en édition, la valeur d'origine a déjà été posée plus haut)
+  if(!editSession && pBruts) document.getElementById('condBruts').value = Math.round(qBruts);
   calcCond();
   openOverlay('mCond');
 }
@@ -7364,6 +7488,22 @@ async function saveCond(){
 
   // Si calibres partiellement remplis, completer par Moyen
   if(sommeCal > 0 && sommeCal < nets){ cMoyen += (nets - sommeCal); }
+
+  // ── ÉDITION : annuler les mouvements de stock de l'ancienne session puis la supprimer ──
+  // (la nouvelle session + ses mouvements sont recréés juste après avec une référence fraîche)
+  var editId = parseInt(document.getElementById('condEditId').value) || null;
+  var isEdit = !!editId;
+  if(editId){
+    var oldSessions = await getAll(S.COND);
+    var oldSession = oldSessions.find(function(s){return s.id === editId;});
+    if(oldSession){
+      var allMvts = await getAll(S.MVTS);
+      var linkedMvts = allMvts.filter(function(m){return m.ref === oldSession.ref;});
+      await Promise.all(linkedMvts.map(function(m){return delRec(S.MVTS, m.id);}));
+      await delRec(S.COND, editId);
+    }
+    document.getElementById('condEditId').value = '';
+  }
 
   // Calculer plateaux par calibre
   var pltPetit    = Math.floor(cPetit/30);
@@ -7457,7 +7597,7 @@ async function saveCond(){
   }
 
   closeOverlay('mCond');
-  toast(plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
+  toast((isEdit ? 'Session modifiée — ' : '') + plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
 
   // Refresh selon le contexte
   if(flockId && curLotId === flockId && activeLotTab === 'cond'){
@@ -7470,6 +7610,27 @@ async function saveCond(){
   }
 }
 window.saveCond = saveCond;
+
+// Supprimer une session de conditionnement + annuler ses mouvements de stock associés (même ref)
+window.delCondSession = async function(id){
+  if(!confirm('Supprimer cette session de conditionnement ? Les mouvements de stock associés seront annulés.')) return;
+  const sessions = await getAll(S.COND);
+  const s = sessions.find(function(x){return x.id === id;});
+  if(!s){ toast('Session introuvable','err'); return; }
+  const allMvts = await getAll(S.MVTS);
+  const linked = allMvts.filter(function(m){return m.ref === s.ref;});
+  await Promise.all(linked.map(function(m){return delRec(S.MVTS, m.id);}));
+  await delRec(S.COND, id);
+  toast('Session supprimée — mouvements de stock annulés');
+  if(s.flockId && curLotId === s.flockId && activeLotTab === 'cond'){
+    const lots = await getAll(S.FLOCKS);
+    window._lot = lots.find(function(f){return f.id === s.flockId;});
+    window._kpi = await computeKPIs(window._lot);
+    await renderLotTab();
+  } else if(curPage === 'cond'){
+    await renderCond(document.getElementById('contentArea'));
+  }
+};
 
 // ── ONGLET CONDITIONNEMENT DANS UN LOT ──
 async function renderLotCond(lot, kpi, el){
@@ -7515,6 +7676,7 @@ async function renderLotCond(lot, kpi, el){
     +'<td><span class="badge b-bl">'+s.plateaux+' plt</span>'+calHtml+'</td>'
     +'<td><span class="badge b-g">'+s.cartons+' ctn</span></td>'
     +'<td style="color:'+(s.plt_restants>0?'var(--amber-d)':'var(--text3)')+';font-size:11px">'+(s.plt_restants||0)+' plt</td>'
+    +'<td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openCondModal('+lot.id+','+s.id+')" title="Modifier"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delCondSession('+s.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td>'
     +'</tr>';
   }).join('');
 
@@ -7601,7 +7763,7 @@ async function renderLotCond(lot, kpi, el){
       ${sessions.length > 0 ? `
       <div class="card-bd tbl-wrap">
         <table class="tbl">
-          <thead><tr><th>Date</th><th>Référence</th><th>Œufs entrés</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Plt restants</th></tr></thead>
+          <thead><tr><th>Date</th><th>Référence</th><th>Œufs entrés</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Plt restants</th><th>Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>` : `
@@ -7686,6 +7848,7 @@ async function renderCond(ca){
       <td><span class="badge b-bl">${s.plateaux} plt</span></td>
       <td><span class="badge b-g">${s.cartons} ctn</span></td>
       <td style="font-size:${s.oeufs_bruts>0?(100-(s.oeufs_casses/s.oeufs_bruts*100)).toFixed(1):100}%;color:var(--text3);font-size:11px">${s.oeufs_bruts>0?(100-s.oeufs_casses/s.oeufs_bruts*100).toFixed(1):100}%</td>
+      <td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openCondModal(${s.flockId||'null'},${s.id})" title="Modifier"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delCondSession(${s.id})" title="Supprimer"><i class="fas fa-trash"></i></button></td>
     </tr>`;
   }).join('');
 
@@ -7735,7 +7898,7 @@ async function renderCond(ca){
         ${sorted.length > 0 ? `
         <div class="card-bd tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>Date</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Rendement</th></tr></thead>
+            <thead><tr><th>Date</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Rendement</th><th>Actions</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>` : `
