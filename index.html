@@ -1613,7 +1613,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 
   <div id="condEditNotice" style="display:none;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#92400e">
-    ✏️ Modification d'une session existante : les anciens mouvements de stock et la ponte du jour associée seront d'abord annulés, puis recréés avec les nouvelles valeurs. L'alimentation/prophylaxie éventuellement liées à l'ancienne session ne sont pas modifiables ici.
+    ✏️ Modification d'une session existante : les anciens mouvements de stock et la ponte du jour associée seront d'abord annulés, puis recréés avec les nouvelles valeurs. L'alimentation/mortalité/prophylaxie éventuellement liées à l'ancienne session ne sont pas modifiables ici.
   </div>
 
   <!-- ALIMENTATION (optionnel) -->
@@ -1626,6 +1626,29 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <div class="fg"><label>Quantité (kg)</label><input id="condAlimKg" type="number" step="0.1" placeholder="0"></div>
       <div class="fg"><label>Type d'aliment</label><select id="condAlimType"></select></div>
       <div class="fg"><label>Dépôt source aliment</label><select id="condAlimDepot"></select></div>
+    </div>
+  </div>
+
+  <!-- MORTALITÉ (optionnel) -->
+  <div id="condMortSection" style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+    <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:12px;color:var(--red);cursor:pointer">
+      <input type="checkbox" id="condMortOn" onchange="document.getElementById('condMortBlock').style.display=this.checked?'grid':'none'">
+      💀 Enregistrer aussi une mortalité constatée aujourd'hui (optionnel)
+    </label>
+    <div id="condMortBlock" class="form-grid" style="display:none;margin-top:10px">
+      <div class="fg"><label>Nb morts</label><input id="condMortNb" type="number" min="1" placeholder="0"></div>
+      <div class="fg"><label>Cause</label>
+        <select id="condMortCause">
+          <option value="inconnu">Inconnu</option>
+          <option value="maladie">Maladie infectieuse</option>
+          <option value="digestif">Digestif</option>
+          <option value="accident">Accident</option>
+          <option value="predateur">Prédateur</option>
+          <option value="chaleur">Chaleur</option>
+          <option value="autre">Autre</option>
+        </select>
+      </div>
+      <div class="fg fg-full"><label>Observations</label><input id="condMortObs" type="text" placeholder="optionnel"></div>
     </div>
   </div>
 
@@ -7456,6 +7479,7 @@ async function openCondModal(flockId){
   document.getElementById('condEditId').value = '';
   document.getElementById('condEditNotice').style.display = 'none';
   document.getElementById('condAlimSection').style.display = '';
+  document.getElementById('condMortSection').style.display = '';
   document.getElementById('condProphySection').style.display = '';
   document.getElementById('condSaveBtn').innerHTML = '<i class="fas fa-boxes-stacked"></i> Valider le conditionnement';
 
@@ -7475,6 +7499,11 @@ async function openCondModal(flockId){
   document.getElementById('condAlimOn').checked = false;
   document.getElementById('condAlimBlock').style.display = 'none';
   document.getElementById('condAlimKg').value = '';
+  document.getElementById('condMortOn').checked = false;
+  document.getElementById('condMortBlock').style.display = 'none';
+  document.getElementById('condMortNb').value = '';
+  document.getElementById('condMortCause').value = 'inconnu';
+  document.getElementById('condMortObs').value = '';
   document.getElementById('condProphyOn').checked = false;
   document.getElementById('condProphyBlock').style.display = 'none';
   document.getElementById('condProphyQty').value = '';
@@ -7541,6 +7570,7 @@ window.editCond = async function(id){
   // L'alimentation/prophylaxie liées à l'ancienne session ne sont pas ré-éditables ici
   // (elles ne sont pas tracées par ref) : on masque ces blocs en mode édition.
   document.getElementById('condAlimSection').style.display = 'none';
+  document.getElementById('condMortSection').style.display = 'none';
   document.getElementById('condProphySection').style.display = 'none';
   document.getElementById('condSaveBtn').innerHTML = '<i class="fas fa-save"></i> Enregistrer les modifications';
 
@@ -7722,6 +7752,17 @@ async function saveCond(){
       await addRec(S.FEEDING,{flockId:flockId,date:date,quantityKg:alimKg,feedType:pAlim?pAlim.nom:'Aliment',operatorId:opId});
       if(pAlim && alimDepotId) await addRec(S.MVTS,{type:'sortie',produitId:pAlim.id,depotSrcId:alimDepotId,depotDestId:null,
         quantite:alimKg,unite:'kg',prixUnit:pAlim.prix||0,fournId:null,ref:ref,motif:'Alimentation'+nomLot,date:date,ts:mvtTs++});
+    }
+  }
+
+  // ── Mortalité du jour (optionnelle) — store MORTALITE dédié, indépendant de la
+  // ponte du jour créée ci-dessus (dont le champ mortality reste volontairement à 0).
+  if(document.getElementById('condMortOn').checked){
+    var mortNb = parseInt(document.getElementById('condMortNb').value)||0;
+    var mortCause = document.getElementById('condMortCause').value||'inconnu';
+    var mortObs = document.getElementById('condMortObs').value.trim();
+    if(mortNb>0 && flockId){
+      await addRec(S.MORTALITE,{flockId:flockId,date:date,nbMorts:mortNb,cause:mortCause,observations:mortObs,operatorId:opId,ts:mvtTs++});
     }
   }
 
