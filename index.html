@@ -5065,8 +5065,9 @@ async function renderLotSaisie(lot,kpi,el){
     </div></div>`;
   }
 
-  const lastMorts=kpi.mortRecords.slice(-5).reverse();
+  const lastMorts=kpi.mortRecords.slice(-10).reverse();
   const mortFormHtml=`
+    <input type="hidden" id="mortEditId">
     <div class="form-grid" style="margin-bottom:10px">
       <div class="fg"><label>💀 Nb sujets morts *</label><input type="number" id="mNb" placeholder="0" min="1" oninput="previewMort()"></div>
       <div class="fg"><label>Cause</label>
@@ -5083,8 +5084,12 @@ async function renderLotSaisie(lot,kpi,el){
       <div class="fg"><label>Observations</label><input id="mObs" placeholder="optionnel"></div>
     </div>
     <div id="mortPreview" style="display:none;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:10px"></div>
+    <div id="mortEditNotice" style="display:none;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:11px;color:#92400e;margin-bottom:10px">
+      ✏️ Modification d'une saisie existante — la date utilisée est celle du champ « Date de la saisie du jour » ci-dessus.
+    </div>
     <div class="form-actions" style="margin-bottom:12px">
-      <button class="btn btn-r" onclick="saveMortalite()"><i class="fas fa-skull-crossbones"></i> Enregistrer la mortalité</button>
+      <button class="btn btn-r" id="mortSaveBtn" onclick="saveMortalite()"><i class="fas fa-skull-crossbones"></i> Enregistrer la mortalité</button>
+      <button class="btn btn-s" id="mortCancelBtn" style="display:none" onclick="cancelEditMortalite()">Annuler la modification</button>
     </div>
     ${lastMorts.length?`
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">Dernières saisies</div>
@@ -5095,6 +5100,7 @@ async function renderLotSaisie(lot,kpi,el){
         <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">Cause</th>
         <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">Notes</th>
         <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">Responsable</th>
+        <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">Actions</th>
       </tr></thead>
       <tbody>${lastMorts.map(m=>`<tr>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${m.date}</td>
@@ -5102,8 +5108,13 @@ async function renderLotSaisie(lot,kpi,el){
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${({'inconnu':'Inconnu','maladie':'Maladie','digestif':'Digestif','accident':'Accident','predateur':'Prédateur','chaleur':'Chaleur','autre':'Autre'}[m.cause])||m.cause||'—'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${m.observations||'—'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text3)">${esc(staffList.find(s=>s.id===m.operatorId)?.nom||'—')}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:center;white-space:nowrap">
+          <button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="editMortalite(${m.id})" title="Modifier"><i class="fas fa-pen"></i></button>
+          <button class="btn-del" onclick="delMortalite(${m.id})" title="Supprimer"><i class="fas fa-trash"></i></button>
+        </td>
       </tr>`).join('')}</tbody>
-    </table>`:'<div style="color:var(--text3);text-align:center;padding:10px;font-size:12px">Aucune mortalité enregistrée</div>'}
+    </table>
+    <div style="font-size:10px;color:var(--text3);margin-top:4px">Les 10 dernières saisies sont affichées ici. La liste complète est visible dans l'onglet Historique.</div>`:'<div style="color:var(--text3);text-align:center;padding:10px;font-size:12px">Aucune mortalité enregistrée</div>'}
   `;
 
   const sjDateBand=`<div id="sjDateBand" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#eef2ff;border:1px solid #a5b4fc;border-radius:10px;padding:10px 14px;margin-bottom:12px">
@@ -8052,21 +8063,59 @@ window.getSjResponsableId=function(){
 };
 window.saveMortalite=async()=>{
   const lot=window._lot;
+  const editId=parseInt(document.getElementById('mortEditId')?.value)||null;
   const date=document.getElementById('sjDate')?.value;
   const nb=parseInt(document.getElementById('mNb')?.value)||0;
   const cause=document.getElementById('mCause')?.value||'inconnu';
   const obs=document.getElementById('mObs')?.value.trim()||'';
   if(!date||nb<1){toast('Date et nombre de morts requis','err');return;}
   if(nb>=lot.initialStock){toast('Nombre supérieur à l\'effectif initial','err');return;}
-  await addRec(S.MORTALITE,{
-    flockId:lot.id, date, nbMorts:nb,
-    cause, observations:obs, operatorId:getSjResponsableId(), ts:Date.now()
-  });
   const causeLabels={inconnu:'Inconnu',maladie:'Maladie infectieuse',digestif:'Digestif',
     accident:'Accident',predateur:'Prédateur',chaleur:'Chaleur',autre:'Autre'};
-  toast('💀 '+nb+' mort(s) enregistré(s) — '+causeLabels[cause]);
+  if(editId){
+    const existing=(await getAll(S.MORTALITE)).find(m=>m.id===editId);
+    await updRec(S.MORTALITE, editId, Object.assign({}, existing, {
+      flockId:lot.id, date, nbMorts:nb, cause, observations:obs
+    }));
+    toast('💀 Saisie modifiée — '+nb+' mort(s) — '+causeLabels[cause]);
+    window.cancelEditMortalite();
+  } else {
+    await addRec(S.MORTALITE,{
+      flockId:lot.id, date, nbMorts:nb,
+      cause, observations:obs, operatorId:getSjResponsableId(), ts:Date.now()
+    });
+    toast('💀 '+nb+' mort(s) enregistré(s) — '+causeLabels[cause]);
+  }
   if(document.getElementById('mNb')) document.getElementById('mNb').value='';
   if(document.getElementById('mObs')) document.getElementById('mObs').value='';
+  await refreshLot();
+};
+
+// Charger une saisie de mortalité existante dans le formulaire pour modification
+window.editMortalite=async(id)=>{
+  const m=(await getAll(S.MORTALITE)).find(x=>x.id===id);
+  if(!m){toast('Saisie introuvable','err');return;}
+  document.getElementById('mortEditId').value=m.id;
+  document.getElementById('mNb').value=m.nbMorts;
+  document.getElementById('mCause').value=m.cause||'inconnu';
+  document.getElementById('mObs').value=m.observations||'';
+  if(document.getElementById('sjDate')) document.getElementById('sjDate').value=m.date;
+  document.getElementById('mortEditNotice').style.display='block';
+  document.getElementById('mortSaveBtn').innerHTML='<i class="fas fa-save"></i> Enregistrer les modifications';
+  document.getElementById('mortCancelBtn').style.display='inline-flex';
+  previewMort();
+};
+window.cancelEditMortalite=()=>{
+  const idEl=document.getElementById('mortEditId'); if(idEl) idEl.value='';
+  const notice=document.getElementById('mortEditNotice'); if(notice) notice.style.display='none';
+  const btn=document.getElementById('mortSaveBtn'); if(btn) btn.innerHTML='<i class="fas fa-skull-crossbones"></i> Enregistrer la mortalité';
+  const cancelBtn=document.getElementById('mortCancelBtn'); if(cancelBtn) cancelBtn.style.display='none';
+};
+window.delMortalite=async(id)=>{
+  if(!confirm('Supprimer cette saisie de mortalité ? L\'effectif du lot sera recalculé automatiquement.')) return;
+  await delRec(S.MORTALITE, id);
+  toast('Saisie de mortalité supprimée');
+  window.cancelEditMortalite();
   await refreshLot();
 };
 
