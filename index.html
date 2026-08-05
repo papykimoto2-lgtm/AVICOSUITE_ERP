@@ -53,6 +53,14 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 .nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
 .nav-item.active{background:rgba(255,255,255,.12);border-left-color:var(--g3);color:#fff}
 
+/* ── Modules métier (chaîne physique Repro→Finance) mis en avant vs modules transverses ── */
+.nav-group-biz{background:rgba(82,183,136,.06);border-left:3px solid var(--g3);margin:2px 0}
+.nav-section-biz{display:flex;align-items:center;gap:6px;color:var(--g3);font-weight:800;opacity:1}
+.nav-item-biz{color:rgba(255,255,255,.82);border-left-color:rgba(82,183,136,.3)}
+.nav-item-biz i{color:var(--g3)}
+.nav-item-biz:hover{border-left-color:rgba(82,183,136,.6)}
+.nav-item-biz.active{border-left-color:var(--g3);background:rgba(82,183,136,.18)}
+
 /* ── MAIN AREA ── */
 .main{flex:1;display:flex;overflow:hidden}
 
@@ -1141,44 +1149,50 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="nav-item" id="nav-rapports"  onclick="goTo('rapports')"><i class="fas fa-paper-plane"></i> Rapports &amp; Envoi</div>
   <div class="nav-item" id="nav-messagerie" onclick="goTo('messagerie')" style="position:relative"><i class="fas fa-comments"></i> Messagerie <span id="msgNavBadge" style="display:none;position:absolute;right:14px;top:50%;transform:translateY(-50%);background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px"></span></div>
 
+  <!-- ══ MODULES MÉTIER — chaîne physique complète Repro→Finance, mise en avant visuellement ══ -->
+  <div class="nav-group-biz">
+
   <!-- 2. REPRODUCTION & COUVOIR — origine du flux : géniteurs → œufs → poussins d'un jour -->
-  <div class="nav-section">② Reproduction &amp; Couvoir</div>
-  <div class="nav-item" id="nav-reprocouvoir" onclick="goTo('reprocouvoir')"><i class="fas fa-egg"></i> Repro. &amp; Couvoir</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ② Reproduction &amp; Couvoir</div>
+  <div class="nav-item nav-item-biz" id="nav-reprocouvoir" onclick="goTo('reprocouvoir')"><i class="fas fa-egg"></i> Repro. &amp; Couvoir</div>
 
   <!-- 3. APPROVISIONNEMENT — intrants entrants (aliments, intrants vétérinaires…) -->
-  <div class="nav-section">③ Approvisionnement</div>
-  <div class="nav-item" id="nav-fourns"  onclick="goTo('fourns')"><i class="fas fa-truck"></i> Fournisseurs</div>
-  <div class="nav-item" id="nav-bcs"     onclick="goTo('bcs')"><i class="fas fa-file-invoice"></i> Bons de commande</div>
-  <div class="nav-item" id="nav-reappro" onclick="goTo('reappro')"><i class="fas fa-robot"></i> Réappro. automatique</div>
-  <div class="nav-item" id="nav-prods"   onclick="goTo('prods')"><i class="fas fa-tag"></i> Produits & Matières</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ③ Approvisionnement</div>
+  <div class="nav-item nav-item-biz" id="nav-fourns"  onclick="goTo('fourns')"><i class="fas fa-truck"></i> Fournisseurs</div>
+  <div class="nav-item nav-item-biz" id="nav-bcs"     onclick="goTo('bcs')"><i class="fas fa-file-invoice"></i> Bons de commande</div>
+  <div class="nav-item nav-item-biz" id="nav-reappro" onclick="goTo('reappro')"><i class="fas fa-robot"></i> Réappro. automatique</div>
+  <div class="nav-item nav-item-biz" id="nav-prods"   onclick="goTo('prods')"><i class="fas fa-tag"></i> Produits & Matières</div>
 
   <!-- 4. FABRICATION — transformation des matières premières en aliments -->
-  <div class="nav-section">④ Fabrication</div>
-  <div class="nav-item" id="nav-fab"     onclick="goTo('fab')"><i class="fas fa-mortar-pestle"></i> Fabrication aliments</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ④ Fabrication</div>
+  <div class="nav-item nav-item-biz" id="nav-fab"     onclick="goTo('fab')"><i class="fas fa-mortar-pestle"></i> Fabrication aliments</div>
 
   <!-- 5. ÉLEVAGE — réception poussins + aliments, montée en bande -->
-  <div class="nav-section">⑤ Élevage</div>
-  <div class="nav-item" id="nav-lots"    onclick="goTo('lots')"><i class="fas fa-egg"></i> Lots & Élevage</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑤ Élevage</div>
+  <div class="nav-item nav-item-biz" id="nav-lots"    onclick="goTo('lots')"><i class="fas fa-egg"></i> Lots & Élevage</div>
 
   <!-- 6. STOCK — flux intermédiaire (matières, aliments, produits finis) -->
-  <div class="nav-section">⑥ Stock</div>
-  <div class="nav-item" id="nav-depots"  onclick="goTo('depots')"><i class="fas fa-warehouse"></i> Dépôts</div>
-  <div class="nav-item" id="nav-stocks"  onclick="goTo('stocks')"><i class="fas fa-boxes-stacked"></i> État des stocks</div>
-  <div class="nav-item" id="nav-mvts"    onclick="goTo('mvts')"><i class="fas fa-right-left"></i> Mouvements</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑥ Stock</div>
+  <div class="nav-item nav-item-biz" id="nav-depots"  onclick="goTo('depots')"><i class="fas fa-warehouse"></i> Dépôts</div>
+  <div class="nav-item nav-item-biz" id="nav-stocks"  onclick="goTo('stocks')"><i class="fas fa-boxes-stacked"></i> État des stocks</div>
+  <div class="nav-item nav-item-biz" id="nav-mvts"    onclick="goTo('mvts')"><i class="fas fa-right-left"></i> Mouvements</div>
 
   <!-- 7. CONDITIONNEMENT — rupture dirty→clean (abattage/emballage) : jamais de retour amont après ce point -->
-  <div class="nav-section">⑦ Conditionnement</div>
-  <div class="nav-item" id="nav-cond"    onclick="goTo('cond')"><i class="fas fa-box-open"></i> Conditionnement</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑦ Conditionnement</div>
+  <div class="nav-item nav-item-biz" id="nav-cond"    onclick="goTo('cond')"><i class="fas fa-box-open"></i> Conditionnement</div>
 
   <!-- 8. DISTRIBUTION — sortie vers le client -->
-  <div class="nav-section">⑧ Distribution</div>
-  <div class="nav-item" id="nav-clients"   onclick="goTo('clients')"><i class="fas fa-user-tie"></i> Clients</div>
-  <div class="nav-item" id="nav-commandes" onclick="goTo('commandes')"><i class="fas fa-shopping-cart"></i> Commandes</div>
-  <div class="nav-item" id="nav-creances"  onclick="goTo('creances')"><i class="fas fa-hourglass-half"></i> Créances</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑧ Distribution</div>
+  <div class="nav-item nav-item-biz" id="nav-clients"   onclick="goTo('clients')"><i class="fas fa-user-tie"></i> Clients</div>
+  <div class="nav-item nav-item-biz" id="nav-commandes" onclick="goTo('commandes')"><i class="fas fa-shopping-cart"></i> Commandes</div>
+  <div class="nav-item nav-item-biz" id="nav-creances"  onclick="goTo('creances')"><i class="fas fa-hourglass-half"></i> Créances</div>
 
   <!-- 9. FINANCE — résultat économique du cycle complet -->
-  <div class="nav-section">⑨ Finance</div>
-  <div class="nav-item" id="nav-finance"   onclick="goTo('finance')"><i class="fas fa-chart-line"></i> Finance &amp; Rentabilité</div>
+  <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑨ Finance</div>
+  <div class="nav-item nav-item-biz" id="nav-finance"   onclick="goTo('finance')"><i class="fas fa-chart-line"></i> Finance &amp; Rentabilité</div>
+
+  </div>
+  <!-- ══ FIN MODULES MÉTIER ══ -->
 
   <!-- ── Fonctions transverses (hors flux physique, ne pas mélanger avec la marche en avant) ── -->
 
@@ -7567,11 +7581,13 @@ window.editCond = async function(id){
 
   document.getElementById('condEditId').value = s.id;
   document.getElementById('condEditNotice').style.display = 'block';
-  // L'alimentation/prophylaxie liées à l'ancienne session ne sont pas ré-éditables ici
-  // (elles ne sont pas tracées par ref) : on masque ces blocs en mode édition.
-  document.getElementById('condAlimSection').style.display = 'none';
-  document.getElementById('condMortSection').style.display = 'none';
-  document.getElementById('condProphySection').style.display = 'none';
+  // Les blocs Alimentation/Mortalité/Prophylaxie restent visibles en édition : ils
+  // permettent d'ajouter une NOUVELLE saisie du jour à l'occasion de la modification.
+  // Les éventuelles saisies liées à l'ancienne session (non tracées par ref) ne sont
+  // pas pré-remplies ici et doivent être corrigées depuis leurs propres écrans.
+  document.getElementById('condAlimSection').style.display = '';
+  document.getElementById('condMortSection').style.display = '';
+  document.getElementById('condProphySection').style.display = '';
   document.getElementById('condSaveBtn').innerHTML = '<i class="fas fa-save"></i> Enregistrer les modifications';
 
   document.getElementById('condDate').value = s.date;
