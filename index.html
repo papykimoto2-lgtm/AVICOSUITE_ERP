@@ -1437,12 +1437,15 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <input type="hidden" id="prodId">
   <div class="form-grid">
     <div class="fg"><label>Désignation *</label><input id="prodNom" placeholder="ex: Aliment ponte 116"></div>
-    <div class="fg"><label>Catégorie</label><select id="prodCat">
+    <div class="fg"><label>Catégorie</label><select id="prodCat" onchange="updateProdSousCat()">
       <option value="aliment">Aliment</option><option value="medicament">Médicament/Vaccin</option>
       <option value="materiel">Matériel</option><option value="oeuf">Œufs</option>
       <option value="viande">Viande</option><option value="intrant">Intrant divers</option>
       <option value="consommable">Consommables (alvéoles, plateaux, ficelles)</option>
       <option value="emballage">Emballage (cartons)</option>
+    </select></div>
+    <div class="fg" id="prodSousCatWrap" style="display:none"><label>Sous-type</label><select id="prodSousCat">
+      <option value="">— non spécifié —</option>
     </select></div>
     <div class="fg"><label>Stade *</label><select id="prodStade">
       <option value="matiere_premiere">🌾 Matière première</option>
@@ -2020,11 +2023,41 @@ function findCondProduit(prods, key){
   const noms = COND_PRODUIT_NOMS[key]||[];
   for(let i=0;i<noms.length;i++){ const p=prods.find(function(x){return x.nom===noms[i];}); if(p) return p; }
   if(key==='bruts')   return prods.find(function(p){return p.categorie==='oeuf'&&p.stade==='matiere_premiere';}) || prods.find(function(p){return p.categorie==='oeuf';}) || null;
-  if(key==='alveole') return prods.find(function(p){return p.categorie==='consommable'&&/alv/i.test(p.nom||'');}) || null;
+  if(key==='alveole') return prods.find(function(p){return p.categorie==='consommable'&&p.sousCat==='alveole';}) || prods.find(function(p){return p.categorie==='consommable'&&/alv/i.test(p.nom||'');}) || null;
   if(key==='plateau') return prods.find(function(p){return p.stade==='produit_fini'&&/plateau/i.test(p.nom||'');}) || null;
   if(key==='carton')  return prods.find(function(p){return p.stade==='produit_fini'&&/carton/i.test(p.nom||'')&&!/vide/i.test(p.nom||'');}) || null;
   return null;
 }
+
+// ── Sous-typage des consommables/emballages (utilisé pour fiabiliser le BOM conditionnement) ──
+const SOUS_CAT_OPTIONS = {
+  consommable: [
+    {v:'alveole',     l:'Alvéole / plateau vide'},
+    {v:'ficelle',     l:'Ficelle / attache'},
+    {v:'autre_conso', l:'Autre consommable'}
+  ],
+  emballage: [
+    {v:'carton_vide', l:'Carton vide'},
+    {v:'autre_emb',   l:'Autre emballage'}
+  ]
+};
+function updateProdSousCat(keepValue){
+  const cat  = document.getElementById('prodCat').value;
+  const wrap = document.getElementById('prodSousCatWrap');
+  const sel  = document.getElementById('prodSousCat');
+  const opts = SOUS_CAT_OPTIONS[cat];
+  const prev = keepValue!==undefined ? keepValue : sel.value;
+  if(opts){
+    sel.innerHTML = '<option value="">— non spécifié —</option>' + opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
+    sel.value = opts.some(o=>o.v===prev) ? prev : '';
+    wrap.style.display = '';
+  } else {
+    sel.innerHTML = '<option value="">— non spécifié —</option>';
+    sel.value = '';
+    wrap.style.display = 'none';
+  }
+}
+window.updateProdSousCat = updateProdSousCat;
 
 // ════════════════════════════════════════════════════════
 //  UNIFIED DB — SanixAviNest
@@ -6633,15 +6666,16 @@ async function renderProds(ca){
   const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦',consommable:'🧺',emballage:'📦'};
   const stadeLbl={matiere_premiere:'🌾 MP',encours:'⚙️ Encours',produit_fini:'📦 Produit fini'};
   const stadeCss={matiere_premiere:'b-a',encours:'b-bl',produit_fini:'b-g'};
-  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span></td><td><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></td><td style="font-size:11px;color:var(--text3)">${d?d.nom:'—'}</td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  const sousCatLbl={alveole:'Alvéole',ficelle:'Ficelle',carton_vide:'Carton vide',autre_conso:'Autre conso.',autre_emb:'Autre emb.'};
+  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';const sousCatBadge=p.sousCat&&sousCatLbl[p.sousCat]?` <span class="badge b-bl" style="font-size:9px" title="Sous-type">${sousCatLbl[p.sousCat]}</span>`:'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span>${sousCatBadge}</td><td><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></td><td style="font-size:11px;color:var(--text3)">${d?d.nom:'—'}</td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
 }
 async function openProdModal(id=null){
   const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
   document.getElementById('prodFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
   document.getElementById('prodDepotAffecte').innerHTML='<option value="">—</option>'+deps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
-  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodStade').value='matiere_premiere';document.getElementById('prodDepotAffecte').value='';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;}
-  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodStade').value=p.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=p.depotAffecteId||'';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;}}
+  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodStade').value='matiere_premiere';document.getElementById('prodDepotAffecte').value='';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;updateProdSousCat('');}
+  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodStade').value=p.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=p.depotAffecteId||'';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;updateProdSousCat(p.sousCat||'');}}
   openOverlay('mProd');
 }
 window.openProdModal=openProdModal;
@@ -6649,7 +6683,7 @@ async function saveProd(){
   const id=document.getElementById('prodId').value;
   const stade=document.getElementById('prodStade').value;
   const depotAffecteId=document.getElementById('prodDepotAffecte').value?parseInt(document.getElementById('prodDepotAffecte').value):null;
-  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
+  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,sousCat:document.getElementById('prodSousCat').value||null,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
   if(!data.nom){toast('Nom requis','err');return;}
   if(!depotAffecteId){toast('Dépôt d\'affectation requis','err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
@@ -7589,11 +7623,16 @@ async function getCondBom(){
 }
 async function openCondBomModal(){
   const [bom, prods] = await Promise.all([getCondBom(), getAll(S.PRODUITS)]);
-  const consos = prods.filter(p => p.categorie==='consommable' || p.categorie==='emballage');
-  const opts = consos.map(p => `<option value="${p.id}">${p.nom}</option>`).join('');
-  document.getElementById('bomAlvId').innerHTML     = '<option value="">— aucune —</option>' + opts;
-  document.getElementById('bomCartonId').innerHTML  = '<option value="">— aucun —</option>' + opts;
-  document.getElementById('bomFicelleId').innerHTML = '<option value="">— aucune —</option>' + opts;
+  // Filtrage par catégorie + sous-type : un produit tagué (ex: sousCat='ficelle') n'apparaît
+  // que dans le select correspondant. Un produit non-tagué (sousCat vide) reste visible dans
+  // tous les selects de sa catégorie de base, pour rester compatible avec les catalogues existants.
+  const mkOpts = list => list.map(p => `<option value="${p.id}">${p.nom}</option>`).join('');
+  const alvList     = prods.filter(p => p.categorie==='consommable' && (!p.sousCat || p.sousCat==='alveole'));
+  const cartonList  = prods.filter(p => p.categorie==='emballage'  && (!p.sousCat || p.sousCat==='carton_vide'));
+  const ficelleList = prods.filter(p => p.categorie==='consommable' && (!p.sousCat || p.sousCat==='ficelle'));
+  document.getElementById('bomAlvId').innerHTML     = '<option value="">— aucune —</option>' + mkOpts(alvList);
+  document.getElementById('bomCartonId').innerHTML  = '<option value="">— aucun —</option>' + mkOpts(cartonList);
+  document.getElementById('bomFicelleId').innerHTML = '<option value="">— aucune —</option>' + mkOpts(ficelleList);
   document.getElementById('bomAlvId').value     = bom?.alvId || '';
   document.getElementById('bomAlvQte').value    = bom?.alvQte ?? 1;
   document.getElementById('bomCartonId').value  = bom?.cartonId || '';
