@@ -160,27 +160,9 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 .btn-del{background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px}
 
 /* ── MODAL ── */
-.overlay{
-  position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;
-  align-items:center;justify-content:center;
-  opacity:0;pointer-events:none;
-  transition:opacity .2s ease-out,backdrop-filter .2s ease-out;
-  will-change:opacity;
-  backdrop-filter:blur(0px)
-}
-.overlay.open{
-  opacity:1;pointer-events:auto;
-  backdrop-filter:blur(2px)
-}
-.modal{
-  background:#fff;border-radius:16px;padding:22px;width:90%;max-width:520px;
-  max-height:92vh;overflow-y:auto;box-shadow:var(--sh2);
-  transform:scale(.95) translateY(20px);
-  transition:transform .25s cubic-bezier(.34,.1,.68,.55);
-  will-change:transform;
-  origin:center center
-}
-.overlay.open .modal{transform:scale(1) translateY(0)}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center}
+.overlay.open{display:flex}
+.modal{background:#fff;border-radius:16px;padding:22px;width:90%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:var(--sh2)}
 .modal-lg{max-width:700px}.modal-xl{max-width:860px}
 .modal h3{font-size:16px;font-weight:700;margin-bottom:16px}
 .modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
@@ -513,11 +495,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     max-height:90dvh;max-height:90vh;
     padding:20px 16px;
     padding-bottom:calc(16px + env(safe-area-inset-bottom));
-    transform:translateY(100%);
-    transition:transform .3s cubic-bezier(.34,.1,.68,.55);
-    will-change:transform;
   }
-  .overlay.open .modal{transform:translateY(0)}
 
   /* Lot header */
   .lot-header{padding:8px 12px 8px 14px}
@@ -1358,10 +1336,11 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <option value="transfert">🔄 Transfert</option><option value="inventaire">📋 Inventaire</option>
     </select></div>
     <div class="fg"><label>Date</label><input id="mvtDate" type="date"></div>
-    <div class="fg"><label>Produit *</label><select id="mvtProd"></select></div>
+    <div class="fg"><label>Produit *</label><select id="mvtProd" onchange="updateMvtStockHint()"></select></div>
     <div class="fg"><label>Quantité *</label><input id="mvtQty" type="number" step="0.01" placeholder="0"></div>
-    <div class="fg" id="mvtSrcWrap"><label>Dépôt source</label><select id="mvtSrc"></select></div>
+    <div class="fg" id="mvtSrcWrap"><label>Dépôt source</label><select id="mvtSrc" onchange="updateMvtStockHint()"></select></div>
     <div class="fg" id="mvtDestWrap"><label>Dépôt destination</label><select id="mvtDest"></select></div>
+    <div class="fg fg-full" id="mvtStockHint" style="font-size:11px;color:var(--text3)"></div>
     <div class="fg"><label>Fournisseur</label><select id="mvtFourn"><option value="">—</option></select></div>
     <div class="fg"><label>Référence</label><input id="mvtRef" placeholder="optionnel"></div>
     <div class="fg"><label>Prix unitaire FCFA</label><input id="mvtPrix" type="number" placeholder="0"></div>
@@ -1459,15 +1438,12 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <input type="hidden" id="prodId">
   <div class="form-grid">
     <div class="fg"><label>Désignation *</label><input id="prodNom" placeholder="ex: Aliment ponte 116"></div>
-    <div class="fg"><label>Catégorie</label><select id="prodCat" onchange="updateProdSousCat()">
+    <div class="fg"><label>Catégorie</label><select id="prodCat">
       <option value="aliment">Aliment</option><option value="medicament">Médicament/Vaccin</option>
       <option value="materiel">Matériel</option><option value="oeuf">Œufs</option>
       <option value="viande">Viande</option><option value="intrant">Intrant divers</option>
       <option value="consommable">Consommables (alvéoles, plateaux, ficelles)</option>
       <option value="emballage">Emballage (cartons)</option>
-    </select></div>
-    <div class="fg" id="prodSousCatWrap" style="display:none"><label>Sous-type</label><select id="prodSousCat">
-      <option value="">— non spécifié —</option>
     </select></div>
     <div class="fg"><label>Stade *</label><select id="prodStade">
       <option value="matiere_premiere">🌾 Matière première</option>
@@ -1619,17 +1595,52 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <input type="hidden" id="condEditId">
   <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px">
     <strong>📐 Règles de conditionnement :</strong>
-    1 Plateau = 30 œufs + 1 alvéole &nbsp;|&nbsp; 1 Carton = 12 plateaux (360 œufs)
+    1 Plateau = 30 œufs + 1 alvéole &nbsp;|&nbsp; 1 Carton = 12 plateaux (360 œufs) + 4 alvéoles de couverture (1 posée au-dessus de chaque pile)
     &nbsp;|&nbsp; <strong>Calibres :</strong> Petit &lt;53g · Moyen 53-63g · Gros 63-73g · TG 73g+
   </div>
   <div class="form-grid" style="margin-bottom:14px">
+    <div class="fg fg-full"><label>🐔 Lot (pondeuses) *</label><select id="condLot" onchange="onCondLotChange()"></select></div>
     <div class="fg"><label>Date *</label><input id="condDate" type="date"></div>
-    <div class="fg"><label>Œufs bruts entrants</label><input id="condBruts" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
+    <div class="fg"><label>🥚 Œufs pondus / collectés aujourd'hui *</label><input id="condBruts" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
     <div class="fg"><label>Œufs cassés / non conformes</label><input id="condCasses" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
-    <div class="fg"><label>Dépôt source (œufs bruts)</label><select id="condDepotSrc"></select></div>
+    <div class="fg"><label>Dépôt de stockage œufs bruts</label><select id="condDepotSrc"></select></div>
     <div class="fg"><label>Dépôt destination (plateaux)</label><select id="condDepotDest"></select></div>
     <div class="fg"><label>Opérateur</label><select id="condOp"></select></div>
     <div class="fg fg-full"><label>Observations</label><textarea id="condNotes" placeholder="optionnel"></textarea></div>
+  </div>
+  <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#3730a3">
+    ℹ️ Saisie unique : cette collecte génère automatiquement la ponte du jour du lot — inutile de la ressaisir dans "Saisie du jour".
+  </div>
+
+  <div id="condEditNotice" style="display:none;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#92400e">
+    ✏️ Modification d'une session existante : les anciens mouvements de stock et la ponte du jour associée seront d'abord annulés, puis recréés avec les nouvelles valeurs. L'alimentation/prophylaxie éventuellement liées à l'ancienne session ne sont pas modifiables ici.
+  </div>
+
+  <!-- ALIMENTATION (optionnel) -->
+  <div id="condAlimSection" style="background:#f0fdf4;border:1px solid var(--g3);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+    <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:12px;color:var(--g1);cursor:pointer">
+      <input type="checkbox" id="condAlimOn" onchange="document.getElementById('condAlimBlock').style.display=this.checked?'grid':'none'">
+      🌾 Enregistrer aussi l'alimentation du jour (optionnel)
+    </label>
+    <div id="condAlimBlock" class="form-grid" style="display:none;margin-top:10px">
+      <div class="fg"><label>Quantité (kg)</label><input id="condAlimKg" type="number" step="0.1" placeholder="0"></div>
+      <div class="fg"><label>Type d'aliment</label><select id="condAlimType"></select></div>
+      <div class="fg"><label>Dépôt source aliment</label><select id="condAlimDepot"></select></div>
+    </div>
+  </div>
+
+  <!-- PROPHYLAXIE (optionnel) -->
+  <div id="condProphySection" style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:12px;color:var(--red);cursor:pointer">
+      <input type="checkbox" id="condProphyOn" onchange="document.getElementById('condProphyBlock').style.display=this.checked?'grid':'none'">
+      💉 Enregistrer aussi une prophylaxie réalisée aujourd'hui (optionnel)
+    </label>
+    <div id="condProphyBlock" class="form-grid" style="display:none;margin-top:10px">
+      <div class="fg fg-full"><label>Intervention planifiée</label><select id="condProphyTask"><option value="">— Aucune intervention en attente —</option></select></div>
+      <div class="fg"><label>Produit utilisé</label><select id="condProphyProd"></select></div>
+      <div class="fg"><label>Quantité</label><input id="condProphyQty" type="number" step="0.01" placeholder="0"></div>
+      <div class="fg"><label>Dépôt source</label><select id="condProphyDepot"></select></div>
+    </div>
   </div>
 
   <!-- CALIBRAGE -->
@@ -1693,7 +1704,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mCond')">Annuler</button>
-    <button class="btn btn-p" onclick="saveCond()"><i class="fas fa-boxes-stacked"></i> Valider le conditionnement</button>
+    <button class="btn btn-p" id="condSaveBtn" onclick="saveCond()"><i class="fas fa-boxes-stacked"></i> Valider le conditionnement</button>
   </div>
 </div></div>
 
@@ -1713,6 +1724,8 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Qté / carton</label><input id="bomCartonQte" type="number" min="0" step="1" value="1"></div>
     <div class="fg"><label>Ficelle</label><select id="bomFicelleId"><option value="">— aucune —</option></select></div>
     <div class="fg"><label>Qté / carton</label><input id="bomFicelleQte" type="number" min="0" step="0.1" value="1"></div>
+    <div class="fg"><label>Alvéoles de couverture</label><select id="bomAlvCouvId"><option value="">— même alvéole —</option></select></div>
+    <div class="fg"><label>Qté / carton (1 par pile)</label><input id="bomAlvCouvQte" type="number" min="0" step="1" value="4"></div>
   </div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mCondBom')">Annuler</button>
@@ -2022,24 +2035,6 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
-<!-- ÉDITION D'UN ENREGISTREMENT DE SAISIE PRODUCTION (Ponte / Pesée) -->
-<div class="overlay" id="mPEdit">
-<div class="modal">
-  <h3 id="mPEditTitle">Modifier l'enregistrement</h3>
-  <input type="hidden" id="peType">
-  <input type="hidden" id="peId">
-  <div class="form-grid">
-    <div class="fg"><label>Date *</label><input id="peDate" type="date"></div>
-    <div class="fg" id="peEggsWrap"><label>Œufs pondus *</label><input id="peEggs" type="number" min="0" placeholder="0"></div>
-    <div class="fg" id="peCassesWrap"><label>Casses collecte</label><input id="peCasses" type="number" min="0" placeholder="0"></div>
-    <div class="fg" id="pePoidsWrap"><label>Poids moyen (g) *</label><input id="pePoids" type="number" min="0" placeholder="0"></div>
-  </div>
-  <div class="modal-footer">
-    <button class="btn btn-s" onclick="closeOverlay('mPEdit')">Annuler</button>
-    <button class="btn btn-p" onclick="savePEdit()"><i class="fas fa-save"></i> Enregistrer</button>
-  </div>
-</div></div>
-
 <div class="toast" id="toast"><i class="fas fa-check-circle"></i><span id="toastMsg"></span></div>
 
 <script>
@@ -2064,41 +2059,11 @@ function findCondProduit(prods, key){
   const noms = COND_PRODUIT_NOMS[key]||[];
   for(let i=0;i<noms.length;i++){ const p=prods.find(function(x){return x.nom===noms[i];}); if(p) return p; }
   if(key==='bruts')   return prods.find(function(p){return p.categorie==='oeuf'&&p.stade==='matiere_premiere';}) || prods.find(function(p){return p.categorie==='oeuf';}) || null;
-  if(key==='alveole') return prods.find(function(p){return p.categorie==='consommable'&&p.sousCat==='alveole';}) || prods.find(function(p){return p.categorie==='consommable'&&/alv/i.test(p.nom||'');}) || null;
+  if(key==='alveole') return prods.find(function(p){return p.categorie==='consommable'&&/alv/i.test(p.nom||'');}) || null;
   if(key==='plateau') return prods.find(function(p){return p.stade==='produit_fini'&&/plateau/i.test(p.nom||'');}) || null;
   if(key==='carton')  return prods.find(function(p){return p.stade==='produit_fini'&&/carton/i.test(p.nom||'')&&!/vide/i.test(p.nom||'');}) || null;
   return null;
 }
-
-// ── Sous-typage des consommables/emballages (utilisé pour fiabiliser le BOM conditionnement) ──
-const SOUS_CAT_OPTIONS = {
-  consommable: [
-    {v:'alveole',     l:'Alvéole / plateau vide'},
-    {v:'ficelle',     l:'Ficelle / attache'},
-    {v:'autre_conso', l:'Autre consommable'}
-  ],
-  emballage: [
-    {v:'carton_vide', l:'Carton vide'},
-    {v:'autre_emb',   l:'Autre emballage'}
-  ]
-};
-function updateProdSousCat(keepValue){
-  const cat  = document.getElementById('prodCat').value;
-  const wrap = document.getElementById('prodSousCatWrap');
-  const sel  = document.getElementById('prodSousCat');
-  const opts = SOUS_CAT_OPTIONS[cat];
-  const prev = keepValue!==undefined ? keepValue : sel.value;
-  if(opts){
-    sel.innerHTML = '<option value="">— non spécifié —</option>' + opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
-    sel.value = opts.some(o=>o.v===prev) ? prev : '';
-    wrap.style.display = '';
-  } else {
-    sel.innerHTML = '<option value="">— non spécifié —</option>';
-    sel.value = '';
-    wrap.style.display = 'none';
-  }
-}
-window.updateProdSousCat = updateProdSousCat;
 
 // ════════════════════════════════════════════════════════
 //  UNIFIED DB — SanixAviNest
@@ -4808,14 +4773,10 @@ async function renderLotSemaine(lot, kpi, el){
         ${isLayer?`
         <div class="week-saisie-card">
           <h4>Collecte oeufs</h4>
-          <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:8px">
-            <div class="fg"><label>Date</label><input type="date" id="wsDate" value="${today}" min="${plageActuelle.debut}" max="${plageActuelle.fin}"></div>
-            <div class="fg"><label>Nb oeufs</label><input type="number" id="wsEggs" placeholder="0" min="0" oninput="calcWsRate()"></div>
-            <div class="fg"><label>Casses</label><input type="number" id="wsCasses" placeholder="0" min="0"></div>
-            <div class="fg"><label>Taux</label><input type="text" id="wsTaux" readonly style="background:#f0fdf4;font-weight:700;color:var(--g1)"></div>
+          <div style="text-align:center;padding:10px 6px">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Saisie désormais au <strong>Conditionnement</strong> (collecte + conditionnement en une opération).</div>
+            <button class="btn btn-p btn-sm" onclick="openCondModal(${lot.id})"><i class="fas fa-box"></i> Ouvrir le Conditionnement</button>
           </div>
-          <div style="font-size:10px;color:#0369a1;margin-top:6px">ℹ️ Calibrage effectué au Conditionnement, pas ici.</div>
-          <button class="btn btn-p btn-sm" style="margin-top:8px;width:100%" onclick="saveWsSaisie('ponte')"><i class="fas fa-save"></i> Enregistrer ponte</button>
         </div>`:
         `<div class="week-saisie-card">
           <h4>⚖️ Pesée hebdo</h4>
@@ -5080,22 +5041,12 @@ async function renderLotSaisie(lot,kpi,el){
 
   let prodForm='';
   if(lot.type==='layer'){
-    const allDeps=await getAll(S.DEPOTS);
-    const depOpts=allDeps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
-    const defDep=allDeps.find(d=>d.type==='matiere_premiere')||allDeps.find(d=>d.type==='produit_fini')||allDeps[0];
-    prodForm=`<div class="card"><div class="card-hd"><span>🥚 Ponte du jour</span></div><div class="card-bd">
-      <div class="form-grid">
-        <div class="fg"><label>Oeufs pondus *</label><input type="number" id="sEggs" placeholder="0" min="0"></div>
-        <div class="fg"><label>Casses collecte</label><input type="number" id="sCassesColl" placeholder="0" min="0"></div>
-        <div class="fg"><label>Depot destination *</label><select id="sDepotDest">${depOpts}</select></div>
+    prodForm=`<div class="card" style="border:1.5px solid #c7d2fe"><div class="card-hd" style="background:#eef2ff"><span>🥚 Ponte du jour</span></div><div class="card-bd">
+      <div style="text-align:center;padding:14px 10px">
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px">La ponte est désormais saisie directement au <strong>Conditionnement</strong> (une seule opération : collecte + conditionnement).</div>
+        <button class="btn btn-p btn-sm" onclick="openCondModal(${lot.id})"><i class="fas fa-box"></i> Ouvrir le Conditionnement</button>
       </div>
-      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;margin:10px 0;font-size:11px;color:#0369a1">
-        ℹ️ La répartition par calibres (Petit/Moyen/Gros/Très gros) se fait exclusivement au moment du <strong>Conditionnement</strong>, pas à la collecte.
-      </div>
-      <div class="form-actions"><button class="btn btn-p" onclick="savePonte()"><i class="fas fa-save"></i> Enregistrer</button></div>
     </div></div>`;
-    // Présélectionner produit_fini
-    setTimeout(()=>{const el=document.getElementById('sDepotDest');if(el&&defDep) el.value=defDep.id;},50);
   } else {
     prodForm=`<div class="card"><div class="card-hd"><span>⚖️ Pesée</span></div><div class="card-bd">
       <div class="form-grid">
@@ -5229,18 +5180,14 @@ window.savePonte=async function(){
   var cassesColl=parseInt(document.getElementById('sCassesColl')?.value)||0;
   var depotDestId=parseInt(document.getElementById('sDepotDest')?.value)||0;
   if(!date||eggs<0){toast('Date et oeufs requis','err');return;}
-  // Référence unique du mouvement de stock généré, stockée sur l'enregistrement lui-même :
-  // permet de retrouver et d'annuler précisément ce mouvement lors d'une future édition/suppression
-  // (contrairement à l'ancien ref:'AUTO' partagé par toutes les collectes).
-  var mvtRef='PONTE-'+lot.id+'-'+Date.now();
-  await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:getSjResponsableId(),mvtRef:mvtRef,depotDestId:depotDestId||null});
+  await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:getSjResponsableId()});
   // Entree stock oeufs bruts dans le depot selectionne
   if(eggs>0&&depotDestId){
     var prods=await getAll(S.PRODUITS);
     var pBruts=findCondProduit(prods,'bruts');
     if(pBruts) await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
       quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,
-      fournId:null,ref:mvtRef,motif:'Collecte lot '+lot.nom,date:date,ts:Date.now()});
+      fournId:null,ref:'AUTO',motif:'Collecte lot '+lot.nom,date:date,ts:Date.now()});
   }
   toast('Ponte enregistree - '+eggs+' oeufs');
   await refreshLot();
@@ -5251,85 +5198,6 @@ window.savePesee=async()=>{
   if(!date||poids<=0){toast('Date et poids requis','err');return;}
   await addRec(S.GROWTH_PROD,{flockId:lot.id,date,avgWeight:poids,mortality:0,operatorId:getSjResponsableId()});
   toast('✓ Pesée — '+poids+'g');await refreshLot();
-};
-
-// ── ÉDITION / SUPPRESSION des enregistrements de saisie production (Ponte / Pesée) ──
-// depuis l'onglet Historique du lot.
-window.openPEditModal=async function(type,id){
-  const store = type==='egg' ? S.EGG_PROD : S.GROWTH_PROD;
-  const all = await getAll(store);
-  const rec = all.find(function(r){return r.id===id;});
-  if(!rec){ toast('Enregistrement introuvable','err'); return; }
-  document.getElementById('peType').value = type;
-  document.getElementById('peId').value = id;
-  document.getElementById('peDate').value = rec.date||'';
-  const eggsWrap=document.getElementById('peEggsWrap'), cassesWrap=document.getElementById('peCassesWrap'), poidsWrap=document.getElementById('pePoidsWrap');
-  if(type==='egg'){
-    eggsWrap.style.display=''; cassesWrap.style.display=''; poidsWrap.style.display='none';
-    document.getElementById('peEggs').value = rec.eggCount||0;
-    document.getElementById('peCasses').value = rec.eggsBroken||0;
-    document.getElementById('mPEditTitle').textContent = '✏️ Modifier la ponte du '+(rec.date||'');
-  } else {
-    eggsWrap.style.display='none'; cassesWrap.style.display='none'; poidsWrap.style.display='';
-    document.getElementById('pePoids').value = rec.avgWeight||0;
-    document.getElementById('mPEditTitle').textContent = '✏️ Modifier la pesée du '+(rec.date||'');
-  }
-  openOverlay('mPEdit');
-};
-window.savePEdit=async function(){
-  const type = document.getElementById('peType').value;
-  const id = parseInt(document.getElementById('peId').value);
-  const date = document.getElementById('peDate').value;
-  if(!date){ toast('Date requise','err'); return; }
-  const lot = window._lot;
-  if(type==='egg'){
-    const eggs = parseInt(document.getElementById('peEggs').value)||0;
-    const casses = parseInt(document.getElementById('peCasses').value)||0;
-    if(eggs<0){ toast('Nombre d\'oeufs invalide','err'); return; }
-    const all = await getAll(S.EGG_PROD);
-    const rec = all.find(function(r){return r.id===id;});
-    if(!rec){ toast('Enregistrement introuvable','err'); return; }
-    // Régénérer le mouvement de stock lié (si mvtRef connu — sinon enregistrement legacy, non touché)
-    if(rec.mvtRef){
-      const mvts = await getAll(S.MVTS);
-      const linked = mvts.filter(function(m){return m.ref===rec.mvtRef;});
-      await Promise.all(linked.map(function(m){return delRec(S.MVTS,m.id);}));
-      const depotDestId = rec.depotDestId;
-      if(eggs>0 && depotDestId){
-        const prods = await getAll(S.PRODUITS);
-        const pBruts = findCondProduit(prods,'bruts');
-        if(pBruts) await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
-          quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,
-          fournId:null,ref:rec.mvtRef,motif:'Collecte lot '+(lot?.nom||''),date:date,ts:Date.now()});
-      }
-    }
-    await updRec(S.EGG_PROD,id,{...rec,date:date,eggCount:eggs,eggsBroken:casses});
-  } else {
-    const poids = parseInt(document.getElementById('pePoids').value)||0;
-    if(poids<=0){ toast('Poids requis','err'); return; }
-    const all = await getAll(S.GROWTH_PROD);
-    const rec = all.find(function(r){return r.id===id;});
-    if(!rec){ toast('Enregistrement introuvable','err'); return; }
-    await updRec(S.GROWTH_PROD,id,{...rec,date:date,avgWeight:poids});
-  }
-  closeOverlay('mPEdit');
-  toast('Enregistrement modifié');
-  await refreshLot();
-};
-window.delPEditRecord=async function(type,id){
-  if(!confirm('Supprimer cet enregistrement ?')) return;
-  const store = type==='egg' ? S.EGG_PROD : S.GROWTH_PROD;
-  const all = await getAll(store);
-  const rec = all.find(function(r){return r.id===id;});
-  if(!rec){ toast('Enregistrement introuvable','err'); return; }
-  if(type==='egg' && rec.mvtRef){
-    const mvts = await getAll(S.MVTS);
-    const linked = mvts.filter(function(m){return m.ref===rec.mvtRef;});
-    await Promise.all(linked.map(function(m){return delRec(S.MVTS,m.id);}));
-  }
-  await delRec(store,id);
-  toast('Enregistrement supprimé');
-  await refreshLot();
 };
 window.saveAbattage=async()=>{
   const lot=window._lot;const date=document.getElementById('aDate').value;
@@ -5899,14 +5767,13 @@ async function renderLotHistory(lot,kpi,el){
   const mortMap={};
   kpi.mortRecords.forEach(m=>{mortMap[m.date]=(mortMap[m.date]||0)+(m.nbMorts||0);});
   const hdr=isLayer
-    ?'<th>Date</th><th>Œufs</th><th>Taux ponte</th><th>Casse collecte</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Eau</th><th>Actions</th>'
-    :'<th>Date</th><th>Poids moy.</th><th>Gain/j</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Actions</th>';
+    ?'<th>Date</th><th>Œufs</th><th>Taux ponte</th><th>Casse collecte</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Eau</th>'
+    :'<th>Date</th><th>Poids moy.</th><th>Gain/j</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th>';
   const rows=slice.map((d,i)=>{
     const feed=kpi.feeds.find(f=>f.date===d.date);const water=kpi.waters?.find(w=>w.date===d.date);
     const datesBefore=recs.slice(0,recs.indexOf(d)).map(r=>r.date);
     const mortBefore=datesBefore.reduce((a,dt)=>a+(mortMap[dt]||0),0);
     const eff=Math.max(0,lot.initialStock-mortBefore);
-    const actionsTd=`<td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openPEditModal('${isLayer?'egg':'growth'}',${d.id})" title="Modifier"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delPEditRecord('${isLayer?'egg':'growth'}',${d.id})" title="Supprimer"><i class="fas fa-trash"></i></button></td>`;
     if(isLayer){
       const tx=eff>0?(d.eggCount/eff*100).toFixed(1):'—';
       const cls=parseFloat(tx)>=85?'s-done':parseFloat(tx)<75?'s-late':'s-pend';
@@ -5919,7 +5786,6 @@ async function renderLotHistory(lot,kpi,el){
         <td style="font-size:11px;color:var(--text3)">${eff}</td>
         <td>${feed?feed.quantityKg+'kg':'—'}</td>
         <td>${water?water.waterLiters+'L':'—'}</td>
-        ${actionsTd}
       </tr>`;
     } else {
       const prev=recs[recs.indexOf(d)+1];const gain=prev?d.avgWeight-prev.avgWeight:null;
@@ -5930,7 +5796,6 @@ async function renderLotHistory(lot,kpi,el){
         <td style="color:${d.mortality>0?'var(--red)':'var(--text3)'}"><strong style="color:${d.mortality>0?'var(--red)':'inherit'}">${d.mortality||0}</strong></td>
         <td style="font-size:11px;color:var(--text3)">${eff}</td>
         <td>${feed?feed.quantityKg+'kg':'—'}</td>
-        ${actionsTd}
       </tr>`;
     }
   }).join('');
@@ -5940,7 +5805,7 @@ async function renderLotHistory(lot,kpi,el){
   }).join('');
   el.innerHTML=`
     <div class="card"><div class="card-hd"><span>📋 Historique complet</span><button class="btn btn-sm btn-gh" onclick="exportCSV()"><i class="fas fa-download"></i> CSV</button></div>
-      <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr>${hdr}</tr></thead><tbody>${rows||`<tr><td colspan="${isLayer?9:7}" style="text-align:center;color:var(--text3)">Aucune donnée enregistrée</td></tr>`}</tbody></table>${pagerHtml}</div>
+      <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr>${hdr}</tr></thead><tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucune donnée enregistrée</td></tr>'}</tbody></table>${pagerHtml}</div>
     </div>
     <div class="card" style="margin-top:14px"><div class="card-hd"><span>💀 Historique mortalité</span><span style="font-size:12px;color:var(--text3)">${kpi.mortCum} morts cumulés (${kpi.mortPct.toFixed(2)}%)</span></div>
       <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Nb morts</th><th>Cause</th><th>Observations</th></tr></thead><tbody>${mortHistRows||'<tr><td colspan="4" style="text-align:center;color:var(--text3)">Aucune mortalité enregistrée</td></tr>'}</tbody></table></div>
@@ -6668,12 +6533,33 @@ async function openMvtModal(type='entree',prodId=null,depotId=null){
   document.getElementById('mvtProd').innerHTML=prods.map(p=>`<option value="${p.id}" ${p.id===prodId?'selected':''}>${p.nom} (${p.unite})</option>`).join('');
   const depOpts=deps.map(d=>`<option value="${d.id}" ${d.id===depotId?'selected':''}>${d.nom}</option>`).join('');
   document.getElementById('mvtSrc').innerHTML=depOpts;document.getElementById('mvtDest').innerHTML=depOpts;
+  // Transfert : présélectionner une destination différente de la source pour éviter
+  // un transfert dépôt→lui-même passé inaperçu (les deux listes étaient identiques par défaut).
+  if(type==='transfert' && deps.length>1){
+    const srcId = depotId || deps[0].id;
+    const destCandidate = deps.find(d=>d.id!==srcId);
+    if(destCandidate) document.getElementById('mvtDest').value = destCandidate.id;
+  }
   document.getElementById('mvtFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
-  toggleMvtFields();openOverlay('mMvt');
+  toggleMvtFields();updateMvtStockHint();openOverlay('mMvt');
 }
 window.openMvtModal=openMvtModal;
-function toggleMvtFields(){const t=document.getElementById('mvtType').value;document.getElementById('mvtSrcWrap').style.display=t==='sortie'||t==='transfert'?'flex':'none';document.getElementById('mvtDestWrap').style.display=t==='entree'||t==='transfert'||t==='inventaire'?'flex':'none';}
+function toggleMvtFields(){const t=document.getElementById('mvtType').value;document.getElementById('mvtSrcWrap').style.display=t==='sortie'||t==='transfert'?'flex':'none';document.getElementById('mvtDestWrap').style.display=t==='entree'||t==='transfert'||t==='inventaire'?'flex':'none';updateMvtStockHint();}
 window.toggleMvtFields=toggleMvtFields;
+// Affiche le stock disponible du produit sélectionné dans le dépôt source (sortie/transfert),
+// pour éviter de faire passer un dépôt en négatif sans s'en rendre compte.
+window.updateMvtStockHint=async function(){
+  const hint=document.getElementById('mvtStockHint'); if(!hint) return;
+  const type=document.getElementById('mvtType').value;
+  if(type!=='sortie' && type!=='transfert'){ hint.textContent=''; return; }
+  const prodId=parseInt(document.getElementById('mvtProd').value)||null;
+  const srcId=parseInt(document.getElementById('mvtSrc').value)||null;
+  if(!prodId||!srcId){ hint.textContent=''; return; }
+  const bal=await getBalance();
+  const q=bal[`${prodId}_${srcId}`]||0;
+  hint.textContent='Stock disponible dans ce dépôt : '+q.toFixed(2);
+  hint.style.color = q<=0 ? 'var(--red)' : 'var(--text3)';
+};
 async function saveMvt(){
   const type=document.getElementById('mvtType').value;const date=document.getElementById('mvtDate').value;
   const prodId=parseInt(document.getElementById('mvtProd').value);const qty=parseFloat(document.getElementById('mvtQty').value);
@@ -6682,6 +6568,10 @@ async function saveMvt(){
   const src=document.getElementById('mvtSrc').value?parseInt(document.getElementById('mvtSrc').value):null;
   const dest=document.getElementById('mvtDest').value?parseInt(document.getElementById('mvtDest').value):null;
   if(!date||!prodId||!qty||qty<=0){toast('Produit, date, quantité requis','err');return;}
+  if(type==='transfert'){
+    if(!src||!dest){toast('Dépôt source et destination requis pour un transfert','err');return;}
+    if(src===dest){toast('Le dépôt source et destination doivent être différents','err');return;}
+  }
   const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===prodId);
   await addRec(S.MVTS,{type,produitId:prodId,depotSrcId:src,depotDestId:dest,quantite:qty,unite:p?.unite||'',prixUnit:prix,fournId,ref,motif,date,ts:Date.now()});
   closeOverlay('mMvt');toast('Mouvement enregistré');await render();
@@ -6742,9 +6632,15 @@ async function openBCModal(fournId=null){
 }
 window.openBCModal=openBCModal;
 async function addBCLine(){
-  const prods=await getAll(S.PRODUITS);const idx=bcLines.length;bcLines.push({produitId:prods[0]?.id,qte:0,prixUnit:prods[0]?.prix||0});
+  const allProds=await getAll(S.PRODUITS);
+  // Un bon de commande fournisseur porte sur des matières premières/consommables/encours —
+  // pas sur les produits finis (plateaux, cartons, viande), qui sont des sorties de production
+  // et n'ont rien à faire dans une liste d'achat. Même filtre que déjà appliqué aux ventes.
+  const prods=allProds.filter(p=>p.stade!=='produit_fini');
+  const prodsList=prods.length?prods:allProds;
+  const idx=bcLines.length;bcLines.push({produitId:prodsList[0]?.id,qte:0,prixUnit:prodsList[0]?.prix||0});
   const div=document.createElement('div');div.id='bcL'+idx;div.style.cssText='display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)';
-  div.innerHTML=`<select onchange="bcUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prods.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" data-u="${p.unite}">${p.nom}</option>`).join('')}</select><input type="number" placeholder="Qté" onchange="bcUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix" onchange="bcUpd(${idx},'px',this)" value="${prods[0]?.prix||0}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="bcT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">0 F</div><button onclick="rmBCLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
+  div.innerHTML=`<select onchange="bcUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" data-u="${p.unite}">${p.nom}</option>`).join('')}</select><input type="number" placeholder="Qté" onchange="bcUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix" onchange="bcUpd(${idx},'px',this)" value="${prodsList[0]?.prix||0}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="bcT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">0 F</div><button onclick="rmBCLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
   document.getElementById('bcLinesDiv').appendChild(div);
 }
 window.addBCLine=addBCLine;
@@ -6790,19 +6686,57 @@ window.saveRec=saveRec;
 // ══ PRODUITS ══
 async function renderProds(ca){
   const[prods,fourns,deps]=await Promise.all([getAll(S.PRODUITS),getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);const stockTot=await getStockTotal();
-  const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦',consommable:'🧺',emballage:'📦'};
+  const familles={
+    aliment:{lbl:'🌾 Aliments',icon:'🌾'}, intrant:{lbl:'📦 Intrants divers',icon:'📦'},
+    medicament:{lbl:'💊 Médicaments / Vaccins',icon:'💊'},
+    consommable:{lbl:'🧺 Consommables',icon:'🧺'}, emballage:{lbl:'📦 Emballages',icon:'📦'},
+    oeuf:{lbl:'🥚 Œufs',icon:'🥚'}, viande:{lbl:'🍗 Viande',icon:'🍗'},
+    materiel:{lbl:'🔧 Matériel',icon:'🔧'}
+  };
+  const ordreFamilles=['aliment','intrant','medicament','consommable','emballage','oeuf','viande','materiel'];
   const stadeLbl={matiere_premiere:'🌾 MP',encours:'⚙️ Encours',produit_fini:'📦 Produit fini'};
   const stadeCss={matiere_premiere:'b-a',encours:'b-bl',produit_fini:'b-g'};
-  const sousCatLbl={alveole:'Alvéole',ficelle:'Ficelle',carton_vide:'Carton vide',autre_conso:'Autre conso.',autre_emb:'Autre emb.'};
-  const rows=prods.map(p=>{const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);const q=stockTot[p.id]||0;const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';const sousCatBadge=p.sousCat&&sousCatLbl[p.sousCat]?` <span class="badge b-bl" style="font-size:9px" title="Sous-type">${sousCatLbl[p.sousCat]}</span>`:'';return `<tr><td><strong>${ci[p.categorie]||'📦'} ${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge b-gr">${p.categorie}</span>${sousCatBadge}</td><td><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></td><td style="font-size:11px;color:var(--text3)">${d?d.nom:'—'}</td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page"><div class="card"><div class="card-hd">Produits (${prods.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Catégorie</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--text3)">Aucun produit</td></tr>'}</tbody></table></div></div></div>`;
+
+  let valorisationTotale=0, nbAlertes=0;
+  const parFamille={};
+  for(const p of prods){
+    const q=stockTot[p.id]||0;
+    const val=q*(p.prix||0);
+    valorisationTotale+=val;
+    if(stockEnAlerte(p,q)) nbAlertes++;
+    const fam=familles[p.categorie]?p.categorie:'intrant';
+    (parFamille[fam]=parFamille[fam]||[]).push({p,q,val});
+  }
+  const famillesPresentes=ordreFamilles.filter(f=>parFamille[f]&&parFamille[f].length)
+    .concat(Object.keys(parFamille).filter(f=>!ordreFamilles.includes(f)));
+
+  const kpiBar=`<div class="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">
+    <div class="kpi kpi-g"><div class="kpi-lbl">Valorisation totale</div><div class="kpi-val">${Math.round(valorisationTotale).toLocaleString('fr-FR')} F</div></div>
+    <div class="kpi"><div class="kpi-lbl">Familles</div><div class="kpi-val">${famillesPresentes.length}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Produits</div><div class="kpi-val">${prods.length}</div></div>
+    <div class="kpi ${nbAlertes>0?'kpi-r':''}"><div class="kpi-lbl">En alerte</div><div class="kpi-val">${nbAlertes}</div></div>
+  </div>`;
+
+  const cards=famillesPresentes.map(fam=>{
+    const items=parFamille[fam].sort((a,b)=>(a.p.nom||'').localeCompare(b.p.nom||''));
+    const sousTotal=items.reduce((s,x)=>s+x.val,0);
+    const rows=items.map(({p,q,val})=>{
+      const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);
+      const al=stockEnAlerte(p,q);const offBadge=p.alerteDesactivee?' <span class="badge b-gr" title="Alerte stock critique désactivée">🔕</span>':'';
+      return `<tr><td><strong>${p.nom}</strong><div style="font-size:10px;color:var(--text3)">${p.ref||'—'}</div></td><td><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></td><td style="font-size:11px;color:var(--text3)">${d?d.nom:'—'}</td><td style="color:var(--text3)">${p.unite}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)}</td><td style="color:var(--text3)">${p.seuil}</td><td style="color:var(--text3)">${p.prix?(p.prix).toLocaleString()+' F':'—'}</td><td style="font-weight:700">${val?Math.round(val).toLocaleString('fr-FR')+' F':'—'}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td>${al?'<span class="badge b-r">⚠</span>':'<span class="badge b-g">OK</span>'}${offBadge}</td><td><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;
+    }).join('');
+    const flbl=(familles[fam]||{lbl:fam}).lbl;
+    return `<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>${flbl} <span style="font-size:11px;color:var(--text3);font-weight:400">(${items.length} réf.)</span></span><span style="font-weight:700;color:var(--g1)">${Math.round(sousTotal).toLocaleString('fr-FR')} F</span></div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Valorisation</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }).join('');
+
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page">${kpiBar}${cards||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit. Créez-en un dans le catalogue.</div></div>'}</div>`;
 }
 async function openProdModal(id=null){
   const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
   document.getElementById('prodFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
   document.getElementById('prodDepotAffecte').innerHTML='<option value="">—</option>'+deps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
-  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodStade').value='matiere_premiere';document.getElementById('prodDepotAffecte').value='';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;updateProdSousCat('');}
-  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodStade').value=p.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=p.depotAffecteId||'';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;updateProdSousCat(p.sousCat||'');}}
+  if(!id){['prodNom','prodRef','prodDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('prodPrix').value='';document.getElementById('prodSeuil').value='';document.getElementById('prodCat').value='aliment';document.getElementById('prodStade').value='matiere_premiere';document.getElementById('prodDepotAffecte').value='';document.getElementById('prodUnite').value='kg';document.getElementById('prodFourn').value='';document.getElementById('prodAlerteOff').checked=false;}
+  else{const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===id);if(p){document.getElementById('prodNom').value=p.nom||'';document.getElementById('prodCat').value=p.categorie||'aliment';document.getElementById('prodStade').value=p.stade||'matiere_premiere';document.getElementById('prodDepotAffecte').value=p.depotAffecteId||'';document.getElementById('prodUnite').value=p.unite||'kg';document.getElementById('prodPrix').value=p.prix||'';document.getElementById('prodSeuil').value=p.seuil||'';document.getElementById('prodFourn').value=p.fournId||'';document.getElementById('prodRef').value=p.ref||'';document.getElementById('prodDesc').value=p.description||'';document.getElementById('prodAlerteOff').checked=!!p.alerteDesactivee;}}
   openOverlay('mProd');
 }
 window.openProdModal=openProdModal;
@@ -6810,7 +6744,7 @@ async function saveProd(){
   const id=document.getElementById('prodId').value;
   const stade=document.getElementById('prodStade').value;
   const depotAffecteId=document.getElementById('prodDepotAffecte').value?parseInt(document.getElementById('prodDepotAffecte').value):null;
-  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,sousCat:document.getElementById('prodSousCat').value||null,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
+  const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
   if(!data.nom){toast('Nom requis','err');return;}
   if(!depotAffecteId){toast('Dépôt d\'affectation requis','err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
@@ -7276,6 +7210,10 @@ async function saveSale() {
   var remiseMt  = Math.round(sousTotal * remisePct / 100);
   var totalHT   = sousTotal - remiseMt;
 
+  // Ancien enregistrement (pour retrouver son ancienne référence si elle a changé)
+  var ancienne = id ? (await getAll(S.SALES)).find(function(s){return s.id===parseInt(id);}) : null;
+  if (!ref) ref = 'VTE-' + Date.now();
+
   var data = {
     clientId: clientId, date: date, dateLiv: dateLiv, ref: ref,
     statut: statut, paie: paie, remise: remisePct,
@@ -7285,8 +7223,39 @@ async function saveSale() {
 
   if (id) await updRec(S.SALES, parseInt(id), data);
   else    await addRec(S.SALES, data);
+
+  // ── Stock : sortie des produits finis vendus, déclenchée par le statut "Livrée" ──
+  // Jusqu'ici aucune commande, quel que soit son statut, ne générait de mouvement de stock —
+  // "Livrée" restait un simple libellé et le stock de produits finis vendus ne baissait jamais.
+  // Réconciliation simple et idempotente : on supprime les mouvements déjà liés à cette vente
+  // (ancienne et nouvelle référence), puis on les recrée si le statut final est "Livrée".
+  var refsASupprimer = ancienne && ancienne.ref && ancienne.ref !== ref ? [ancienne.ref, ref] : [ref];
+  var mvtsExistants = (await getAll(S.MVTS)).filter(function(m){
+    return refsASupprimer.indexOf(m.ref) !== -1 && m.motif && m.motif.indexOf('Vente commande') === 0;
+  });
+  for (var mi=0; mi<mvtsExistants.length; mi++) await delRec(S.MVTS, mvtsExistants[mi].id);
+
+  var sansDepot = [];
+  if (statut === 'delivered') {
+    for (var li=0; li<lignes.length; li++) {
+      var l = lignes[li];
+      var p = prods.find(function(x){ return x.id===l.produitId; });
+      var depotId = p ? p.depotAffecteId : null;
+      if (depotId) {
+        await addRec(S.MVTS, {
+          type:'sortie', produitId:l.produitId, depotSrcId:depotId, depotDestId:null,
+          quantite:l.qte, unite:l.unite, prixUnit:l.prixUnit, fournId:null,
+          ref:ref, motif:'Vente commande '+ref, date:dateLiv||date, ts:Date.now()
+        });
+      } else {
+        sansDepot.push(l.designation);
+      }
+    }
+  }
+
   closeOverlay('mSale');
-  toast(id ? 'Commande mise a jour' : 'Commande creee -- ' + lignes.length + ' ligne(s)');
+  if (sansDepot.length) toast('Commande enregistrée — stock NON décrémenté pour : '+sansDepot.join(', ')+' (aucun dépôt d\'affectation défini)', 'err');
+  else toast(id ? 'Commande mise a jour' : 'Commande creee -- ' + lignes.length + ' ligne(s)');
   await renderCommandes(document.getElementById('contentArea'));
 }
 window.saveSale = saveSale;
@@ -7308,16 +7277,10 @@ window.delSale=async(id)=>{
 
 // ══ UTILITIES ══
 function openOverlay(id){
-  const el=document.getElementById(id);
-  if(!el){console.warn(`Overlay not found: ${id}`);return;}
-  requestAnimationFrame(()=>el.classList.add('open'));
+  document.getElementById(id).classList.add('open');
   if(id==='ovBootstrap'){ const l=document.getElementById('bsOrgLabel'); if(l) l.textContent=SUPA_ORG; }
 }
-function closeOverlay(id){
-  const el=document.getElementById(id);
-  if(!el){console.warn(`Overlay not found: ${id}`);return;}
-  el.classList.remove('open');
-}
+function closeOverlay(id){document.getElementById(id).classList.remove('open');}
 window.closeOverlay=closeOverlay;
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o) o.classList.remove('open');}));
 function toast(msg,type='ok'){const t=document.getElementById('toast'),m=document.getElementById('toastMsg');m.textContent=msg;t.style.background=type==='err'?'var(--red)':'var(--g1)';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
@@ -7398,9 +7361,11 @@ function calcCond(){
         +(cTresGros>0?'<br>&nbsp;&nbsp;🔴 Tres Gros: '+cTresGros+' oeufs → '+pltTresGros+' plateaux @ '+CALIBRE_TARIFS.tresGros.prixPlateau.toLocaleString()+' FCFA/plt':'')
         +'<br><strong>Valeur estimee: '+valeurTotale.toLocaleString()+' FCFA</strong>'
       : '';
+    var alvCouvQte = window._condBom ? (window._condBom.alvCouvQte ?? 4) : 4;
     preview.innerHTML = '<strong>Mouvements automatiques:</strong><br>'
       + 'Sortie: <strong>'+bruts+' oeufs bruts</strong> du stock<br>'
-      + 'Sortie: <strong>'+plateaux+' alveoles</strong> du stock<br>'
+      + 'Sortie: <strong>'+plateaux+' alveoles</strong> (garnissage plateaux) du stock<br>'
+      + (cartons>0 ? 'Sortie: <strong>'+Math.round(cartons*alvCouvQte)+' alveoles de couverture</strong> (4/carton) du stock<br>' : '')
       + 'Entree: <strong>'+plateaux+' plateaux</strong> en produits finis<br>'
       + 'Entree: <strong>'+cartons+' cartons</strong> en produits finis'
       + (window._condBom && window._condBom.cartonId && cartons>0 ? '<br>Sortie: <strong>'+Math.round(cartons*(window._condBom.cartonQte||0))+' carton(s) vide(s)</strong> (emballage)' : '')
@@ -7413,26 +7378,51 @@ function calcCond(){
 window.calcCond = calcCond;
 
 // Ouvrir le modal depuis le lot
-async function openCondModal(flockId, sessionId){
-  const [deps, staff, prods, bom] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF), getAll(S.PRODUITS), getCondBom()]);
-  window._condBom = bom;
-  let editSession = null;
-  if(sessionId){
-    const sessions = await getAll(S.COND);
-    editSession = sessions.find(s => s.id === sessionId) || null;
-  }
+function refreshCondProphyTasks(flockId){
+  const prophyTasks = window._condProphyTasksAll || [];
+  const tasksLot = prophyTasks.filter(t => t.flockId === flockId && !t.realizedDate);
+  document.getElementById('condProphyTask').innerHTML = '<option value="">— Aucune intervention en attente —</option>' +
+    tasksLot.map(t=>`<option value="${t.id}">${t.action} (prévu ${t.plannedDate})</option>`).join('');
+}
+window.onCondLotChange = function(){
+  const flockId = parseInt(document.getElementById('condLot').value)||null;
   document.getElementById('condLotId').value = flockId||'';
-  document.getElementById('condEditId').value = editSession ? editSession.id : '';
-  document.getElementById('condDate').value = editSession ? editSession.date : new Date().toISOString().slice(0,10);
-  document.getElementById('condBruts').value = editSession ? editSession.oeufs_bruts : '';
-  document.getElementById('condCasses').value = editSession ? (editSession.oeufs_casses||0) : '0';
-  document.getElementById('condNotes').value = editSession ? (editSession.notes||'') : '';
-  // Calibres (repris si édition, sinon reset)
-  ['calPetit','calMoyen','calGros','calTresGros'].forEach(function(id){
-    var el=document.getElementById(id); if(!el) return;
-    var key={calPetit:'cal_petit',calMoyen:'cal_moyen',calGros:'cal_gros',calTresGros:'cal_tres_gros'}[id];
-    el.value = editSession && editSession[key] ? editSession[key] : '';
-  });
+  refreshCondProphyTasks(flockId);
+};
+
+async function openCondModal(flockId){
+  const [deps, staff, prods, bom, prophyTasks, lots] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF), getAll(S.PRODUITS), getCondBom(), getAll(S.PROPHY), getAll(S.FLOCKS)]);
+  window._condBom = bom;
+  window._condProphyTasksAll = prophyTasks;
+
+  // Réinitialisation du mode édition (openCondModal sert aussi de base à editCond)
+  document.getElementById('condEditId').value = '';
+  document.getElementById('condEditNotice').style.display = 'none';
+  document.getElementById('condAlimSection').style.display = '';
+  document.getElementById('condProphySection').style.display = '';
+  document.getElementById('condSaveBtn').innerHTML = '<i class="fas fa-boxes-stacked"></i> Valider le conditionnement';
+
+  // Sélecteur de lot (obligatoire) : présélectionné si on vient de la fiche d'un lot,
+  // sinon l'utilisateur doit choisir le lot concerné par cette collecte.
+  const layerLots = lots.filter(f => f.type === 'layer');
+  const condLotSel = document.getElementById('condLot');
+  condLotSel.innerHTML = '<option value="">— Choisir un lot —</option>' +
+    layerLots.map(f => `<option value="${f.id}">${f.nom}</option>`).join('');
+  condLotSel.value = flockId || '';
+  document.getElementById('condLotId').value = flockId||'';
+
+  document.getElementById('condDate').value = new Date().toISOString().slice(0,10);
+  document.getElementById('condBruts').value = '';
+  document.getElementById('condCasses').value = '0';
+  document.getElementById('condNotes').value = '';
+  document.getElementById('condAlimOn').checked = false;
+  document.getElementById('condAlimBlock').style.display = 'none';
+  document.getElementById('condAlimKg').value = '';
+  document.getElementById('condProphyOn').checked = false;
+  document.getElementById('condProphyBlock').style.display = 'none';
+  document.getElementById('condProphyQty').value = '';
+  // Reset calibres
+  ['calPetit','calMoyen','calGros','calTresGros'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
   var ab=document.getElementById('calibreAlertBox');if(ab)ab.style.display='none';
   var ob=document.getElementById('calibreOkBox');if(ob)ob.style.display='none';
 
@@ -7440,55 +7430,85 @@ async function openCondModal(flockId, sessionId){
   const pAlv   = findCondProduit(prods,'alveole');
   const depOpts = deps.map(d => `<option value="${d.id}">${d.nom}</option>`).join('');
 
-  // condDepotSrc : filtrer sur les dépôts ayant des œufs bruts en stock
-  const stockBal = await getBalance();
-  const pBrutsId = pBruts ? pBruts.id : null;
-  const srcOpts = deps.map(d=>{
-    const q = pBrutsId ? Math.max(0, stockBal[`${pBrutsId}_${d.id}`]||0) : 0;
-    const label = q > 0 ? `${d.nom} (${Math.round(q)} œufs)` : `${d.nom} (0)`;
-    const col = q <= 0 ? ' style="color:var(--text3)"' : '';
-    return `<option value="${d.id}"${col}>${label}</option>`;
-  }).join('');
-  document.getElementById('condDepotSrc').innerHTML = srcOpts;
-  // Présélectionner le dépôt avec le plus d'œufs
-  const bestSrc = deps.map(d=>({id:d.id,q:pBrutsId?Math.max(0,stockBal[`${pBrutsId}_${d.id}`]||0):0}))
-    .sort((a,b)=>b.q-a.q)[0];
-  if(bestSrc) document.getElementById('condDepotSrc').value = bestSrc.id;
+  // Dépôt de stockage œufs bruts : la collecte + le conditionnement se font en une
+  // seule opération désormais, donc pas de présélection basée sur un stock préexistant —
+  // juste le dépôt de type matière première par défaut, ou celui déjà utilisé pour ce lot.
+  document.getElementById('condDepotSrc').innerHTML = depOpts;
+  const defSrcDep = deps.find(d=>d.type==='matiere_premiere') || deps[0];
+  if(defSrcDep) document.getElementById('condDepotSrc').value = defSrcDep.id;
 
   document.getElementById('condDepotDest').innerHTML = depOpts;
-  // Sélectionner produits finis par défaut pour destination
   const destDep = deps.find(d => d.type === 'produit_fini');
   if(destDep) document.getElementById('condDepotDest').value = destDep.id;
 
   document.getElementById('condOp').innerHTML = '<option value="">—</option>' +
     staff.map(s => `<option value="${s.id}">${s.nom} (${s.role})</option>`).join('');
 
-  // Édition : réappliquer les dépôts/opérateur d'origine de la session par-dessus les présélections
-  if(editSession){
-    if(editSession.depotSrcId)  document.getElementById('condDepotSrc').value  = editSession.depotSrcId;
-    if(editSession.depotDestId) document.getElementById('condDepotDest').value = editSession.depotDestId;
-    document.getElementById('condOp').value = editSession.operatorId || '';
-  }
+  // Alimentation optionnelle
+  const aliments = prods.filter(p => p.categorie === 'aliment');
+  document.getElementById('condAlimType').innerHTML = aliments.map(p=>`<option value="${p.id}">${p.nom}</option>`).join('');
+  document.getElementById('condAlimDepot').innerHTML = depOpts;
+  const defAlimDep = deps.find(d=>d.type==='aliment') || deps[0];
+  if(defAlimDep) document.getElementById('condAlimDepot').value = defAlimDep.id;
 
-  // Afficher le stock d'œufs bruts disponible
+  // Prophylaxie optionnelle : interventions planifiées non réalisées pour ce lot
+  refreshCondProphyTasks(flockId);
+  const medicaments = prods.filter(p => p.categorie === 'medicament');
+  document.getElementById('condProphyProd').innerHTML = medicaments.map(p=>`<option value="${p.id}">${p.nom}</option>`).join('');
+  document.getElementById('condProphyDepot').innerHTML = depOpts;
+  const defMedDep = deps.find(d=>d.type==='medicament') || deps[0];
+  if(defMedDep) document.getElementById('condProphyDepot').value = defMedDep.id;
+
   const stockTot = await getStockTotal();
   const qBruts = pBruts ? (stockTot[pBruts.id]||0) : 0;
   const qAlv   = pAlv   ? (stockTot[pAlv.id]  ||0) : 0;
 
-  document.getElementById('mCondTitle').innerHTML = editSession
-    ? `✏️ Modifier la session ${editSession.ref||''} — les mouvements de stock d'origine seront annulés puis recréés`
-    : `📦 Conditionnement — Stocks disponibles : <span style="color:var(--g2)">${Math.round(qBruts)} œufs bruts</span> · <span style="color:var(--blue)">${Math.round(qAlv)} alvéoles</span>`;
+  document.getElementById('mCondTitle').innerHTML =
+    `📦 Conditionnement — Stocks disponibles : <span style="color:var(--g2)">${Math.round(qBruts)} œufs bruts</span> · <span style="color:var(--blue)">${Math.round(qAlv)} alvéoles</span>`;
 
-  // Pré-remplissage du stock dispo uniquement en création (en édition, la valeur d'origine a déjà été posée plus haut)
-  if(!editSession && pBruts) document.getElementById('condBruts').value = Math.round(qBruts);
   calcCond();
   openOverlay('mCond');
 }
 window.openCondModal = openCondModal;
 
-// Sauvegarder la session de conditionnement
+// Ouvrir le modal en mode édition, pré-rempli avec les valeurs d'une session existante
+window.editCond = async function(id){
+  const sessions = await getAll(S.COND);
+  const s = sessions.find(x => x.id === id);
+  if(!s){ toast('Session introuvable', 'err'); return; }
+
+  await openCondModal(s.flockId);
+
+  document.getElementById('condEditId').value = s.id;
+  document.getElementById('condEditNotice').style.display = 'block';
+  // L'alimentation/prophylaxie liées à l'ancienne session ne sont pas ré-éditables ici
+  // (elles ne sont pas tracées par ref) : on masque ces blocs en mode édition.
+  document.getElementById('condAlimSection').style.display = 'none';
+  document.getElementById('condProphySection').style.display = 'none';
+  document.getElementById('condSaveBtn').innerHTML = '<i class="fas fa-save"></i> Enregistrer les modifications';
+
+  document.getElementById('condDate').value = s.date;
+  document.getElementById('condBruts').value = s.oeufs_bruts;
+  document.getElementById('condCasses').value = s.oeufs_casses;
+  document.getElementById('condNotes').value = s.notes || '';
+  if(s.depotSrcId) document.getElementById('condDepotSrc').value = s.depotSrcId;
+  if(s.depotDestId) document.getElementById('condDepotDest').value = s.depotDestId;
+  if(s.operatorId) document.getElementById('condOp').value = s.operatorId;
+  document.getElementById('calPetit').value    = s.cal_petit    || '';
+  document.getElementById('calMoyen').value    = s.cal_moyen    || '';
+  document.getElementById('calGros').value     = s.cal_gros     || '';
+  document.getElementById('calTresGros').value = s.cal_tres_gros|| '';
+
+  calcCond();
+  document.getElementById('mCondTitle').innerHTML = '✏️ Modifier la session de conditionnement';
+};
+
+// Sauvegarder la session de conditionnement (création ou modification)
 async function saveCond(){
-  var flockId = parseInt(document.getElementById('condLotId').value)||null;
+  var editId = parseInt(document.getElementById('condEditId').value)||null;
+  var flockId = parseInt(document.getElementById('condLot').value)||null;
+  if(!flockId){ toast('Veuillez choisir le lot concerné par cette collecte', 'err'); return; }
+  document.getElementById('condLotId').value = flockId;
   var date = document.getElementById('condDate').value;
   var bruts = parseInt(document.getElementById('condBruts').value)||0;
   var casses = parseInt(document.getElementById('condCasses').value)||0;
@@ -7517,22 +7537,6 @@ async function saveCond(){
   // Si calibres partiellement remplis, completer par Moyen
   if(sommeCal > 0 && sommeCal < nets){ cMoyen += (nets - sommeCal); }
 
-  // ── ÉDITION : annuler les mouvements de stock de l'ancienne session puis la supprimer ──
-  // (la nouvelle session + ses mouvements sont recréés juste après avec une référence fraîche)
-  var editId = parseInt(document.getElementById('condEditId').value) || null;
-  var isEdit = !!editId;
-  if(editId){
-    var oldSessions = await getAll(S.COND);
-    var oldSession = oldSessions.find(function(s){return s.id === editId;});
-    if(oldSession){
-      var allMvts = await getAll(S.MVTS);
-      var linkedMvts = allMvts.filter(function(m){return m.ref === oldSession.ref;});
-      await Promise.all(linkedMvts.map(function(m){return delRec(S.MVTS, m.id);}));
-      await delRec(S.COND, editId);
-    }
-    document.getElementById('condEditId').value = '';
-  }
-
   // Calculer plateaux par calibre
   var pltPetit    = Math.floor(cPetit/30);
   var pltMoyen    = Math.floor(cMoyen/30);
@@ -7559,6 +7563,17 @@ async function saveCond(){
   var pCarGros     = prods.find(function(p){return p.ref==='CAL-CAR-G';});
   var pCarTresGros = prods.find(function(p){return p.ref==='CAL-CAR-TG';});
 
+  // Mode édition : on annule d'abord les mouvements/ponte de l'ancienne session et on
+  // la supprime, puis on poursuit avec la logique normale de création ci-dessous.
+  if(editId){
+    var oldSessions = await getAll(S.COND);
+    var oldS = oldSessions.find(function(x){return x.id===editId;});
+    if(oldS){
+      await reverseCondSession(oldS);
+      await delRec(S.COND, editId);
+    }
+  }
+
   var ts = Date.now();
   var ref = 'COND-' + date.replace(/-/g,'') + '-' + String(ts).slice(-4);
 
@@ -7584,15 +7599,31 @@ async function saveCond(){
   var pFicelle    = bom && bom.ficelleId ? prods.find(function(p){return p.id===bom.ficelleId;}) : null;
   var alvSel  = pAlvBom || pAlv;               // BOM prioritaire, sinon repli sur le produit nommé
   var alvQte  = bom && pAlvBom ? (bom.alvQte||0) : 1;
+  var pAlvCouvBom = bom && bom.alvCouvId ? prods.find(function(p){return p.id===bom.alvCouvId;}) : null;
+  var alvCouvSel  = pAlvCouvBom || alvSel;     // par défaut, même alvéole que celle des plateaux
+  var alvCouvQte  = bom ? (bom.alvCouvQte ?? 4) : 4;   // 4 alvéoles de couverture / carton (1 par pile)
   var cartonsProduits = sommeCal > 0 ? (carPetit+carMoyen+carGros+carTresGros) : cartons;
 
-  if(pBruts)
+  // Ponte du jour du lot : la collecte et le conditionnement sont désormais une seule
+  // opération saisie ici — plus besoin de la ressaisir dans "Saisie du jour".
+  if(flockId) await addRec(S.EGG_PROD,{flockId:flockId,date:date,eggCount:bruts,eggsBroken:casses,mortality:0,operatorId:opId});
+
+  if(pBruts){
+    // Entrée : la collecte du jour (remplace l'ancienne saisie "Ponte du jour" séparée)
+    await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotSrcId,
+      quantite:bruts,unite:'unite',prixUnit:pBruts.prix||0,fournId:null,ref:ref,motif:motifBase+' (collecte du jour)',date:date,ts:mvtTs++});
+    // Sortie : consommation immédiate pour le conditionnement
     await addRec(S.MVTS,{type:'sortie',produitId:pBruts.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:bruts,unite:'unite',prixUnit:pBruts.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie bruts)',date:date,ts:mvtTs++});
+  }
 
   if(alvSel && alvQte > 0)
     await addRec(S.MVTS,{type:'sortie',produitId:alvSel.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:plateaux*alvQte,unite:'unite',prixUnit:alvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles)',date:date,ts:mvtTs++});
+
+  if(alvCouvSel && alvCouvQte > 0 && cartonsProduits > 0)
+    await addRec(S.MVTS,{type:'sortie',produitId:alvCouvSel.id,depotSrcId:depotSrcId,depotDestId:null,
+      quantite:cartonsProduits*alvCouvQte,unite:'unite',prixUnit:alvCouvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles de couverture)',date:date,ts:mvtTs++});
 
   if(pCartonVide && bom.cartonQte > 0 && cartonsProduits > 0)
     await addRec(S.MVTS,{type:'sortie',produitId:pCartonVide.id,depotSrcId:depotSrcId,depotDestId:null,
@@ -7624,8 +7655,39 @@ async function saveCond(){
         quantite:cartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:ref,motif:motifBase+' (entree cartons)',date:date,ts:mvtTs++});
   }
 
+  // ── Alimentation du jour (optionnelle) ──
+  if(document.getElementById('condAlimOn').checked){
+    var alimKg = parseFloat(document.getElementById('condAlimKg').value)||0;
+    var alimProdId = parseInt(document.getElementById('condAlimType').value)||null;
+    var alimDepotId = document.getElementById('condAlimDepot').value?parseInt(document.getElementById('condAlimDepot').value):null;
+    if(alimKg>0 && alimProdId && flockId){
+      var pAlim = prods.find(function(p){return p.id===alimProdId;});
+      await addRec(S.FEEDING,{flockId:flockId,date:date,quantityKg:alimKg,feedType:pAlim?pAlim.nom:'Aliment',operatorId:opId});
+      if(pAlim && alimDepotId) await addRec(S.MVTS,{type:'sortie',produitId:pAlim.id,depotSrcId:alimDepotId,depotDestId:null,
+        quantite:alimKg,unite:'kg',prixUnit:pAlim.prix||0,fournId:null,ref:ref,motif:'Alimentation'+nomLot,date:date,ts:mvtTs++});
+    }
+  }
+
+  // ── Prophylaxie du jour (optionnelle) ──
+  if(document.getElementById('condProphyOn').checked){
+    var prophyTaskId = parseInt(document.getElementById('condProphyTask').value)||null;
+    var prophyProdId = parseInt(document.getElementById('condProphyProd').value)||null;
+    var prophyQty = parseFloat(document.getElementById('condProphyQty').value)||0;
+    var prophyDepotId = document.getElementById('condProphyDepot').value?parseInt(document.getElementById('condProphyDepot').value):null;
+    if(prophyTaskId){
+      var prophyTasks = await getAll(S.PROPHY);
+      var pt = prophyTasks.find(function(t){return t.id===prophyTaskId;});
+      if(pt) await updRec(S.PROPHY,prophyTaskId,Object.assign({},pt,{realizedDate:date,realizedProduitId:prophyProdId,realizedQty:prophyQty}));
+      if(prophyProdId && prophyQty>0 && prophyDepotId){
+        var pMed = prods.find(function(p){return p.id===prophyProdId;});
+        if(pMed) await addRec(S.MVTS,{type:'sortie',produitId:pMed.id,depotSrcId:prophyDepotId,depotDestId:null,
+          quantite:prophyQty,unite:pMed.unite||'',prixUnit:pMed.prix||0,fournId:null,ref:ref,motif:'Prophylaxie: '+(pt?pt.action:'')+nomLot,date:date,ts:mvtTs++});
+      }
+    }
+  }
+
   closeOverlay('mCond');
-  toast((isEdit ? 'Session modifiée — ' : '') + plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
+  toast((editId ? 'Session modifiée — ' : '') + plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
 
   // Refresh selon le contexte
   if(flockId && curLotId === flockId && activeLotTab === 'cond'){
@@ -7639,23 +7701,41 @@ async function saveCond(){
 }
 window.saveCond = saveCond;
 
-// Supprimer une session de conditionnement + annuler ses mouvements de stock associés (même ref)
-window.delCondSession = async function(id){
-  if(!confirm('Supprimer cette session de conditionnement ? Les mouvements de stock associés seront annulés.')) return;
+// Annuler une session de conditionnement : jusqu'ici aucune suppression n'était possible,
+// alors qu'une session crée désormais la ponte du jour, plusieurs mouvements de stock et,
+// optionnellement, une sortie aliment/prophylaxie — tout devait être défait à la main.
+// Annule les mouvements de stock et la ponte du jour générés par une session de
+// conditionnement, sans supprimer la session elle-même (utilisé par delCond et,
+// en amont d'une réécriture, par saveCond en mode édition).
+async function reverseCondSession(s){
+  if(s.ref){
+    const mvtsADel = (await getAll(S.MVTS)).filter(m => m.ref === s.ref);
+    for(const m of mvtsADel) await delRec(S.MVTS, m.id);
+  }
+  // Ponte du jour générée par cette session : rapprochement par lot/date/quantité
+  // (EGG_PROD n'a pas de champ ref).
+  const eggRecs = (await getAll(S.EGG_PROD)).filter(e =>
+    e.flockId === s.flockId && e.date === s.date && e.eggCount === s.oeufs_bruts);
+  for(const e of eggRecs) await delRec(S.EGG_PROD, e.id);
+}
+
+window.delCond = async function(id){
+  if(!confirm('Annuler cette session ? La ponte du jour, les mouvements de stock (bruts, alvéoles, plateaux, cartons) et une éventuelle alimentation/prophylaxie associées seront également annulés.')) return;
   const sessions = await getAll(S.COND);
-  const s = sessions.find(function(x){return x.id === id;});
-  if(!s){ toast('Session introuvable','err'); return; }
-  const allMvts = await getAll(S.MVTS);
-  const linked = allMvts.filter(function(m){return m.ref === s.ref;});
-  await Promise.all(linked.map(function(m){return delRec(S.MVTS, m.id);}));
+  const s = sessions.find(x => x.id === id);
+  if(!s){ toast('Session introuvable', 'err'); return; }
+
+  await reverseCondSession(s);
+  // Note : une éventuelle prophylaxie marquée réalisée par cette session n'est pas
+  // désannulée automatiquement (aucun champ ref sur PROPHY), pour éviter de désannuler
+  // par erreur une réalisation saisie ailleurs.
+
   await delRec(S.COND, id);
-  toast('Session supprimée — mouvements de stock annulés');
-  if(s.flockId && curLotId === s.flockId && activeLotTab === 'cond'){
-    const lots = await getAll(S.FLOCKS);
-    window._lot = lots.find(function(f){return f.id === s.flockId;});
+  toast('Session de conditionnement annulée — stock et ponte ajustés');
+  if(window._lot && window._lot.id === s.flockId){
     window._kpi = await computeKPIs(window._lot);
     await renderLotTab();
-  } else if(curPage === 'cond'){
+  } else {
     await renderCond(document.getElementById('contentArea'));
   }
 };
@@ -7704,7 +7784,7 @@ async function renderLotCond(lot, kpi, el){
     +'<td><span class="badge b-bl">'+s.plateaux+' plt</span>'+calHtml+'</td>'
     +'<td><span class="badge b-g">'+s.cartons+' ctn</span></td>'
     +'<td style="color:'+(s.plt_restants>0?'var(--amber-d)':'var(--text3)')+';font-size:11px">'+(s.plt_restants||0)+' plt</td>'
-    +'<td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openCondModal('+lot.id+','+s.id+')" title="Modifier"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delCondSession('+s.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td>'
+    +'<td><button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="editCond('+s.id+')" title="Modifier cette session"><i class="fas fa-pen"></i></button><button class="btn-del" onclick="delCond('+s.id+')" title="Annuler cette session (réversion stock/ponte)"><i class="fas fa-trash"></i></button></td>'
     +'</tr>';
   }).join('');
 
@@ -7791,7 +7871,7 @@ async function renderLotCond(lot, kpi, el){
       ${sessions.length > 0 ? `
       <div class="card-bd tbl-wrap">
         <table class="tbl">
-          <thead><tr><th>Date</th><th>Référence</th><th>Œufs entrés</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Plt restants</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Date</th><th>Référence</th><th>Œufs entrés</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Plt restants</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>` : `
@@ -7813,22 +7893,20 @@ async function getCondBom(){
 }
 async function openCondBomModal(){
   const [bom, prods] = await Promise.all([getCondBom(), getAll(S.PRODUITS)]);
-  // Filtrage par catégorie + sous-type : un produit tagué (ex: sousCat='ficelle') n'apparaît
-  // que dans le select correspondant. Un produit non-tagué (sousCat vide) reste visible dans
-  // tous les selects de sa catégorie de base, pour rester compatible avec les catalogues existants.
-  const mkOpts = list => list.map(p => `<option value="${p.id}">${p.nom}</option>`).join('');
-  const alvList     = prods.filter(p => p.categorie==='consommable' && (!p.sousCat || p.sousCat==='alveole'));
-  const cartonList  = prods.filter(p => p.categorie==='emballage'  && (!p.sousCat || p.sousCat==='carton_vide'));
-  const ficelleList = prods.filter(p => p.categorie==='consommable' && (!p.sousCat || p.sousCat==='ficelle'));
-  document.getElementById('bomAlvId').innerHTML     = '<option value="">— aucune —</option>' + mkOpts(alvList);
-  document.getElementById('bomCartonId').innerHTML  = '<option value="">— aucun —</option>' + mkOpts(cartonList);
-  document.getElementById('bomFicelleId').innerHTML = '<option value="">— aucune —</option>' + mkOpts(ficelleList);
+  const consos = prods.filter(p => p.categorie==='consommable' || p.categorie==='emballage');
+  const opts = consos.map(p => `<option value="${p.id}">${p.nom}</option>`).join('');
+  document.getElementById('bomAlvId').innerHTML     = '<option value="">— aucune —</option>' + opts;
+  document.getElementById('bomCartonId').innerHTML  = '<option value="">— aucun —</option>' + opts;
+  document.getElementById('bomFicelleId').innerHTML = '<option value="">— aucune —</option>' + opts;
+  document.getElementById('bomAlvCouvId').innerHTML = '<option value="">— même alvéole —</option>' + opts;
   document.getElementById('bomAlvId').value     = bom?.alvId || '';
   document.getElementById('bomAlvQte').value    = bom?.alvQte ?? 1;
   document.getElementById('bomCartonId').value  = bom?.cartonId || '';
   document.getElementById('bomCartonQte').value = bom?.cartonQte ?? 1;
   document.getElementById('bomFicelleId').value = bom?.ficelleId || '';
   document.getElementById('bomFicelleQte').value= bom?.ficelleQte ?? 1;
+  document.getElementById('bomAlvCouvId').value = bom?.alvCouvId || '';
+  document.getElementById('bomAlvCouvQte').value= bom?.alvCouvQte ?? 4;
   openOverlay('mCondBom');
 }
 window.openCondBomModal = openCondBomModal;
@@ -7839,7 +7917,9 @@ async function saveCondBom(){
     cartonId:  document.getElementById('bomCartonId').value ? parseInt(document.getElementById('bomCartonId').value) : null,
     cartonQte: parseFloat(document.getElementById('bomCartonQte').value) || 0,
     ficelleId: document.getElementById('bomFicelleId').value ? parseInt(document.getElementById('bomFicelleId').value) : null,
-    ficelleQte:parseFloat(document.getElementById('bomFicelleQte').value) || 0
+    ficelleQte:parseFloat(document.getElementById('bomFicelleQte').value) || 0,
+    alvCouvId: document.getElementById('bomAlvCouvId').value ? parseInt(document.getElementById('bomAlvCouvId').value) : null,
+    alvCouvQte:parseFloat(document.getElementById('bomAlvCouvQte').value) || 0
   };
   const existing = await getCondBom();
   if(existing) await updRec(S.COND_BOM, existing.id, data);
@@ -7876,7 +7956,7 @@ async function renderCond(ca){
       <td><span class="badge b-bl">${s.plateaux} plt</span></td>
       <td><span class="badge b-g">${s.cartons} ctn</span></td>
       <td style="font-size:${s.oeufs_bruts>0?(100-(s.oeufs_casses/s.oeufs_bruts*100)).toFixed(1):100}%;color:var(--text3);font-size:11px">${s.oeufs_bruts>0?(100-s.oeufs_casses/s.oeufs_bruts*100).toFixed(1):100}%</td>
-      <td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openCondModal(${s.flockId||'null'},${s.id})" title="Modifier"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delCondSession(${s.id})" title="Supprimer"><i class="fas fa-trash"></i></button></td>
+      <td><button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="editCond(${s.id})" title="Modifier cette session"><i class="fas fa-pen"></i></button><button class="btn-del" onclick="delCond(${s.id})" title="Annuler cette session"><i class="fas fa-trash"></i></button></td>
     </tr>`;
   }).join('');
 
@@ -7915,7 +7995,7 @@ async function renderCond(ca){
         <div style="font-weight:700;margin-bottom:8px;color:var(--g1)">📐 Règles de conditionnement</div>
         <div style="display:flex;gap:24px;flex-wrap:wrap">
           <span>🥚 <strong>1 plateau</strong> = 30 œufs + 1 alvéole</span>
-          <span>📦 <strong>1 carton</strong> = 12 plateaux = 360 œufs</span>
+          <span>📦 <strong>1 carton</strong> = 12 plateaux = 360 œufs + 4 alvéoles de couverture (1/pile)</span>
           <span>💰 <strong>Unité de vente</strong> = carton</span>
         </div>
       </div>
@@ -7926,7 +8006,7 @@ async function renderCond(ca){
         ${sorted.length > 0 ? `
         <div class="card-bd tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>Date</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Rendement</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Date</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Rendement</th><th></th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>` : `
@@ -14341,18 +14421,13 @@ window.addEventListener('load', ()=>{ setTimeout(startRapportAuto, 3000); }, {on
   document.head.appendChild(s);
 })();
 
-/* ── Calcul du stock disponible pour un produit ── */
+/* ── Calcul du stock disponible pour un produit ──
+   Délègue à getStockTotal() (source unique de vérité, cf. getBalance) au lieu de
+   dupliquer la logique de calcul — les deux fonctions pouvaient dériver l'une de
+   l'autre si l'une évoluait sans l'autre. */
 async function getStockProduit(produitId){
-  const mvts=await getAll(S.MVTS);
-  let qte=0;
-  for(const m of mvts){
-    if(m.produitId===produitId){
-      if(m.type==='entree'||m.type==='inventaire') qte+=m.quantite||0;
-      else if(m.type==='sortie') qte-=m.quantite||0;
-      // transfert : si src = dépôt considéré comme sortie globale, dest = entrée
-    }
-  }
-  return Math.max(0,qte);
+  const tot = await getStockTotal();
+  return Math.max(0, tot[produitId]||0);
 }
 
 /* ── Calcul de la consommation moyenne journalière (30 derniers jours) ── */
