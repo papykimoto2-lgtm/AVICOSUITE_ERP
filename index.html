@@ -5758,54 +5758,92 @@ window.resetNutrition=async function(type){
 };
 
 // ── HISTORIQUE ──
+// Fusionne ponte/pesée + mortalité par date : une date avec UNIQUEMENT une saisie de
+// mortalité (sans ponte/pesée ce jour) doit tout de même produire sa propre ligne.
+// La source de vérité pour "Morts" est mortMap (store MORTALITE), jamais r.mortality
+// qui reste à 0 sur les enregistrements EGG_PROD/GROWTH_PROD (champ non renseigné à la saisie).
+function buildLotHistoryMerged(lot,kpi){
+  const isLayer=lot.type==='layer';
+  const mortMap={};
+  kpi.mortRecords.forEach(m=>{mortMap[m.date]=(mortMap[m.date]||0)+(m.nbMorts||0);});
+  const prodByDate={};
+  (isLayer?kpi.eggs:kpi.growths).forEach(r=>{
+    if(!prodByDate[r.date]) prodByDate[r.date]=isLayer?{date:r.date,eggCount:0,eggsBroken:0}:{date:r.date,avgWeight:0,_n:0};
+    if(isLayer){prodByDate[r.date].eggCount+=r.eggCount||0;prodByDate[r.date].eggsBroken+=r.eggsBroken||0;}
+    else{prodByDate[r.date].avgWeight+=r.avgWeight||0;prodByDate[r.date]._n++;}
+  });
+  if(!isLayer) Object.values(prodByDate).forEach(o=>{if(o._n>1) o.avgWeight=Math.round(o.avgWeight/o._n);});
+  const prodDatesAsc=Object.keys(prodByDate).sort();
+  const allDatesAsc=[...new Set([...prodDatesAsc,...Object.keys(mortMap)])].sort();
+  // Effectif cumulé chronologique fiable : initialStock - mortalité cumulée jusqu'à cette date incluse
+  let cumMort=0;const effAtDate={};
+  allDatesAsc.forEach(dt=>{cumMort+=(mortMap[dt]||0);effAtDate[dt]=Math.max(0,lot.initialStock-cumMort);});
+  return{isLayer,merged:allDatesAsc.slice().reverse(),prodByDate,mortMap,effAtDate,prodDatesAsc};
+}
 async function renderLotHistory(lot,kpi,el){
   const PAGE=12;let p=window._hPage||1;
-  const isLayer=lot.type==='layer';
-  const recs=isLayer?kpi.eggs.slice().reverse():kpi.growths.slice().reverse();
-  const total=recs.length;const pages=Math.max(1,Math.ceil(total/PAGE));
-  const slice=recs.slice((p-1)*PAGE,p*PAGE);
+  const{isLayer,merged,prodByDate,mortMap,effAtDate,prodDatesAsc}=buildLotHistoryMerged(lot,kpi);
+  const total=merged.length;const pages=Math.max(1,Math.ceil(total/PAGE));
+  if(p>pages) p=pages||1;
+  const slice=merged.slice((p-1)*PAGE,p*PAGE);
   const pagerHtml=`<div class="pager">
     <button ${p<=1?'disabled':''} onclick="setHPage(${p-1})">‹</button>
     ${Array.from({length:Math.min(pages,5)},(_,i)=>p-2+i).filter(n=>n>=1&&n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="setHPage(${n})">${n}</button>`).join('')}
     <button ${p>=pages?'disabled':''} onclick="setHPage(${p+1})">›</button>
     <span style="font-size:11px;color:var(--text3)">${total} entrées</span>
   </div>`;
-  // Effectif progressif sur tout l'historique
-  let effHist=kpi.vivants;
-  const effMap={};
-  for(const r of recs){effMap[r.date]=(effMap[r.date]||0)+(r.mortality||0);}
-  // ── mortMap déclaré ICI, avant le rendu des lignes ──
-  const mortMap={};
-  kpi.mortRecords.forEach(m=>{mortMap[m.date]=(mortMap[m.date]||0)+(m.nbMorts||0);});
   const hdr=isLayer
     ?'<th>Date</th><th>Œufs</th><th>Taux ponte</th><th>Casse collecte</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th><th>Eau</th>'
     :'<th>Date</th><th>Poids moy.</th><th>Gain/j</th><th>💀 Morts</th><th>Effectif</th><th>Aliment</th>';
-  const rows=slice.map((d,i)=>{
-    const feed=kpi.feeds.find(f=>f.date===d.date);const water=kpi.waters?.find(w=>w.date===d.date);
-    const datesBefore=recs.slice(0,recs.indexOf(d)).map(r=>r.date);
-    const mortBefore=datesBefore.reduce((a,dt)=>a+(mortMap[dt]||0),0);
-    const eff=Math.max(0,lot.initialStock-mortBefore);
+  const rows=slice.map(dt=>{
+    const feed=kpi.feeds.find(f=>f.date===dt);const water=kpi.waters?.find(w=>w.date===dt);
+    const morts=mortMap[dt]||0;const eff=effAtDate[dt];const prod=prodByDate[dt];
+    const mortCell=`<td style="color:${morts>0?'var(--red)':'var(--text3)'}"><strong style="color:${morts>0?'var(--red)':'inherit'}">${morts}</strong></td>`;
+    const effCell=`<td style="font-size:11px;color:var(--text3)">${eff}</td>`;
     if(isLayer){
-      const tx=eff>0?(d.eggCount/eff*100).toFixed(1):'—';
-      const cls=parseFloat(tx)>=85?'s-done':parseFloat(tx)<75?'s-late':'s-pend';
-      return `<tr>
-        <td style="color:var(--text3)">${d.date}</td>
-        <td><strong>${d.eggCount}</strong></td>
+      if(prod){
+        const tx=eff>0?(prod.eggCount/eff*100).toFixed(1):'—';
+        const cls=parseFloat(tx)>=85?'s-done':parseFloat(tx)<75?'s-late':'s-pend';
+        return `<tr>
+        <td style="color:var(--text3)">${dt}</td>
+        <td><strong>${prod.eggCount}</strong></td>
         <td><span class="status-pill ${cls}">${tx}%</span></td>
-        <td style="color:${(d.eggsBroken||0)>0?'var(--amber-d)':'var(--text3)'}">${d.eggsBroken||0}</td>
-        <td style="color:${d.mortality>0?'var(--red)':'var(--text3)'}"><strong style="color:${d.mortality>0?'var(--red)':'inherit'}">${d.mortality||0}</strong></td>
-        <td style="font-size:11px;color:var(--text3)">${eff}</td>
+        <td style="color:${(prod.eggsBroken||0)>0?'var(--amber-d)':'var(--text3)'}">${prod.eggsBroken||0}</td>
+        ${mortCell}
+        ${effCell}
+        <td>${feed?feed.quantityKg+'kg':'—'}</td>
+        <td>${water?water.waterLiters+'L':'—'}</td>
+      </tr>`;
+      }
+      return `<tr>
+        <td style="color:var(--text3)">${dt}</td>
+        <td style="color:var(--text3)">—</td>
+        <td style="color:var(--text3)">—</td>
+        <td style="color:var(--text3)">—</td>
+        ${mortCell}
+        ${effCell}
         <td>${feed?feed.quantityKg+'kg':'—'}</td>
         <td>${water?water.waterLiters+'L':'—'}</td>
       </tr>`;
     } else {
-      const prev=recs[recs.indexOf(d)+1];const gain=prev?d.avgWeight-prev.avgWeight:null;
-      return `<tr>
-        <td style="color:var(--text3)">${d.date}</td>
-        <td><strong>${d.avgWeight}g</strong></td>
+      if(prod){
+        const idx=prodDatesAsc.indexOf(dt);const prevDt=idx>0?prodDatesAsc[idx-1]:null;
+        const gain=prevDt?prod.avgWeight-prodByDate[prevDt].avgWeight:null;
+        return `<tr>
+        <td style="color:var(--text3)">${dt}</td>
+        <td><strong>${prod.avgWeight}g</strong></td>
         <td style="color:${gain>0?'#059669':gain<0?'var(--red)':'inherit'}">${gain!==null?(gain>0?'+':'')+gain+'g':'—'}</td>
-        <td style="color:${d.mortality>0?'var(--red)':'var(--text3)'}"><strong style="color:${d.mortality>0?'var(--red)':'inherit'}">${d.mortality||0}</strong></td>
-        <td style="font-size:11px;color:var(--text3)">${eff}</td>
+        ${mortCell}
+        ${effCell}
+        <td>${feed?feed.quantityKg+'kg':'—'}</td>
+      </tr>`;
+      }
+      return `<tr>
+        <td style="color:var(--text3)">${dt}</td>
+        <td style="color:var(--text3)">—</td>
+        <td style="color:var(--text3)">—</td>
+        ${mortCell}
+        ${effCell}
         <td>${feed?feed.quantityKg+'kg':'—'}</td>
       </tr>`;
     }
@@ -5857,14 +5895,22 @@ async function renderLotRenta(lot,kpi,el){
 
 window.exportCSV=async()=>{
   const lot=window._lot,kpi=window._kpi;if(!lot||!kpi) return;
-  const isLayer=lot.type==='layer';
+  const{isLayer,merged,prodByDate,mortMap,effAtDate,prodDatesAsc}=buildLotHistoryMerged(lot,kpi);
   const rows=['Date,Ponte/Poids,Taux/Gain,Mortalité,Aliment(kg),Eau(L)'];
-  const recs=isLayer?kpi.eggs.slice().reverse():kpi.growths.slice().reverse();
-  for(const d of recs){
-    const f=kpi.feeds.find(x=>x.date===d.date);const w=kpi.waters?.find(x=>x.date===d.date);
-    const v1=isLayer?d.eggCount:d.avgWeight+'g';
-    const v2=isLayer?kpi.vivants>0?(d.eggCount/kpi.vivants*100).toFixed(1)+'%':'':'';
-    rows.push(`${d.date},${v1},${v2},${d.mortality||0},${f?f.quantityKg:''},${w?w.waterLiters:''}`);
+  for(const dt of merged){
+    const f=kpi.feeds.find(x=>x.date===dt);const w=kpi.waters?.find(x=>x.date===dt);
+    const prod=prodByDate[dt];const morts=mortMap[dt]||0;const eff=effAtDate[dt];
+    let v1='',v2='';
+    if(prod){
+      if(isLayer){v1=prod.eggCount;v2=eff>0?(prod.eggCount/eff*100).toFixed(1)+'%':'';}
+      else{
+        v1=prod.avgWeight+'g';
+        const idx=prodDatesAsc.indexOf(dt);const prevDt=idx>0?prodDatesAsc[idx-1]:null;
+        const gain=prevDt?prod.avgWeight-prodByDate[prevDt].avgWeight:null;
+        v2=gain!==null?(gain>0?'+':'')+gain+'g':'';
+      }
+    }
+    rows.push(`${dt},${v1},${v2},${morts},${f?f.quantityKg:''},${w?w.waterLiters:''}`);
   }
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download=`${(lot.nom||'lot').replace(/\s/g,'_')}.csv`;a.click();toast('CSV exporté');
 };
