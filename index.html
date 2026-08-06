@@ -13939,6 +13939,7 @@ async function renderRapports(ca){
     <button class="tab-btn active" id="rptab-etats" onclick="switchRapTab('etats')">🖨️ États & Impression</button>
     <button class="tab-btn" id="rptab-envoi" onclick="switchRapTab('envoi')">📨 Rapports & Envoi auto</button>
     <button class="tab-btn" id="rptab-semaines" onclick="switchRapTab('semaines')">📊 Suivi semaines</button>
+    <button class="tab-btn" id="rptab-condglobal" onclick="switchRapTab('condglobal')">🥚 Point Conditionnement</button>
   </div>
 
   <!-- TAB: ÉTATS & IMPRESSION -->
@@ -14118,27 +14119,29 @@ async function renderRapports(ca){
       <div class="card-bd" style="padding:10px 12px">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px">
           <div class="fg" style="margin:0">
-            <label style="font-size:11px">Lot / Bâtiment</label>
-            <select id="semFiltreLot" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
-              <option value="">— Tous les lots —</option>
-            </select>
-          </div>
-          <div class="fg" style="margin:0">
-            <label style="font-size:11px">Semaine</label>
-            <select id="semFiltreWeek" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
-              <option value="">— Toutes les semaines —</option>
-              <option value="current">Semaine courante</option>
-              <option value="last4">4 dernières semaines</option>
-              <option value="all">Historique complet</option>
-            </select>
-          </div>
-          <div class="fg" style="margin:0">
-            <label style="font-size:11px">Ligne / Bâtiment</label>
-            <select id="semFiltreBuilding" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
+            <label style="font-size:11px">Bâtiment</label>
+            <select id="semFiltreBuilding" onchange="onSemBuildingChange()" style="width:100%;font-size:14px;padding:7px 8px">
               <option value="">— Tous les bâtiments —</option>
-              <option value="bat1">Bâtiment 1</option>
-              <option value="bat2">Bâtiment 2</option>
-              <option value="bat3">Bâtiment 3</option>
+            </select>
+          </div>
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px">Ligne</label>
+            <select id="semFiltreLigne" onchange="onSemLigneChange()" style="width:100%;font-size:14px;padding:7px 8px">
+              <option value="">— Toutes les lignes —</option>
+            </select>
+          </div>
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px">Lot (pondeuses)</label>
+            <select id="semFiltreLot" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
+              <option value="">— Tous les lots (cumul) —</option>
+            </select>
+          </div>
+          <div class="fg" style="margin:0">
+            <label style="font-size:11px">Semaines affichées</label>
+            <select id="semFiltreWeek" onchange="refreshTableauxSemaines()" style="width:100%;font-size:14px;padding:7px 8px">
+              <option value="all">Historique complet</option>
+              <option value="last4">4 dernières semaines</option>
+              <option value="current">Semaine courante</option>
             </select>
           </div>
         </div>
@@ -14217,6 +14220,44 @@ async function renderRapports(ca){
       </div>
     </div>
 
+  </div>
+
+  <!-- TAB: POINT CONDITIONNEMENT GLOBAL (tableau de bord moderne, toutes lignes/bâtiments) -->
+  <div id="rptab-condglobal-content" class="tab-content" style="display:none;padding:10px 10px 80px">
+
+    <div class="card" style="margin-bottom:12px;border:1.5px solid #0f766e">
+      <div class="card-hd" style="background:linear-gradient(135deg,#f0fdfa,#fff);padding:10px 12px">
+        <span style="color:#0f766e;font-weight:800;font-size:13px">📅 Période du bilan conditionnement</span>
+      </div>
+      <div class="card-bd" style="padding:10px 12px">
+        <div style="display:flex;overflow-x:auto;gap:6px;margin-bottom:10px;padding-bottom:3px;-webkit-overflow-scrolling:touch;scrollbar-width:none">
+          ${[
+            ['7j','7 jours'],['mois','Ce mois'],
+            ['trimestre','Trim.'],['annee','Année '+today.slice(0,4)],
+          ].map(([id,lbl])=>`<button id="condpreset-${id}" class="btn btn-s" style="white-space:nowrap;flex-shrink:0;padding:8px 12px;font-size:12px;min-height:40px" onclick="setCondGlobalPreset('${id}')">${lbl}</button>`).join('')}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div class="fg" style="margin:0"><label style="font-size:11px">Du</label>
+            <input type="date" id="condDateMin" value="${firstDayMonth}" onchange="clearCondPresetButtons()" style="width:100%;font-size:14px;padding:7px 8px"></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Au</label>
+            <input type="date" id="condDateMax" value="${today}" onchange="clearCondPresetButtons()" style="width:100%;font-size:14px;padding:7px 8px"></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-p" onclick="refreshCondGlobalDashboard()"><i class="fas fa-sync"></i> Actualiser</button>
+          <button class="btn btn-gh" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer le détail</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="condGlobalKpis" class="kpi-grid"></div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd"><span>📊 Production vs Conditionnement — par bâtiment</span></div>
+      <div class="card-bd" style="position:relative;height:260px"><canvas id="condGlobalChart"></canvas></div>
+    </div>
+
+    <div id="condGlobalDetail"></div>
+
   </div>`;
 
   // Charger les lots dans le filtre
@@ -14235,7 +14276,7 @@ async function renderRapports(ca){
 
 // ── Switcher onglets rapports ──
 window.switchRapTab = function(tab){
-  ['etats','envoi','semaines'].forEach(t=>{
+  ['etats','envoi','semaines','condglobal'].forEach(t=>{
     const cont = document.getElementById('rptab-'+t+'-content');
     const btn  = document.getElementById('rptab-'+t);
     if(cont) cont.style.display = t===tab ? '' : 'none';
@@ -14245,6 +14286,10 @@ window.switchRapTab = function(tab){
     }
   });
   if(tab==='semaines') initTableauxSemaines();
+  if(tab==='condglobal'){
+    document.getElementById('condpreset-mois')?.classList.add('active');
+    refreshCondGlobalDashboard();
+  }
 };
 
 window.setRapportPreset = function(preset, dmin, dmax){
@@ -14269,175 +14314,376 @@ window.clearPresetButtons = function(){
   document.querySelectorAll('[id^="preset-"]').forEach(b=>b.classList.remove('active'));
 };
 
-// ── Fonctions Suivi Semaines ──
-window._currentWeekDetail = 1;
+// ── Fonctions Suivi Semaines (Rapports & Envoi) ──────────────────────
+// Moteur réel : agrégation par semaine calendaire (Lundi→Dimanche), à partir
+// des données réelles (S.EGG_PROD, S.FEEDING, S.WATER, S.MORTALITE), filtrable
+// par Bâtiment / Ligne / Lot — cumul multi-lots si aucun lot précis n'est choisi.
+window._currentWeekDetail = null;   // index (wIdx) de la semaine affichée dans le détail
+window._semWeeksAll = [];           // dernière liste de semaines calculée (pour navigation)
+window._semRefData = null;          // cache {buildings, lines, flocks}
 
 window.initTableauxSemaines = async function(){
-  const flocks = await getAll(S.FLOCKS);
-  const lotSel = document.getElementById('semFiltreLot');
-  if(lotSel && lotSel.options.length === 1){
-    flocks.forEach(f=>{
-      const opt = document.createElement('option');
-      opt.value = f.id;
-      opt.textContent = f.nom;
-      lotSel.appendChild(opt);
-    });
+  const [buildings, lines, flocks] = await Promise.all([getAll(S.BUILDINGS), getAll(S.LINES), getAll(S.FLOCKS)]);
+  window._semRefData = { buildings, lines, flocks };
+
+  const bSel = document.getElementById('semFiltreBuilding');
+  if(bSel){
+    bSel.innerHTML = '<option value="">— Tous les bâtiments —</option>'
+      + buildings.map(b=>`<option value="${b.id}">${esc(b.nom)}</option>`).join('');
   }
+  populateSemLigneOptions();
+  populateSemLotOptions();
+  window._currentWeekDetail = null;
+  refreshTableauxSemaines();
+};
+
+window.populateSemLigneOptions = function(){
+  const { lines=[] } = window._semRefData || {};
+  const bId = document.getElementById('semFiltreBuilding')?.value || '';
+  const lSel = document.getElementById('semFiltreLigne');
+  if(!lSel) return;
+  const filtered = bId ? lines.filter(l=>String(l.buildingId)===String(bId)) : lines;
+  lSel.innerHTML = '<option value="">— Toutes les lignes —</option>'
+    + filtered.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('');
+};
+
+window.populateSemLotOptions = function(){
+  const { flocks=[] } = window._semRefData || {};
+  const bId = document.getElementById('semFiltreBuilding')?.value || '';
+  const lId = document.getElementById('semFiltreLigne')?.value || '';
+  const lotSel = document.getElementById('semFiltreLot');
+  if(!lotSel) return;
+  let f = flocks.filter(fl=>fl.type==='layer');
+  if(bId) f = f.filter(fl=>String(fl.buildingId)===String(bId));
+  if(lId) f = f.filter(fl=>String(fl.lineId)===String(lId));
+  lotSel.innerHTML = '<option value="">— Tous les lots (cumul) —</option>'
+    + f.map(fl=>`<option value="${fl.id}">${esc(fl.nom)}</option>`).join('');
+};
+
+window.onSemBuildingChange = function(){
+  populateSemLigneOptions();
+  populateSemLotOptions();
+  window._currentWeekDetail = null;
+  refreshTableauxSemaines();
+};
+window.onSemLigneChange = function(){
+  populateSemLotOptions();
+  window._currentWeekDetail = null;
   refreshTableauxSemaines();
 };
 
 window.refreshTableauxSemaines = async function(){
+  if(!window._semRefData){
+    window._semRefData = { buildings: await getAll(S.BUILDINGS), lines: await getAll(S.LINES), flocks: await getAll(S.FLOCKS) };
+  }
+  const { buildings, lines, flocks } = window._semRefData;
+  const bId = document.getElementById('semFiltreBuilding')?.value || '';
+  const lId = document.getElementById('semFiltreLigne')?.value || '';
   const lotId = document.getElementById('semFiltreLot')?.value || '';
-  const weekFilter = document.getElementById('semFiltreWeek')?.value || '';
-  const buildingId = document.getElementById('semFiltreBuilding')?.value || '';
-  
-  const flocks = await getAll(S.FLOCKS);
-  const selectedFlock = lotId ? flocks.find(f=>String(f.id)===String(lotId)) : flocks[0];
-  
-  if(!selectedFlock) {
-    toast('Aucun lot disponible','err');
+  const weekFilter = document.getElementById('semFiltreWeek')?.value || 'all';
+
+  let matchedLots = flocks.filter(f=>f.type==='layer');
+  if(bId) matchedLots = matchedLots.filter(f=>String(f.buildingId)===String(bId));
+  if(lId) matchedLots = matchedLots.filter(f=>String(f.lineId)===String(lId));
+  if(lotId) matchedLots = matchedLots.filter(f=>String(f.id)===String(lotId));
+
+  const bNom = bId ? (buildings.find(b=>String(b.id)===String(bId))?.nom||'') : '';
+  const lNom = lId ? (lines.find(l=>String(l.id)===String(lId))?.nom||'') : '';
+  const lotNom = lotId ? (matchedLots.find(f=>String(f.id)===String(lotId))?.nom||'') : '';
+  const scopeLabel = lotNom || [bNom?('Bât. '+bNom):'', lNom?('Ligne '+lNom):''].filter(Boolean).join(' — ') || 'tous lots';
+
+  if(!matchedLots.length){
+    document.getElementById('semDetailTitle').textContent = 'aucune donnée';
+    document.getElementById('semRecapTitle').textContent = scopeLabel;
+    updateDetailTable(null);
+    updateRecapTable([]);
+    window._semWeeksAll = [];
     return;
   }
-  
-  // Mettre à jour les titres
-  document.getElementById('semDetailTitle').textContent = `S${window._currentWeekDetail} - ${selectedFlock.nom}`;
-  document.getElementById('semRecapTitle').textContent = selectedFlock.nom;
-  
-  // Récupérer les données de production
-  const eggsData = await getAll(S.EGG_PROD);
-  const flockEggs = eggsData.filter(e=>String(e.flockId)===String(selectedFlock.id));
-  
-  // Construire les données de semaine
+
+  const [allEggs, allFeeds, allWaters, allMorts] = await Promise.all([
+    getAll(S.EGG_PROD), getAll(S.FEEDING), getAll(S.WATER), getAll(S.MORTALITE)
+  ]);
+  const lotIds = new Set(matchedLots.map(f=>String(f.id)));
+  const eggs   = allEggs.filter(e=>lotIds.has(String(e.flockId)));
+  const feeds  = allFeeds.filter(f=>lotIds.has(String(f.flockId)));
+  const waters = allWaters.filter(w=>lotIds.has(String(w.flockId)));
+  const morts  = allMorts.filter(m=>lotIds.has(String(m.flockId)));
+
+  // Effectif vivant cumulé du périmètre (pour le taux de ponte combiné)
+  let vivantsTot = 0;
+  matchedLots.forEach(f=>{
+    const mortLot = morts.filter(m=>String(m.flockId)===String(f.id)).reduce((a,m)=>a+(m.nbMorts||0),0);
+    vivantsTot += Math.max(0, (f.initialStock||0) - mortLot);
+  });
+
+  // Construction des semaines calendaires (Lundi→Dimanche) depuis le lot le plus ancien
+  const startDates = matchedLots.map(f=>new Date(f.startDate)).filter(d=>!isNaN(d));
+  const minStart = startDates.length ? new Date(Math.min(...startDates)) : new Date();
+  const monday = d=>{ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); x.setHours(0,0,0,0); return x; };
+  const today = new Date(); today.setHours(0,0,0,0);
+  const fmt = d=>d.toISOString().slice(0,10);
+
   const weeks = [];
-  const startDate = new Date(selectedFlock.startDate);
-  const today = new Date();
-  
-  let current = new Date(startDate);
-  while(current <= today){
-    const weekStart = new Date(current);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    
-    const weekNum = Math.floor((current - startDate) / (7 * 24 * 60 * 60 * 1000)) + 1;
-    const weekData = flockEggs.filter(e=>{
-      const eDate = new Date(e.date);
-      return eDate >= weekStart && eDate <= weekEnd;
-    });
-    
-    const totalEggs = weekData.reduce((sum,e)=>sum+(e.eggCount||0),0);
-    const totalBroken = weekData.reduce((sum,e)=>sum+(e.eggsBroken||0),0);
-    
+  let cur = monday(minStart);
+  let wIdx = 1;
+  while(cur <= today){
+    const wStart = new Date(cur);
+    const wEnd = new Date(cur); wEnd.setDate(wEnd.getDate()+6);
+    const inRange = ds => ds >= fmt(wStart) && ds <= fmt(wEnd);
+    const eS  = eggs.filter(e=>inRange(e.date));
+    const fS  = feeds.filter(f=>inRange(f.date));
+    const waS = waters.filter(w=>inRange(w.date));
+    const mS  = morts.filter(m=>inRange(m.date));
+    const totalOeufs = eS.reduce((a,e)=>a+(e.eggCount||0),0);
+    const totalCasses= eS.reduce((a,e)=>a+(e.eggsBroken||0),0);
+    const totalAlim  = fS.reduce((a,f)=>a+(f.quantityKg||0),0);
+    const totalEau   = waS.reduce((a,w)=>a+(w.waterLiters||0),0);
+    const totalMorts = mS.reduce((a,m)=>a+(m.nbMorts||0),0);
+    const nbJours = new Set(eS.map(e=>e.date)).size;
+    const tauxPonte = (vivantsTot>0 && nbJours>0) ? (totalOeufs/(nbJours*vivantsTot)*100) : null;
     weeks.push({
-      weekNum,
-      period: `J${Math.floor((weekStart-startDate)/(24*60*60*1000))+1}-J${Math.floor((weekEnd-startDate)/(24*60*60*1000))+1}`,
-      days: weekData.length,
-      totalEggs,
-      totalBroken,
-      data: weekData
+      wIdx, wStart: fmt(wStart), wEnd: fmt(wEnd), nbJours,
+      totalOeufs, totalCasses, totalAlim, totalEau, totalMorts, tauxPonte,
+      eggsByDate: eS, feedsByDate: fS, watersByDate: waS, mortsByDate: mS,
+      hasDonnees: nbJours>0 || totalMorts>0
     });
-    
-    current.setDate(current.getDate() + 7);
+    cur.setDate(cur.getDate()+7);
+    wIdx++;
   }
-  
-  // Mettre à jour le tableau de détail
-  if(window._currentWeekDetail <= weeks.length){
-    const week = weeks[window._currentWeekDetail - 1];
-    updateDetailTable(week, selectedFlock);
+
+  window._semWeeksAll = weeks;
+
+  if(!weeks.length){
+    document.getElementById('semDetailTitle').textContent = 'aucune donnée';
+    document.getElementById('semRecapTitle').textContent = scopeLabel;
+    updateDetailTable(null);
+    updateRecapTable([]);
+    return;
   }
-  
-  // Mettre à jour le tableau récapitulatif
-  updateRecapTable(weeks, selectedFlock);
+
+  if(!window._currentWeekDetail || window._currentWeekDetail < 1 || window._currentWeekDetail > weeks.length){
+    window._currentWeekDetail = weeks.length; // semaine la plus récente par défaut
+  }
+  const weekSel = weeks[window._currentWeekDetail - 1];
+  document.getElementById('semDetailTitle').textContent = `S${weekSel.wIdx} (${weekSel.wStart.slice(5)} → ${weekSel.wEnd.slice(5)}) — ${scopeLabel}`;
+  document.getElementById('semRecapTitle').textContent = scopeLabel;
+
+  updateDetailTable(weekSel);
+
+  let weeksFiltered = weeks;
+  if(weekFilter==='current') weeksFiltered = weeks.slice(-1);
+  else if(weekFilter==='last4') weeksFiltered = weeks.slice(-4);
+  updateRecapTable(weeksFiltered);
 };
 
-window.updateDetailTable = function(week, flock){
+window.updateDetailTable = function(week){
   const tbody = document.querySelector('#tableauDetailSemaine tbody');
   if(!tbody) return;
-  
-  const jours = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
-  const dayMap = {};
-  
-  week.data.forEach(d=>{
-    const date = new Date(d.date);
-    const dayIdx = date.getDay() || 7;
-    const dayName = jours[dayIdx - 1] || 'Jour';
-    dayMap[dayName] = d;
-  });
-  
-  const totalEggs = week.totalEggs;
-  
+
+  if(!week){
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Aucune donnée pour ces filtres.</td></tr>';
+    return;
+  }
+
+  const dates = [];
+  let d = new Date(week.wStart);
+  for(let i=0;i<7;i++){ dates.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+
+  const sumBy = (arr, field, date) => arr.filter(x=>x.date===date).reduce((a,x)=>a+(x[field]||0),0);
+  const rowOeufs = dates.map(ds=>{ const v=sumBy(week.eggsByDate,'eggCount',ds); return `<td>${v||'—'}</td>`; }).join('');
+  const rowAlim  = dates.map(ds=>{ const v=sumBy(week.feedsByDate,'quantityKg',ds); return `<td>${v?v.toFixed(1):'—'}</td>`; }).join('');
+  const rowEau   = dates.map(ds=>{ const v=sumBy(week.watersByDate,'waterLiters',ds); return `<td>${v?v.toFixed(0):'—'}</td>`; }).join('');
+  const rowMort  = dates.map(ds=>{ const v=sumBy(week.mortsByDate,'nbMorts',ds); return `<td style="${v>0?'color:var(--red);font-weight:700':''}">${v||'—'}</td>`; }).join('');
+
   tbody.innerHTML = `
     <tr style="background:#f9fbf9">
       <td style="font-weight:700;color:var(--g2)">🥚 Œufs pondus</td>
-      ${jours.map(j=>`<td>${dayMap[j]?.eggCount || '—'}</td>`).join('')}
-      <td style="background:#f0fdf4;font-weight:700;color:var(--g1)">${totalEggs || '—'}</td>
+      ${rowOeufs}
+      <td style="background:#f0fdf4;font-weight:700;color:var(--g1)">${week.totalOeufs.toLocaleString('fr-FR')}</td>
     </tr>
     <tr>
       <td style="font-weight:700;color:var(--amber-d)">🌾 Aliment (kg)</td>
-      ${jours.map(j=>`<td>—</td>`).join('')}
-      <td style="background:#fff3e0;font-weight:700;color:var(--amber-d)">—</td>
+      ${rowAlim}
+      <td style="background:#fff3e0;font-weight:700;color:var(--amber-d)">${week.totalAlim.toFixed(1)}</td>
     </tr>
     <tr style="background:#f9fbf9">
       <td style="font-weight:700;color:var(--blue)">💧 Eau (L)</td>
-      ${jours.map(j=>`<td>—</td>`).join('')}
-      <td style="background:#e3f2fd;font-weight:700;color:var(--blue)">—</td>
+      ${rowEau}
+      <td style="background:#e3f2fd;font-weight:700;color:var(--blue)">${week.totalEau.toFixed(0)}</td>
     </tr>
     <tr>
       <td style="font-weight:700;color:var(--red)">💀 Mortalité</td>
-      ${jours.map(j=>`<td>${dayMap[j]?.mortality || '—'}</td>`).join('')}
-      <td style="background:var(--g4);font-weight:700;color:var(--g1)">0</td>
+      ${rowMort}
+      <td style="background:${week.totalMorts>0?'var(--red-bg)':'var(--g4)'};font-weight:700;color:${week.totalMorts>0?'var(--red)':'var(--g1)'}">${week.totalMorts}</td>
     </tr>
   `;
 };
 
-window.updateRecapTable = function(weeks, flock){
+window.updateRecapTable = function(weeks){
   const tbody = document.querySelector('#tableauRecapSemaines tbody');
   if(!tbody) return;
-  
-  if(weeks.length === 0){
+
+  if(!weeks.length){
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Aucune donnée disponible</td></tr>';
     return;
   }
-  
-  tbody.innerHTML = weeks.slice().reverse().map((w,i)=>{
-    const tauxPonte = w.totalEggs > 0 ? ((w.totalEggs / (w.days * 100)) * 100).toFixed(1) : '—';
-    const isCurrent = i === 0;
-    const prog = Math.round((w.days / 7) * 100);
-    
-    return `<tr style="cursor:pointer" onclick="selectWeekDetail(${w.weekNum})">
-      <td><strong>${isCurrent?'<span style="color:var(--g2)">S'+w.weekNum+'</span>':'S'+w.weekNum+'</strong>'}</td>
-      <td style="font-size:11px;color:var(--text3)">${w.period}</td>
-      <td>${w.days}/7</td>
-      <td><strong>${w.totalEggs || '—'}</strong></td>
-      <td><span class="status-pill s-${tauxPonte>=85?'done':tauxPonte>=75?'pend':'late'}">${tauxPonte}%</span></td>
-      <td>—</td>
-      <td>—</td>
-      <td style="color:${w.totalBroken>0?'var(--red)':'var(--text3)'}">${w.totalBroken || '0'}</td>
-      <td><span style="color:var(--g2);font-size:11px">✓ ${prog}%</span></td>
+
+  tbody.innerHTML = weeks.slice().reverse().map(w=>{
+    const tp = w.tauxPonte!==null ? w.tauxPonte.toFixed(1) : null;
+    const cls = tp===null ? '' : (tp>=85?'s-done':tp>=75?'s-pend':'s-late');
+    const isSel = w.wIdx===window._currentWeekDetail;
+    return `<tr style="cursor:pointer;${isSel?'background:#f0fdf4':''}" onclick="selectWeekDetail(${w.wIdx})">
+      <td><strong style="${isSel?'color:var(--g2)':''}">S${w.wIdx}</strong></td>
+      <td style="font-size:11px;color:var(--text3)">${w.wStart.slice(5)} → ${w.wEnd.slice(5)}</td>
+      <td>${w.nbJours}/7</td>
+      <td><strong>${w.totalOeufs?w.totalOeufs.toLocaleString('fr-FR'):'—'}</strong></td>
+      <td>${tp!==null?`<span class="status-pill ${cls}">${tp}%</span>`:'—'}</td>
+      <td>${w.totalAlim?w.totalAlim.toFixed(1)+' kg':'—'}</td>
+      <td>${w.totalEau?w.totalEau.toFixed(0)+' L':'—'}</td>
+      <td style="color:${w.totalMorts>0?'var(--red)':'var(--text3)'}">${w.totalMorts||'0'}</td>
+      <td>${w.hasDonnees?'<span style="color:var(--g2);font-size:11px">✓ Saisi</span>':'<span style="color:var(--text3);font-size:11px">Aucune donnée</span>'}</td>
     </tr>`;
   }).join('');
 };
 
-window.selectWeekDetail = function(weekNum){
-  window._currentWeekDetail = weekNum;
+window.selectWeekDetail = function(wIdx){
+  window._currentWeekDetail = wIdx;
   refreshTableauxSemaines();
 };
 
 window.navWeekDetail = function(direction){
-  window._currentWeekDetail = Math.max(1, window._currentWeekDetail + direction);
-  refreshTableauxSemaines();
+  const weeks = window._semWeeksAll || [];
+  if(!weeks.length) return;
+  const base = window._currentWeekDetail || weeks.length;
+  const newIdx = Math.min(weeks.length, Math.max(1, base + direction));
+  selectWeekDetail(newIdx);
 };
 
 window.exportTableauxCSV = function(){
-  const lotName = document.getElementById('semFiltreLot')?.selectedOptions[0]?.textContent || 'export';
-  const csv = 'Détail et Récapitulatif — ' + lotName + '\n';
+  const weeks = window._semWeeksAll || [];
+  const scope = (document.getElementById('semRecapTitle')?.textContent || 'export').trim();
+  if(!weeks.length){ toast('Aucune donnée à exporter','err'); return; }
+  let csv = 'Semaine;Période;Jours saisis;Œufs;Taux ponte (%);Aliment (kg);Eau (L);Mortalité\n';
+  weeks.forEach(w=>{
+    csv += [`S${w.wIdx}`, `${w.wStart} au ${w.wEnd}`, `${w.nbJours}/7`, w.totalOeufs,
+      w.tauxPonte!==null?w.tauxPonte.toFixed(1):'', w.totalAlim.toFixed(1), w.totalEau.toFixed(0), w.totalMorts
+    ].join(';') + '\n';
+  });
   toast('Téléchargement en cours...','info');
-  const blob = new Blob([csv], {type:'text/csv'});
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `semaines-${lotName}-${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `suivi-semaines-${scope.replace(/[^a-z0-9]+/gi,'_')}-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ── Fonctions Point Conditionnement Global (tableau de bord moderne) ─
+window._condGlobalChart = null;
+
+window.setCondGlobalPreset = function(preset){
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0,10);
+  let min = '';
+  if(preset==='7j'){ const d=new Date(today); d.setDate(d.getDate()-6); min=d.toISOString().slice(0,10); }
+  else if(preset==='mois'){ min = todayStr.slice(0,7)+'-01'; }
+  else if(preset==='trimestre'){ const d=new Date(today); d.setMonth(d.getMonth()-2); d.setDate(1); min=d.toISOString().slice(0,10); }
+  else if(preset==='annee'){ min = todayStr.slice(0,4)+'-01-01'; }
+  const minEl = document.getElementById('condDateMin');
+  const maxEl = document.getElementById('condDateMax');
+  if(minEl) minEl.value = min;
+  if(maxEl) maxEl.value = todayStr;
+  document.querySelectorAll('[id^="condpreset-"]').forEach(b=>b.classList.remove('active'));
+  document.getElementById('condpreset-'+preset)?.classList.add('active');
+  refreshCondGlobalDashboard();
+};
+
+window.clearCondPresetButtons = function(){
+  document.querySelectorAll('[id^="condpreset-"]').forEach(b=>b.classList.remove('active'));
+};
+
+window.refreshCondGlobalDashboard = async function(){
+  const dMin = document.getElementById('condDateMin')?.value;
+  const dMax = document.getElementById('condDateMax')?.value;
+  if(!dMin || !dMax) return;
+
+  const data = await collectProdCondData(dMin, dMax, '');
+  const t = data.total;
+
+  const kpiWrap = document.getElementById('condGlobalKpis');
+  if(kpiWrap){
+    kpiWrap.innerHTML = `
+      <div class="kpi kpi-g"><div class="kpi-lbl">Œufs produits</div><div class="kpi-val">${t.oeufs.toLocaleString('fr-FR')}</div><div class="kpi-sub">période sélectionnée</div></div>
+      <div class="kpi kpi-b"><div class="kpi-lbl">Œufs entrés cond.</div><div class="kpi-val">${t.bruts.toLocaleString('fr-FR')}</div><div class="kpi-sub">bruts collectés</div></div>
+      <div class="kpi ${t.tauxCasse>5?'kpi-r':'kpi-g'}"><div class="kpi-lbl">Taux de casse</div><div class="kpi-val">${t.tauxCasse.toFixed(1)}%</div><div class="kpi-sub">${t.casses.toLocaleString('fr-FR')} œufs cassés</div></div>
+      <div class="kpi ${t.tauxCond>=90?'kpi-g':t.tauxCond>=70?'kpi-a':'kpi-r'}"><div class="kpi-lbl">Taux conditionné</div><div class="kpi-val">${t.tauxCond.toFixed(0)}%</div><div class="kpi-sub">${t.nets.toLocaleString('fr-FR')} œufs nets</div></div>
+      <div class="kpi kpi-a"><div class="kpi-lbl">Plateaux</div><div class="kpi-val">${t.plateaux.toLocaleString('fr-FR')}</div><div class="kpi-sub">30 œufs / plateau</div></div>
+      <div class="kpi kpi-b"><div class="kpi-lbl">Cartons</div><div class="kpi-val">${t.cartons.toLocaleString('fr-FR')}</div><div class="kpi-sub">12 plateaux / carton</div></div>
+      <div class="kpi ${t.morts>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">Mortalité</div><div class="kpi-val">${t.morts.toLocaleString('fr-FR')}</div><div class="kpi-sub">sur la période</div></div>
+      <div class="kpi kpi-b"><div class="kpi-lbl">Aliment / Eau</div><div class="kpi-val" style="font-size:15px">${t.alimKg.toLocaleString('fr-FR')}kg</div><div class="kpi-sub">${t.eauL.toLocaleString('fr-FR')} L d'eau</div></div>
+    `;
+  }
+
+  const ctx = document.getElementById('condGlobalChart');
+  if(ctx){
+    if(window._condGlobalChart){ window._condGlobalChart.destroy(); window._condGlobalChart=null; }
+    const labels = data.batiments.map(b=>b.batiment);
+    window._condGlobalChart = new Chart(ctx, {
+      type:'bar',
+      data:{ labels, datasets:[
+        {label:'Œufs produits', data:data.batiments.map(b=>b.oeufs), backgroundColor:'rgba(45,106,79,.65)'},
+        {label:'Œufs nets conditionnés', data:data.batiments.map(b=>b.nets), backgroundColor:'rgba(15,118,110,.65)'},
+        {label:'Œufs cassés', data:data.batiments.map(b=>b.casses), backgroundColor:'rgba(193,18,31,.55)'},
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'bottom', labels:{boxWidth:12,font:{size:10}}} },
+        scales:{ y:{beginAtZero:true}, x:{grid:{display:false}} } }
+    });
+  }
+
+  const detailWrap = document.getElementById('condGlobalDetail');
+  if(detailWrap){
+    if(!data.batiments.length){
+      detailWrap.innerHTML = '<div class="card"><div class="card-bd" style="text-align:center;padding:30px;color:var(--text3)">Aucune donnée de conditionnement sur cette période.</div></div>';
+    } else {
+      detailWrap.innerHTML = data.batiments.map(bg=>`
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-hd"><span>🏗️ ${esc(bg.batiment)}</span><span class="status-pill ${bg.tauxCond>=90?'s-done':bg.tauxCond>=70?'s-pend':'s-late'}">${bg.tauxCond.toFixed(0)}% conditionné</span></div>
+          <div class="card-bd tbl-wrap" style="padding:0;overflow-x:auto">
+            <table class="tbl" style="min-width:640px">
+              <thead><tr>
+                <th>Ligne</th><th>Lots</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Œufs nets</th>
+                <th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th><th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th>
+              </tr></thead>
+              <tbody>
+                ${bg.lignes.map(lg=>`<tr>
+                  <td style="font-weight:600">${esc(lg.ligne)}</td>
+                  <td>${lg.lots.length}</td>
+                  <td style="text-align:right">${lg.oeufs.toLocaleString('fr-FR')}</td>
+                  <td style="text-align:right;font-weight:700">${lg.nets.toLocaleString('fr-FR')}</td>
+                  <td style="text-align:right">${lg.plateaux}</td>
+                  <td style="text-align:right">${lg.cartons}</td>
+                  <td style="text-align:right;color:${lg.tauxCasse>5?'var(--red)':'inherit'}">${lg.tauxCasse.toFixed(1)}%</td>
+                  <td style="text-align:right"><span class="status-pill ${lg.tauxCond>=90?'s-done':lg.tauxCond>=70?'s-pend':'s-late'}">${lg.tauxCond.toFixed(0)}%</span></td>
+                </tr>`).join('')}
+                <tr style="background:#f0fdfa;font-weight:700">
+                  <td colspan="2">TOTAL BÂTIMENT</td>
+                  <td style="text-align:right">${bg.oeufs.toLocaleString('fr-FR')}</td>
+                  <td style="text-align:right">${bg.nets.toLocaleString('fr-FR')}</td>
+                  <td style="text-align:right">${bg.plateaux}</td>
+                  <td style="text-align:right">${bg.cartons}</td>
+                  <td style="text-align:right">${bg.tauxCasse.toFixed(1)}%</td>
+                  <td style="text-align:right">${bg.tauxCond.toFixed(0)}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
 };
 
 // ── Fonctions preview et impression d'états ──
