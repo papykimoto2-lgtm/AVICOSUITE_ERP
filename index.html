@@ -1619,6 +1619,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Œufs cassés / non conformes</label><input id="condCasses" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
     <div class="fg"><label>Dépôt de stockage œufs bruts</label><select id="condDepotSrc"></select></div>
     <div class="fg"><label>Dépôt destination (plateaux)</label><select id="condDepotDest"></select></div>
+    <div class="fg fg-full"><label>🧩 Nomenclature (BOM) à appliquer</label><select id="condBomId"><option value="">— aucune (produits par défaut) —</option></select></div>
     <div class="fg"><label>Opérateur</label><select id="condOp"></select></div>
     <div class="fg fg-full"><label>Observations</label><textarea id="condNotes" placeholder="optionnel"></textarea></div>
   </div>
@@ -1745,14 +1746,16 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
-<!-- BOM CONDITIONNEMENT (NOMENCLATURE) -->
+<!-- BOM CONDITIONNEMENT (NOMENCLATURE) — édition d'UNE nomenclature -->
 <div class="overlay" id="mCondBom">
 <div class="modal">
-  <h3>🧩 Nomenclature de conditionnement (BOM)</h3>
+  <h3 id="mCondBomTitle">🧩 Nouvelle nomenclature (BOM)</h3>
+  <input type="hidden" id="bomFormId">
   <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:#3730a3">
     Définit les consommables/emballages réellement décomptés du stock à chaque session de conditionnement.
   </div>
   <div class="form-grid">
+    <div class="fg fg-full"><label>Nom de la nomenclature *</label><input id="bomNom" placeholder="ex: Format standard 30 œufs, Format export carton renforcé…"></div>
     <div class="fg fg-full" style="font-weight:700;color:var(--g1);border-bottom:1px solid var(--border);padding-bottom:4px">📦 Par plateau (30 œufs)</div>
     <div class="fg"><label>Alvéole</label><select id="bomAlvId"><option value="">— aucune —</option></select></div>
     <div class="fg"><label>Qté / plateau</label><input id="bomAlvQte" type="number" min="0" step="1" value="1"></div>
@@ -1763,12 +1766,41 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Qté / carton</label><input id="bomFicelleQte" type="number" min="0" step="0.1" value="1"></div>
     <div class="fg"><label>Alvéoles de couverture</label><select id="bomAlvCouvId"><option value="">— même alvéole —</option></select></div>
     <div class="fg"><label>Qté / carton (1 par pile)</label><input id="bomAlvCouvQte" type="number" min="0" step="1" value="4"></div>
+    <div class="fg fg-full" style="margin-top:6px">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer">
+        <input type="checkbox" id="bomParDefaut"> ⭐ Définir comme nomenclature par défaut
+      </label>
+    </div>
   </div>
   <div class="modal-footer">
-    <button class="btn btn-s" onclick="closeOverlay('mCondBom')">Annuler</button>
+    <button class="btn btn-s" onclick="openCondBomListModal()">‹ Retour à la liste</button>
     <button class="btn btn-p" onclick="saveCondBom()"><i class="fas fa-save"></i> Enregistrer la nomenclature</button>
   </div>
 </div></div>
+
+<!-- BOM CONDITIONNEMENT — LISTE DES NOMENCLATURES ENREGISTRÉES -->
+<div class="overlay" id="mCondBomList">
+<div class="modal modal-lg">
+  <h3>🧩 Nomenclatures de conditionnement (BOM) enregistrées</h3>
+  <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:#3730a3">
+    Vous pouvez enregistrer plusieurs nomenclatures (ex: par format de carton) et choisir celle à appliquer lors de chaque session de conditionnement. La nomenclature ⭐ par défaut est proposée automatiquement.
+  </div>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+    <button class="btn btn-p btn-sm" onclick="openCondBomModal()"><i class="fas fa-plus"></i> Nouvelle nomenclature</button>
+  </div>
+  <div class="tbl-wrap" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th>Nom</th><th>Alvéole/plateau</th><th>Carton vide</th><th>Ficelle</th><th>Défaut</th><th></th>
+      </tr></thead>
+      <tbody id="condBomListBody"></tbody>
+    </table>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mCondBomList')">Fermer</button>
+  </div>
+</div></div>
+
 
 <!-- CLIENT MODAL -->
 <div class="overlay" id="mClient">
@@ -7485,7 +7517,7 @@ window.onCondLotChange = function(){
 };
 
 async function openCondModal(flockId){
-  const [deps, staff, prods, bom, prophyTasks, lots] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF), getAll(S.PRODUITS), getCondBom(), getAll(S.PROPHY), getAll(S.FLOCKS)]);
+  const [deps, staff, prods, bom, prophyTasks, lots] = await Promise.all([getAll(S.DEPOTS), getAll(S.STAFF), getAll(S.PRODUITS), getCondBomDefault(), getAll(S.PROPHY), getAll(S.FLOCKS)]);
   window._condBom = bom;
   window._condProphyTasksAll = prophyTasks;
 
@@ -7540,6 +7572,8 @@ async function openCondModal(flockId){
   document.getElementById('condDepotDest').innerHTML = depOpts;
   const destDep = deps.find(d => d.type === 'produit_fini');
   if(destDep) document.getElementById('condDepotDest').value = destDep.id;
+
+  await populateCondBomSelect();
 
   document.getElementById('condOp').innerHTML = '<option value="">—</option>' +
     staff.map(s => `<option value="${s.id}">${s.nom} (${s.role})</option>`).join('');
@@ -7597,6 +7631,7 @@ window.editCond = async function(id){
   if(s.depotSrcId) document.getElementById('condDepotSrc').value = s.depotSrcId;
   if(s.depotDestId) document.getElementById('condDepotDest').value = s.depotDestId;
   if(s.operatorId) document.getElementById('condOp').value = s.operatorId;
+  await populateCondBomSelect(s.bomId);
   document.getElementById('calPetit').value    = s.cal_petit    || '';
   document.getElementById('calMoyen').value    = s.cal_moyen    || '';
   document.getElementById('calGros').value     = s.cal_gros     || '';
@@ -7681,10 +7716,11 @@ async function saveCond(){
   var ref = 'COND-' + date.replace(/-/g,'') + '-' + String(ts).slice(-4);
 
   // Enregistrer la session avec calibres
+  var bomId = parseInt(document.getElementById('condBomId')?.value) || null;
   await addRec(S.COND, {
     flockId:flockId, date:date, oeufs_bruts: bruts, oeufs_casses: casses,
     oeufs_nets: nets, plateaux:plateaux, cartons:cartons, plt_restants: pltRestants,
-    depotSrcId:depotSrcId, depotDestId:depotDestId, operatorId: opId, notes:notes, ref:ref, ts:ts,
+    depotSrcId:depotSrcId, depotDestId:depotDestId, operatorId: opId, notes:notes, ref:ref, ts:ts, bomId:bomId,
     cal_petit:cPetit, cal_moyen:cMoyen, cal_gros:cGros, cal_tres_gros:cTresGros,
     plt_petit:pltPetit, plt_moyen:pltMoyen, plt_gros:pltGros, plt_tres_gros:pltTresGros,
     car_petit:carPetit, car_moyen:carMoyen, car_gros:carGros, car_tres_gros:carTresGros
@@ -7696,7 +7732,7 @@ async function saveCond(){
   var motifBase = 'Conditionnement '+ref+nomLot;
 
   var mvtTs = ts;
-  var bom = window._condBom || await getCondBom();
+  var bom = bomId ? await getCondBom(bomId) : (window._condBom || await getCondBomDefault());
   var pAlvBom     = bom && bom.alvId ? prods.find(function(p){return p.id===bom.alvId;}) : null;
   var pCartonVide = bom && bom.cartonId ? prods.find(function(p){return p.id===bom.cartonId;}) : null;
   var pFicelle    = bom && bom.ficelleId ? prods.find(function(p){return p.id===bom.ficelleId;}) : null;
@@ -7999,16 +8035,97 @@ async function renderLotCond(lot, kpi, el){
 }
 
 // ── PAGE CONDITIONNEMENT GLOBALE ──
-// ── BOM CONDITIONNEMENT (NOMENCLATURE) ──
-// Enregistrement unique (singleton) : le 1er trouvé fait foi.
-async function getCondBom(){
+// ── BOM CONDITIONNEMENT (NOMENCLATURE) ── Plusieurs nomenclatures peuvent être
+// enregistrées (ex: par format de carton) ; une seule est marquée "par défaut".
+async function getAllCondBoms(){
   const all = await getAll(S.COND_BOM);
-  return all[0] || null;
+  return all.slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'','fr'));
 }
-async function openCondBomModal(){
-  const [bom, prods] = await Promise.all([getCondBom(), getAll(S.PRODUITS)]);
+// Nomenclature par défaut : celle marquée parDefaut=true, sinon la 1ère enregistrée
+// (compatibilité avec les installations existantes n'ayant qu'un seul enregistrement
+// sans le champ parDefaut).
+async function getCondBomDefault(){
+  const all = await getAll(S.COND_BOM);
+  if(!all.length) return null;
+  return all.find(b=>b.parDefaut) || all[0];
+}
+// getCondBom(id) : avec un id précis renvoie CETTE nomenclature (utilisée par une
+// session donnée) ; sans id renvoie la nomenclature par défaut (compat. ancien appel).
+async function getCondBom(id){
+  if(id){
+    const all = await getAll(S.COND_BOM);
+    return all.find(b=>b.id===id) || null;
+  }
+  return getCondBomDefault();
+}
+
+async function openCondBomListModal(){
+  const boms = await getAllCondBoms();
+  const tbody = document.getElementById('condBomListBody');
+  if(tbody){
+    tbody.innerHTML = !boms.length
+      ? '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Aucune nomenclature enregistrée.</td></tr>'
+      : boms.map(b=>`<tr>
+          <td style="font-weight:600">${esc(b.nom || 'Sans nom')}</td>
+          <td style="font-size:12px;color:var(--text3)">${b.alvQte||0} / plateau</td>
+          <td style="font-size:12px;color:var(--text3)">${b.cartonQte||0} / carton</td>
+          <td style="font-size:12px;color:var(--text3)">${b.ficelleQte||0} / carton</td>
+          <td>${b.parDefaut ? '<span class="status-pill s-done">⭐ Défaut</span>' : `<button class="btn btn-gh btn-sm" onclick="setCondBomDefault(${b.id})">Définir</button>`}</td>
+          <td style="white-space:nowrap">
+            <button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="openCondBomModal(${b.id})" title="Modifier"><i class="fas fa-pen"></i></button>
+            <button class="btn-del" style="background:var(--g4);color:var(--g1);margin-right:4px" onclick="duplicateCondBom(${b.id})" title="Dupliquer"><i class="fas fa-copy"></i></button>
+            <button class="btn-del" onclick="deleteCondBom(${b.id})" title="Supprimer"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>`).join('');
+  }
+  closeOverlay('mCondBom');
+  openOverlay('mCondBomList');
+}
+window.openCondBomListModal = openCondBomListModal;
+
+window.setCondBomDefault = async function(id){
+  const all = await getAll(S.COND_BOM);
+  for(const b of all){
+    const shouldBeDefault = b.id===id;
+    if(!!b.parDefaut !== shouldBeDefault) await updRec(S.COND_BOM, b.id, {parDefaut: shouldBeDefault});
+  }
+  window._condBom = await getCondBomDefault();
+  toast('Nomenclature par défaut mise à jour');
+  openCondBomListModal();
+};
+
+window.duplicateCondBom = async function(id){
+  const all = await getAll(S.COND_BOM);
+  const src = all.find(b=>b.id===id);
+  if(!src) return;
+  const {id:_omit, ...rest} = src;
+  await addRec(S.COND_BOM, {...rest, nom: (src.nom||'Nomenclature') + ' (copie)', parDefaut:false});
+  toast('Nomenclature dupliquée');
+  openCondBomListModal();
+};
+
+window.deleteCondBom = async function(id){
+  const all = await getAll(S.COND_BOM);
+  const b = all.find(x=>x.id===id);
+  if(!b) return;
+  if(!confirm('Supprimer la nomenclature « '+(b.nom||'Sans nom')+' » ?\nLes sessions déjà enregistrées avec cette nomenclature ne sont pas affectées.')) return;
+  await delRec(S.COND_BOM, id);
+  // Si c'était la nomenclature par défaut et qu'il en reste d'autres, la 1ère
+  // restante devient automatiquement la nouvelle référence par défaut.
+  const remaining = await getAll(S.COND_BOM);
+  if(b.parDefaut && remaining.length) await updRec(S.COND_BOM, remaining[0].id, {parDefaut:true});
+  window._condBom = await getCondBomDefault();
+  toast('Nomenclature supprimée');
+  openCondBomListModal();
+};
+
+async function openCondBomModal(id){
+  const [bom, prods] = await Promise.all([id ? getCondBom(id) : null, getAll(S.PRODUITS)]);
   const consos = prods.filter(p => p.categorie==='consommable' || p.categorie==='emballage');
   const opts = consos.map(p => `<option value="${p.id}">${p.nom}</option>`).join('');
+  document.getElementById('bomFormId').value = id || '';
+  document.getElementById('mCondBomTitle').textContent = id ? '✏️ Modifier la nomenclature (BOM)' : '🧩 Nouvelle nomenclature (BOM)';
+  document.getElementById('bomNom').value = bom?.nom || '';
   document.getElementById('bomAlvId').innerHTML     = '<option value="">— aucune —</option>' + opts;
   document.getElementById('bomCartonId').innerHTML  = '<option value="">— aucun —</option>' + opts;
   document.getElementById('bomFicelleId').innerHTML = '<option value="">— aucune —</option>' + opts;
@@ -8021,11 +8138,21 @@ async function openCondBomModal(){
   document.getElementById('bomFicelleQte').value= bom?.ficelleQte ?? 1;
   document.getElementById('bomAlvCouvId').value = bom?.alvCouvId || '';
   document.getElementById('bomAlvCouvQte').value= bom?.alvCouvQte ?? 4;
+  // Nouvelle nomenclature : cochée par défaut si aucune n'existe encore.
+  const existingCount = (await getAll(S.COND_BOM)).length;
+  document.getElementById('bomParDefaut').checked = bom ? !!bom.parDefaut : existingCount===0;
+  closeOverlay('mCondBomList');
   openOverlay('mCondBom');
 }
 window.openCondBomModal = openCondBomModal;
+
 async function saveCondBom(){
+  const id = parseInt(document.getElementById('bomFormId').value) || null;
+  const nom = document.getElementById('bomNom').value.trim();
+  if(!nom){ toast('Le nom de la nomenclature est requis', 'err'); return; }
+  const parDefaut = document.getElementById('bomParDefaut').checked;
   const data = {
+    nom,
     alvId:     document.getElementById('bomAlvId').value ? parseInt(document.getElementById('bomAlvId').value) : null,
     alvQte:    parseFloat(document.getElementById('bomAlvQte').value) || 0,
     cartonId:  document.getElementById('bomCartonId').value ? parseInt(document.getElementById('bomCartonId').value) : null,
@@ -8033,16 +8160,34 @@ async function saveCondBom(){
     ficelleId: document.getElementById('bomFicelleId').value ? parseInt(document.getElementById('bomFicelleId').value) : null,
     ficelleQte:parseFloat(document.getElementById('bomFicelleQte').value) || 0,
     alvCouvId: document.getElementById('bomAlvCouvId').value ? parseInt(document.getElementById('bomAlvCouvId').value) : null,
-    alvCouvQte:parseFloat(document.getElementById('bomAlvCouvQte').value) || 0
+    alvCouvQte:parseFloat(document.getElementById('bomAlvCouvQte').value) || 0,
+    parDefaut
   };
-  const existing = await getCondBom();
-  if(existing) await updRec(S.COND_BOM, existing.id, data);
-  else await addRec(S.COND_BOM, data);
-  window._condBom = await getCondBom();
-  closeOverlay('mCondBom');
-  toast('Nomenclature de conditionnement enregistrée');
+  let newId = id;
+  if(id) await updRec(S.COND_BOM, id, data);
+  else newId = await addRec(S.COND_BOM, data);
+  // Exclusivité du "par défaut" : une seule nomenclature peut l'être à la fois.
+  if(parDefaut){
+    const all = await getAll(S.COND_BOM);
+    for(const b of all){ if(b.id!==id && b.id!==newId && b.parDefaut) await updRec(S.COND_BOM, b.id, {parDefaut:false}); }
+  }
+  window._condBom = await getCondBomDefault();
+  toast('Nomenclature enregistrée');
+  openCondBomListModal();
 }
 window.saveCondBom = saveCondBom;
+
+// Remplit le sélecteur de nomenclature dans le formulaire de session de conditionnement.
+async function populateCondBomSelect(selectedId){
+  const boms = await getAllCondBoms();
+  const sel = document.getElementById('condBomId');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">— aucune (produits par défaut) —</option>'
+    + boms.map(b=>`<option value="${b.id}">${esc(b.nom||'Sans nom')}${b.parDefaut?' ⭐':''}</option>`).join('');
+  const def = boms.find(b=>b.parDefaut);
+  sel.value = selectedId ? String(selectedId) : (def ? String(def.id) : '');
+}
+
 
 async function renderCond(ca){
   const [sessions, lots, prods] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS)]);
@@ -8089,7 +8234,7 @@ async function renderCond(ca){
         <select id="condLotFilter" class="btn btn-gh" style="padding:6px 10px;font-size:12px">
           <option value="">Tous les lots</option>${lotSelect}
         </select>
-        <button class="btn btn-gh btn-sm" onclick="openCondBomModal()"><i class="fas fa-puzzle-piece"></i> Nomenclature (BOM)</button>
+        <button class="btn btn-gh btn-sm" onclick="openCondBomListModal()"><i class="fas fa-puzzle-piece"></i> Nomenclatures (BOM)</button>
         <button class="btn btn-p btn-sm" onclick="openCondModal()"><i class="fas fa-plus"></i> Nouvelle session</button>
       </div>
     </div>
@@ -14326,10 +14471,15 @@ window.initTableauxSemaines = async function(){
   const [buildings, lines, flocks] = await Promise.all([getAll(S.BUILDINGS), getAll(S.LINES), getAll(S.FLOCKS)]);
   window._semRefData = { buildings, lines, flocks };
 
+  // Bâtiments effectivement présents parmi les lots pondeuses (fallback texte libre
+  // f.line pour les lots saisis avant la normalisation en table Bâtiments/Lignes —
+  // sans ce fallback ces lots restaient invisibles dans les filtres).
+  const layerLots = flocks.filter(f=>f.type==='layer');
+  const batNames = [...new Set(layerLots.map(f=>resolveBatLigne(f,buildings,lines).batNom))].sort((a,b)=>a.localeCompare(b,'fr'));
   const bSel = document.getElementById('semFiltreBuilding');
   if(bSel){
     bSel.innerHTML = '<option value="">— Tous les bâtiments —</option>'
-      + buildings.map(b=>`<option value="${b.id}">${esc(b.nom)}</option>`).join('');
+      + batNames.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
   }
   populateSemLigneOptions();
   populateSemLotOptions();
@@ -14337,25 +14487,36 @@ window.initTableauxSemaines = async function(){
   refreshTableauxSemaines();
 };
 
+// Résout le nom de Bâtiment/Ligne d'un lot, avec repli sur les champs texte libre
+// hérités (f.line / f.ligne) — même logique que collectProdCondData, pour que
+// TOUS les lots (anciens ou récents) soient couverts par les filtres.
+window.resolveBatLigne = function(f, buildings, lines){
+  const batNom = buildings.find(b=>String(b.id)===String(f.buildingId))?.nom || f.line || 'Sans bâtiment';
+  const ligneNom = lines.find(l=>String(l.id)===String(f.lineId))?.nom || f.ligne || 'Sans ligne';
+  return { batNom, ligneNom };
+};
+
 window.populateSemLigneOptions = function(){
-  const { lines=[] } = window._semRefData || {};
-  const bId = document.getElementById('semFiltreBuilding')?.value || '';
+  const { buildings=[], lines=[], flocks=[] } = window._semRefData || {};
+  const batNom = document.getElementById('semFiltreBuilding')?.value || '';
   const lSel = document.getElementById('semFiltreLigne');
   if(!lSel) return;
-  const filtered = bId ? lines.filter(l=>String(l.buildingId)===String(bId)) : lines;
+  let layerLots = flocks.filter(f=>f.type==='layer');
+  if(batNom) layerLots = layerLots.filter(f=>resolveBatLigne(f,buildings,lines).batNom===batNom);
+  const ligneNames = [...new Set(layerLots.map(f=>resolveBatLigne(f,buildings,lines).ligneNom))].sort((a,b)=>a.localeCompare(b,'fr'));
   lSel.innerHTML = '<option value="">— Toutes les lignes —</option>'
-    + filtered.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('');
+    + ligneNames.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
 };
 
 window.populateSemLotOptions = function(){
-  const { flocks=[] } = window._semRefData || {};
-  const bId = document.getElementById('semFiltreBuilding')?.value || '';
-  const lId = document.getElementById('semFiltreLigne')?.value || '';
+  const { buildings=[], lines=[], flocks=[] } = window._semRefData || {};
+  const batNom = document.getElementById('semFiltreBuilding')?.value || '';
+  const ligneNom = document.getElementById('semFiltreLigne')?.value || '';
   const lotSel = document.getElementById('semFiltreLot');
   if(!lotSel) return;
   let f = flocks.filter(fl=>fl.type==='layer');
-  if(bId) f = f.filter(fl=>String(fl.buildingId)===String(bId));
-  if(lId) f = f.filter(fl=>String(fl.lineId)===String(lId));
+  if(batNom) f = f.filter(fl=>resolveBatLigne(fl,buildings,lines).batNom===batNom);
+  if(ligneNom) f = f.filter(fl=>resolveBatLigne(fl,buildings,lines).ligneNom===ligneNom);
   lotSel.innerHTML = '<option value="">— Tous les lots (cumul) —</option>'
     + f.map(fl=>`<option value="${fl.id}">${esc(fl.nom)}</option>`).join('');
 };
@@ -14377,20 +14538,18 @@ window.refreshTableauxSemaines = async function(){
     window._semRefData = { buildings: await getAll(S.BUILDINGS), lines: await getAll(S.LINES), flocks: await getAll(S.FLOCKS) };
   }
   const { buildings, lines, flocks } = window._semRefData;
-  const bId = document.getElementById('semFiltreBuilding')?.value || '';
-  const lId = document.getElementById('semFiltreLigne')?.value || '';
+  const batNom = document.getElementById('semFiltreBuilding')?.value || '';
+  const ligneNom = document.getElementById('semFiltreLigne')?.value || '';
   const lotId = document.getElementById('semFiltreLot')?.value || '';
   const weekFilter = document.getElementById('semFiltreWeek')?.value || 'all';
 
   let matchedLots = flocks.filter(f=>f.type==='layer');
-  if(bId) matchedLots = matchedLots.filter(f=>String(f.buildingId)===String(bId));
-  if(lId) matchedLots = matchedLots.filter(f=>String(f.lineId)===String(lId));
+  if(batNom) matchedLots = matchedLots.filter(f=>resolveBatLigne(f,buildings,lines).batNom===batNom);
+  if(ligneNom) matchedLots = matchedLots.filter(f=>resolveBatLigne(f,buildings,lines).ligneNom===ligneNom);
   if(lotId) matchedLots = matchedLots.filter(f=>String(f.id)===String(lotId));
 
-  const bNom = bId ? (buildings.find(b=>String(b.id)===String(bId))?.nom||'') : '';
-  const lNom = lId ? (lines.find(l=>String(l.id)===String(lId))?.nom||'') : '';
   const lotNom = lotId ? (matchedLots.find(f=>String(f.id)===String(lotId))?.nom||'') : '';
-  const scopeLabel = lotNom || [bNom?('Bât. '+bNom):'', lNom?('Ligne '+lNom):''].filter(Boolean).join(' — ') || 'tous lots';
+  const scopeLabel = lotNom || [batNom?('Bât. '+batNom):'', ligneNom?('Ligne '+ligneNom):''].filter(Boolean).join(' — ') || 'tous lots';
 
   if(!matchedLots.length){
     document.getElementById('semDetailTitle').textContent = 'aucune donnée';
