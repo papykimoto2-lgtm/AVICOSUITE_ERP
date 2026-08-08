@@ -1543,10 +1543,10 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
-<!-- RÉCEPTION MODAL -->
+<!-- RÉCEPTION MODAL (création ET modification — le mode est piloté par recEditId) -->
 <div class="overlay" id="mRec">
 <div class="modal modal-lg">
-  <h3>Réception — <span id="recBCLabel"></span></h3>
+  <h3 id="recModalTitle">Réception — <span id="recBCLabel"></span></h3>
   <div class="form-grid" style="margin-bottom:12px">
     <div class="fg"><label>Date réception</label><input id="recDate" type="date"></div>
     <div class="fg"><label>Dépôt destination</label><select id="recDepot"></select></div>
@@ -1555,7 +1555,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div id="recLinesDiv"></div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mRec')">Annuler</button>
-    <button class="btn btn-p" onclick="saveRec()"><i class="fas fa-boxes-stacked"></i> Valider réception</button>
+    <button class="btn btn-p" id="recSaveBtn" onclick="saveRec()"><i class="fas fa-boxes-stacked"></i> Valider réception</button>
   </div>
 </div></div>
 
@@ -4238,7 +4238,7 @@ window.importData = async function(input){
 //  NAVIGATION
 // ════════════════════════════════════════════════════════
 let curPage='dash', curLotId=null, activeLotTab='overview';
-let selDepot=null, mvtPage=1, bcLines=[], recBCId=null, chartInst=null, scoreInst=null;
+let selDepot=null, mvtPage=1, bcLines=[], recBCId=null, recEditId=null, chartInst=null, scoreInst=null;
 
 function goTo(p){
   // Garde permission — vérifier que l'utilisateur peut accéder à cette page
@@ -6887,14 +6887,22 @@ window.markSent=async(id)=>{const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x
 window.delBC=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.BCS,id);toast('BC supprimé');await renderBCs(apCA());}};
 
 async function openRecModal(bcId){
-  recBCId=bcId;const[bcs,deps]=await Promise.all([getAll(S.BCS),getAll(S.DEPOTS)]);const bc=bcs.find(x=>x.id===bcId);if(!bc) return;
+  recBCId=bcId;recEditId=null;const[bcs,deps]=await Promise.all([getAll(S.BCS),getAll(S.DEPOTS)]);const bc=bcs.find(x=>x.id===bcId);if(!bc) return;
+  document.getElementById('recModalTitle').innerHTML='Réception — <span id="recBCLabel"></span>';
   document.getElementById('recBCLabel').textContent=bc.ref||'#'+bcId;document.getElementById('recDate').value=new Date().toISOString().slice(0,10);document.getElementById('recBL').value='';
   document.getElementById('recDepot').innerHTML=deps.map(d=>`<option value="${d.id}">${d.nom}</option>`).join('');
   document.getElementById('recLinesDiv').innerHTML=bc.lignes?.map((l,i)=>{const reste=l.qte-(l.qteLivree||0);return reste<=0?'':`<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div><strong>${l.designation}</strong><div style="font-size:10px;color:var(--text3)">Commandé: ${l.qte} · Livré: ${l.qteLivree||0} · Restant: ${reste}</div></div><input class="rec-qty" type="number" data-idx="${i}" data-pid="${l.produitId}" data-px="${l.prixUnit}" data-u="${l.unite}" placeholder="Qté reçue" value="${reste}" max="${reste}" step="0.01" style="border:1.5px solid var(--border);border-radius:6px;padding:7px;font-size:13px"><span style="font-size:11px;color:var(--text3)">${l.unite}</span></div>`;}).join('')||'<p style="color:var(--text3)">Toutes les lignes livrées.</p>';
+  const btn=document.getElementById('recSaveBtn');btn.innerHTML='<i class="fas fa-boxes-stacked"></i> Valider réception';
   openOverlay('mRec');
 }
 window.openRecModal=openRecModal;
+// Dispatcher : route vers la création ou la mise à jour selon le mode courant (recEditId)
 async function saveRec(){
+  if(recEditId){ await saveRecUpdate(); return; }
+  await saveRecCreate();
+}
+window.saveRec=saveRec;
+async function saveRecCreate(){
   const depotId=parseInt(document.getElementById('recDepot').value);const date=document.getElementById('recDate').value;const bl=document.getElementById('recBL').value.trim();
   if(!date||!depotId){toast('Date et dépôt requis','err');return;}
   const inputs=document.querySelectorAll('.rec-qty');const received=[];
@@ -6911,18 +6919,129 @@ async function saveRec(){
     if(ligneBC) ligneBC.qteLivree=qteAvant+r.qty;
     const qteApres=qteAvant+r.qty;
     recLignes.push({produitId:r.produitId,designation:ligneBC?.designation||'',qteRecue:r.qty,prixUnit:r.prixUnit,unite:r.unite,qteCommandee,qteAvant,qteApres,resteApres:Math.max(0,qteCommandee-qteApres)});
-    await addRec(S.MVTS,{type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,ts:Date.now()});
   }
   const allDone=bc.lignes.every(l=>l.qteLivree>=l.qte);await updRec(S.BCS,recBCId,{...bc,statut:allDone?'done':'partial'});
   // ── CONNEXION BC→RECS : archiver la réception pour traçabilité (avec le statut partiel/complet figé) ──
   const newRecId = await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:recLignes,livraisonComplete:allDone,operatorId:currentUser?.id||1,ts:Date.now()});
+  // Les mouvements de stock portent désormais recId, pour pouvoir être retrouvés/annulés lors d'une modification ou suppression ultérieure de cette réception
+  for(const r of received){
+    await addRec(S.MVTS,{type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:newRecId,ts:Date.now()});
+  }
   closeOverlay('mRec');toast(allDone?'✓ Réception enregistrée — commande soldée, bon de réception archivé':'✓ Réception partielle enregistrée — bon de réception archivé');await renderBCs(apCA());
   // Proposer l'aperçu / impression immédiate du bon de réception (livraison de la commande)
   if(newRecId>0 && confirm('Réception enregistrée. Voulez-vous ouvrir l\'aperçu du bon de réception à imprimer ?')){
     printBR(newRecId);
   }
 }
-window.saveRec=saveRec;
+window.saveRecCreate=saveRecCreate;
+
+// ── Retrouve les mouvements de stock (S.MVTS) liés à une réception donnée ──
+// D'abord par recId (réceptions créées après cette mise à jour), sinon par correspondance
+// ref+date+motif+fournisseur (réceptions plus anciennes, créées avant le suivi par recId) ──
+async function findRecMvts(rec,bc){
+  const allMvts=await getAll(S.MVTS);
+  let matches=allMvts.filter(m=>m.recId===rec.id);
+  if(!matches.length){
+    const ref=(bc?.ref||'')+'/'+(rec.bl||'BL');
+    const motif=`Réception BC ${bc?.ref||''}`;
+    matches=allMvts.filter(m=>m.type==='entree'&&m.ref===ref&&m.date===rec.date&&m.motif===motif&&m.fournId===rec.fournId);
+  }
+  return matches;
+}
+
+// ── Modifier une réception existante : ouvre le même modal, pré-rempli, en mode édition ──
+async function openRecEditModal(recId){
+  const[recs,bcs,deps]=await Promise.all([getAll(S.RECS),getAll(S.BCS),getAll(S.DEPOTS)]);
+  const rec=recs.find(x=>x.id===recId);if(!rec){toast('Réception introuvable','err');return;}
+  const bc=bcs.find(x=>x.id===rec.bcId);if(!bc){toast('Bon de commande associé introuvable','err');return;}
+  recEditId=recId;recBCId=rec.bcId;
+  document.getElementById('recModalTitle').innerHTML='Modifier la réception — <span id="recBCLabel"></span>';
+  document.getElementById('recBCLabel').textContent=bc.ref||'#'+bc.id;
+  document.getElementById('recDate').value=rec.date||new Date().toISOString().slice(0,10);
+  document.getElementById('recDepot').innerHTML=deps.map(d=>`<option value="${d.id}" ${d.id===rec.depotId?'selected':''}>${d.nom}</option>`).join('');
+  document.getElementById('recBL').value=rec.bl||'';
+  document.getElementById('recLinesDiv').innerHTML=(rec.lignes||[]).map(l=>{
+    const ligneBC=bc.lignes.find(x=>x.produitId===l.produitId);
+    const autres=Math.max(0,(ligneBC?.qteLivree||0)-(l.qteRecue||0));
+    const maxPour=Math.max(0,(ligneBC?.qte||0)-autres);
+    return `<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div><strong>${esc(l.designation||('Produit #'+l.produitId))}</strong><div style="font-size:10px;color:var(--text3)">Commandé: ${ligneBC?.qte??'—'} · Reçu (autres réceptions): ${autres} · Max pour celle-ci: ${maxPour}</div></div>
+      <input class="rec-qty" type="number" data-pid="${l.produitId}" data-px="${l.prixUnit}" data-u="${esc(l.unite||'')}" value="${l.qteRecue}" min="0" max="${maxPour}" step="0.01" title="Quantité reçue" style="border:1.5px solid var(--border);border-radius:6px;padding:7px;font-size:13px">
+      <input class="rec-price" type="number" data-pid="${l.produitId}" value="${l.prixUnit||0}" min="0" step="0.01" title="Prix unitaire" style="border:1.5px solid var(--border);border-radius:6px;padding:7px;font-size:13px">
+      <span style="font-size:11px;color:var(--text3)">${esc(l.unite||'u')}</span>
+    </div>`;
+  }).join('')||'<p style="color:var(--text3)">Aucune ligne dans cette réception.</p>';
+  const btn=document.getElementById('recSaveBtn');btn.innerHTML='<i class="fas fa-save"></i> Enregistrer les modifications';
+  openOverlay('mRec');
+}
+window.openRecEditModal=openRecEditModal;
+
+// ── Enregistre les modifications d'une réception existante : recalcule le cumul livré du BC,
+// resynchronise les mouvements de stock, et met à jour le statut de la commande ──
+async function saveRecUpdate(){
+  const depotId=parseInt(document.getElementById('recDepot').value);const date=document.getElementById('recDate').value;const bl=document.getElementById('recBL').value.trim();
+  if(!date||!depotId){toast('Date et dépôt requis','err');return;}
+  const qtyInputs=document.querySelectorAll('.rec-qty');const edited=[];
+  qtyInputs.forEach(inp=>{
+    const pid=parseInt(inp.dataset.pid);const qty=Math.max(0,parseFloat(inp.value)||0);
+    const priceInp=document.querySelector(`.rec-price[data-pid="${pid}"]`);
+    const prixUnit=priceInp?(parseFloat(priceInp.value)||0):(parseFloat(inp.dataset.px)||0);
+    edited.push({produitId:pid,qty,prixUnit,unite:inp.dataset.u});
+  });
+  const[recs,bcs]=await Promise.all([getAll(S.RECS),getAll(S.BCS)]);
+  const rec=recs.find(x=>x.id===recEditId);if(!rec){toast('Réception introuvable','err');return;}
+  const bc=bcs.find(x=>x.id===rec.bcId);if(!bc){toast('Bon de commande associé introuvable','err');return;}
+  // Retirer l'ancien apport de cette réception sur les lignes du BC, puis appliquer le nouveau
+  const oldByPid={};(rec.lignes||[]).forEach(l=>{oldByPid[l.produitId]=(oldByPid[l.produitId]||0)+(l.qteRecue||0);});
+  edited.forEach(e=>{
+    const ligneBC=bc.lignes.find(x=>x.produitId===e.produitId);if(!ligneBC) return;
+    const oldQty=oldByPid[e.produitId]||0;
+    ligneBC.qteLivree=Math.max(0,(ligneBC.qteLivree||0)-oldQty+e.qty);
+  });
+  const allDone=bc.lignes.every(l=>l.qteLivree>=l.qte);
+  const anyDelivered=bc.lignes.some(l=>(l.qteLivree||0)>0);
+  const newStatut=allDone?'done':(anyDelivered?'partial':'sent');
+  await updRec(S.BCS,bc.id,{...bc,statut:newStatut});
+  // Reconstruire les lignes de la réception avec les cumuls à jour
+  const newLignes=edited.filter(e=>e.qty>0).map(e=>{
+    const ligneBC=bc.lignes.find(x=>x.produitId===e.produitId);
+    const qteCommandee=ligneBC?.qte||0;const qteApres=ligneBC?.qteLivree||0;const qteAvant=Math.max(0,qteApres-e.qty);
+    return{produitId:e.produitId,designation:ligneBC?.designation||'',qteRecue:e.qty,prixUnit:e.prixUnit,unite:e.unite,qteCommandee,qteAvant,qteApres,resteApres:Math.max(0,qteCommandee-qteApres)};
+  });
+  // Resynchroniser les mouvements de stock : on supprime les anciens mouvements liés à cette réception et on recrée avec les nouvelles quantités
+  const oldMvts=await findRecMvts(rec,bc);
+  for(const m of oldMvts) await delRec(S.MVTS,m.id);
+  for(const e of newLignes){
+    await addRec(S.MVTS,{type:'entree',produitId:e.produitId,depotDestId:depotId,depotSrcId:null,quantite:e.qteRecue,unite:e.unite,prixUnit:e.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:rec.id,ts:rec.ts||Date.now()});
+  }
+  await updRec(S.RECS,rec.id,{...rec,date,bl:bl||'',depotId,lignes:newLignes,livraisonComplete:allDone});
+  recEditId=null;closeOverlay('mRec');toast('✓ Réception mise à jour — stock et commande resynchronisés');
+  await renderReceptions(document.getElementById('contentArea'));
+}
+window.saveRecUpdate=saveRecUpdate;
+
+// ── Supprimer une réception : annule son effet sur le BC (quantités livrées, statut) et retire les mouvements de stock associés ──
+async function delReception(recId){
+  if(!confirm('Supprimer définitivement cette réception ?\nLes quantités seront retirées du stock et du bon de commande associé.')) return;
+  const[recs,bcs]=await Promise.all([getAll(S.RECS),getAll(S.BCS)]);
+  const rec=recs.find(x=>x.id===recId);if(!rec){toast('Réception introuvable','err');return;}
+  const bc=bcs.find(x=>x.id===rec.bcId);
+  if(bc){
+    (rec.lignes||[]).forEach(l=>{
+      const ligneBC=bc.lignes.find(x=>x.produitId===l.produitId);
+      if(ligneBC) ligneBC.qteLivree=Math.max(0,(ligneBC.qteLivree||0)-(l.qteRecue||0));
+    });
+    const allDone=bc.lignes.every(l=>l.qteLivree>=l.qte);
+    const anyDelivered=bc.lignes.some(l=>(l.qteLivree||0)>0);
+    await updRec(S.BCS,bc.id,{...bc,statut:allDone?'done':(anyDelivered?'partial':'sent')});
+  }
+  const mvts=await findRecMvts(rec,bc);
+  for(const m of mvts) await delRec(S.MVTS,m.id);
+  await delRec(S.RECS,recId);
+  toast('✓ Réception supprimée — stock et commande mis à jour');
+  await renderReceptions(document.getElementById('contentArea'));
+}
+window.delReception=delReception;
 
 // ══ PRODUITS ══
 async function renderProds(ca){
@@ -11664,7 +11783,9 @@ async function renderReceptions(ca){
       + `<td>${nbLignes} ligne(s)</td>`
       + `<td style="font-weight:700">${Math.round(totalRec).toLocaleString()} F</td>`
       + `<td>${stBadge}</td>`
-      + `<td><button class="btn btn-sm btn-gh" onclick="printBR(${r.id})" title="Aperçu / Imprimer le bon de réception"><i class="fas fa-print"></i></button></td></tr>`;
+      + `<td><button class="btn btn-sm btn-gh" onclick="printBR(${r.id})" title="Aperçu / Imprimer le bon de réception"><i class="fas fa-print"></i></button> `
+      + `<button class="btn btn-sm btn-gh" onclick="openRecEditModal(${r.id})" title="Modifier cette réception"><i class="fas fa-pen"></i></button> `
+      + `<button class="btn-del" onclick="delReception(${r.id})" title="Supprimer cette réception"><i class="fas fa-trash"></i></button></td></tr>`;
   }).join('');
   ca.innerHTML = `<div class="page-header"><div class="page-header-title"><i class="fas fa-truck-ramp-box" style="color:var(--g2)"></i> Réceptions (bons de livraison fournisseur)</div>`
     + `<button class="btn btn-sm btn-gh" onclick="goApproSub('bcs')"><i class="fas fa-arrow-left"></i> Bons de commande</button></div>`
