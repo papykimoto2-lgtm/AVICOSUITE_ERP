@@ -4418,9 +4418,12 @@ async function computeKPIs(lot){
   // fantôme, un taux de ponte calculé sur cheptel inexistant, et jamais marqué "clos".
   const sortiesReforme=reformes.reduce((a,r)=>a+(r.nbTetes||0),0);
   const sortiesVente=ventesVivantes.reduce((a,v)=>a+(v.nbTetes||0),0);
-  const vivants=Math.max(0,lot.initialStock-mortCum-sortiesReforme-sortiesVente);
+  // Abattage direct (fiche lot, saveAbattage) — exclut les entrées SLAUGHTER dupliquées
+  // depuis le flux Réforme (viaReforme:true), déjà comptées dans sortiesReforme.
+  const sortiesAbattageDirect=slaughters.filter(s=>!s.viaReforme).reduce((a,s)=>a+(s.nbAnimaux||0),0);
+  const vivants=Math.max(0,lot.initialStock-mortCum-sortiesReforme-sortiesVente-sortiesAbattageDirect);
   const mortPct=lot.initialStock>0?mortCum/lot.initialStock*100:0;
-  const clos = lot.initialStock>0 && (mortCum+sortiesReforme+sortiesVente)>=lot.initialStock;
+  const clos = lot.initialStock>0 && (mortCum+sortiesReforme+sortiesVente+sortiesAbattageDirect)>=lot.initialStock;
 
   // Mortalité par jour sur 7 derniers jours
   const mortJ7=mortRecords.slice(-7).map(m=>({date:m.date,mort:m.nbMorts||0,cause:m.cause||''}));
@@ -5285,7 +5288,23 @@ window.saveAbattage=async()=>{
   const nb=parseInt(document.getElementById('aNb').value)||0;
   if(!date||kg<=0){toast('Date et poids requis','err');return;}
   await addRec(S.SLAUGHTER,{flockId:lot.id,date,meatKg:kg,nbAnimaux:nb,operatorId:getSjResponsableId()});
-  toast(`✓ Abattage — ${kg}kg`);await refreshLot();
+  // Entrée stock viande — cohérence avec le flux Réforme (S.MVTS)
+  const deps=await getAll(S.DEPOTS);
+  const depotViande=deps.find(d=>d.type==='viande')||deps[0];
+  if(depotViande && kg>0){
+    const prods=await getAll(S.PRODUITS);
+    const nomViandeLot='Viande lot '+(lot.nom||lot.id);
+    let pViande=prods.find(p=>p.nom===nomViandeLot && p.categorie==='viande');
+    if(!pViande){
+      const newId=await addRec(S.PRODUITS,{nom:nomViandeLot,categorie:'viande',stade:'produit_fini',
+        depotAffecteId:depotViande.id,unite:'kg',prix:0,seuil:0,ref:'VIA-AUTO'});
+      pViande={id:newId};
+    }
+    await addRec(S.MVTS,{type:'entree',produitId:pViande.id,depotSrcId:null,depotDestId:depotViande.id,
+      quantite:kg,unite:'kg',prixUnit:pViande.prix||0,fournId:null,ref:'AUTO',
+      motif:`Abattage lot ${lot.nom||lot.id}`,date,ts:Date.now()});
+  }
+  toast(`✓ Abattage — ${kg}kg (stock mis à jour)`);await refreshLot();
 };
 window.saveFeed=async()=>{
   const lot=window._lot;const date=document.getElementById('sjDate').value;
@@ -8382,21 +8401,7 @@ window.runDbDiagnostic = async function(){
   const t0 = Date.now();
   const issues   = [];
   const storeStats = [];
-  const STORE_LABELS = {
-    flocks:'Lots d\'élevage', feeding:'Alimentation', health:'Santé', egg_prod:'Production œufs',
-    growth_prod:'Croissance chair', slaughter:'Abattages', water_consumption:'Eau',
-    protocols:'Protocoles', prophylaxis_tasks:'Prophylaxie', nutrition_protocols:'Nutrition',
-    buildings:'Bâtiments', lines:'Lignes', staff:'Personnel', clients:'Clients', sales:'Ventes',
-    depots:'Dépôts', produits:'Produits', stock_mvts:'Mouvements stock',
-    fournisseurs:'Fournisseurs', bons_commande:'Bons commande', receptions:'Réceptions',
-    activity_log:'Activité', conditionnement:'Conditionnement', mortalite:'Mortalité',
-    charges_lot:'Charges lots', tresorerie:'Trésorerie', budget_lignes:'Budget',
-    gmao_equipements:'Équipements GMAO', gmao_maintenances:'Maintenances', gmao_pannes:'Pannes',
-    reforme_lots:'Réformes', vente_vivant:'Ventes vivant',
-    fab_aliments:'Fab. aliments', fab_recettes:'Recettes fab.', fab_norms:'Normes nutrition',
-    reappro_rules:'Règles réappro', reappro_hist:'Historique réappro',
-    users:'Utilisateurs', app_settings:'Paramètres app'
-  };
+  // STORE_LABELS dédupliqué — utilise la déclaration globale unique (cf. module sync)
 
   // 1. Inventaire de tous les stores
   let totalRecords = 0;
@@ -8775,7 +8780,9 @@ async function computeFinanceGlobale(){
   var lots=await getAll(S.FLOCKS),sales=await getAll(S.SALES),
       charges=await getAll(S.CHARGES),tresoData=await getAll(S.TRESORERIE),
       feeds=await getAll(S.FEEDING),budgets=await getAll(S.BUDGET),
-      mort=await getAll(S.MORTALITE);
+      mort=await getAll(S.MORTALITE),
+      reformesAll=await getAll(S.REFORME),ventesAll=await getAll(S.VENTE_VIVANT),
+      slaughtersAll=await getAll(S.SLAUGHTER);
   var finLots=[];
   for(var i=0;i<lots.length;i++){
     var lot=lots[i];
@@ -8783,6 +8790,9 @@ async function computeFinanceGlobale(){
     var lf=feeds.filter(function(f){return f.flockId===lot.id;});
     var lc=charges.filter(function(c){return c.flockId===lot.id;});
     var lm=mort.filter(function(m){return m.flockId===lot.id;});
+    var lr=reformesAll.filter(function(r){return r.flockId===lot.id;});
+    var lv=ventesAll.filter(function(v){return v.flockId===lot.id;});
+    var lsl=slaughtersAll.filter(function(s){return s.flockId===lot.id && !s.viaReforme;});
     var recettes=ls.reduce(function(a,s){return a+(s.total||0);},0);
     var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*185;
     var cPBase=(lot.costPerChick||0)*lot.initialStock;
@@ -8796,7 +8806,10 @@ async function computeFinanceGlobale(){
     var totalCh=(hasMPoussin?0:cPBase)+(hasMAli?0:cAlBase)+manuTotal;
     var marge=recettes-totalCh;
     var mortCum=lm.reduce(function(a,m){return a+(m.nbMorts||0);},0);
-    var vivants=Math.max(0,lot.initialStock-mortCum);
+    var sortiesReformeF=lr.reduce(function(a,r){return a+(r.nbTetes||0);},0);
+    var sortiesVenteF=lv.reduce(function(a,v){return a+(v.nbTetes||0);},0);
+    var sortiesAbattageF=lsl.reduce(function(a,s){return a+(s.nbAnimaux||0);},0);
+    var vivants=Math.max(0,lot.initialStock-mortCum-sortiesReformeF-sortiesVenteF-sortiesAbattageF);
     var lb=budgets.filter(function(b){return b.flockId===lot.id;});
     var bTot=lb.find(function(b){return b.categorie==='total';})||null;
     var bRec=lb.find(function(b){return b.categorie==='recette';})||null;
@@ -10320,10 +10333,11 @@ window.saveReforme = async function() {
       mode, poidsVif, rendCarcasse: rendement, poidsCarcasse, prixCarcasse,
       pertesSanit, recetteTotale: poidsCarcasse * prixCarcasse, observations: obs, ts: Date.now()
     });
-    // Aussi dans SLAUGHTER pour compatibilité
+    // Aussi dans SLAUGHTER pour compatibilité (viaReforme=true : exclu du décompte
+    // direct pour éviter le double comptage avec sortiesReforme, cf. computeKPIs/computeFinanceGlobale)
     await addRec(S.SLAUGHTER, {
       flockId, date, meatKg: poidsCarcasse, nbAnimaux: nbTetesAbat,
-      operatorId: 1
+      operatorId: 1, viaReforme: true
     });
     // Entrée stock viande
     if (depotViandeId && poidsCarcasse > 0) {
