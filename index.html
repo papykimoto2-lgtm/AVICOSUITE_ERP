@@ -1367,6 +1367,18 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
+<!-- INVENTAIRE — GÉNÉRATION / SAISIE -->
+<div class="overlay" id="mInvGen">
+<div class="modal" style="max-width:820px">
+  <h3>Inventaire physique</h3>
+  <div class="form-grid">
+    <div class="fg"><label>Dépôt *</label><select id="invDepotSel"></select></div>
+    <div class="fg"><label>Date *</label><input id="invDateSel" type="date"></div>
+    <div class="fg" style="align-self:end"><button class="btn btn-p" onclick="invGenererLignes()"><i class="fas fa-list"></i> Générer la liste théorique</button></div>
+  </div>
+  <div id="invGenBody" style="margin-top:10px"></div>
+</div></div>
+
 <!-- MOUVEMENT APERCU -->
 <div class="overlay" id="mMvtApercu">
 <div class="modal" style="max-width:560px">
@@ -2188,7 +2200,8 @@ const S={
   REPRO_COLLECTE:'repro_collecte',   // Collecte des œufs à couver
   COUVOIR_INCUB:'couvoir_incubation',// Mises en incubation (batchs)
   COUVOIR_MIRAGE:'couvoir_mirage',   // Résultats de mirage (J7/J14/J18)
-  COUVOIR_ECLOSION:'couvoir_eclosion'// Résultats d'éclosion
+  COUVOIR_ECLOSION:'couvoir_eclosion',// Résultats d'éclosion
+  INVENTAIRES:'inventaires_stock'    // Sessions d'inventaire physique (théorique/compté/écarts)
 };
 
 const STORES_DEF=[
@@ -2226,7 +2239,8 @@ const STORES_DEF=[
   [S.REPRO_COLLECTE,'reproLotId'],
   [S.COUVOIR_INCUB,'reproLotId'],
   [S.COUVOIR_MIRAGE,'incubId'],
-  [S.COUVOIR_ECLOSION,'incubId']
+  [S.COUVOIR_ECLOSION,'incubId'],
+  [S.INVENTAIRES,'depotId']
 ];
 
 // ════════════════════════════════════════════════════════
@@ -6296,6 +6310,7 @@ async function renderStockModule(ca){
     {id:'depots', icon:'fa-warehouse',      label:'Dépôts'},
     {id:'stocks', icon:'fa-boxes-stacked',  label:'État des stocks'},
     {id:'mvts',   icon:'fa-right-left',     label:'Mouvements'},
+    {id:'inv',    icon:'fa-clipboard-check',label:'Inventaires'},
   ];
   if(!allTabs.some(t=>t.id===stockTab)) stockTab=allTabs[0].id;
   const tabNav=allTabs.map(t=>`<button class="tab-btn ${stockTab===t.id?'on':''}" onclick="switchStockTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
@@ -6317,6 +6332,7 @@ async function renderStockTab(){
   if(stockTab==='depots') await renderDepots(el);
   else if(stockTab==='stocks') await renderStocks(el);
   else if(stockTab==='mvts') await renderMvts(el,mvtPage);
+  else if(stockTab==='inv') await renderInventaires(el);
 }
 // Sous-navigation depuis n'importe où (KPI, alertes, dashboard) : bascule l'onglet si le
 // module Stock est déjà ouvert, sinon navigue puis ouvre directement le bon onglet.
@@ -6878,16 +6894,57 @@ async function renderStocks(ca){
 
 // ══ MOUVEMENTS ══
 let mvtEditId=null;
+let mvtFilters={dateMin:'',dateMax:'',depotId:'',produitId:'',categorie:'',type:'',cadre:''};
+const CATEGORIE_LBL={aliment:'Aliment',medicament:'Médicaments',oeuf:'Œufs',viande:'Viande',materiel:'Matériel',intrant:'Intrants'};
+function applyMvtFilters(mvts,prods){
+  return mvts.filter(m=>{
+    if(mvtFilters.dateMin && m.date<mvtFilters.dateMin) return false;
+    if(mvtFilters.dateMax && m.date>mvtFilters.dateMax) return false;
+    if(mvtFilters.depotId && String(m.depotSrcId)!==mvtFilters.depotId && String(m.depotDestId)!==mvtFilters.depotId) return false;
+    if(mvtFilters.produitId && String(m.produitId)!==mvtFilters.produitId) return false;
+    if(mvtFilters.type && m.type!==mvtFilters.type) return false;
+    if(mvtFilters.cadre && m.cadre!==mvtFilters.cadre) return false;
+    if(mvtFilters.categorie){ const p=prods.find(x=>x.id===m.produitId); if(!p||p.categorie!==mvtFilters.categorie) return false; }
+    return true;
+  });
+}
 async function renderMvts(ca,p=1){
-  const[mvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const[allMvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const mvts=applyMvtFilters(allMvts,prods);
   const sorted=mvts.slice().sort((a,b)=>b.ts-a.ts);const PAGE=15;const total=sorted.length;const pages=Math.max(1,Math.ceil(total/PAGE));
   const slice=sorted.slice((p-1)*PAGE,p*PAGE);
   const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
   const typeCls={entree:'b-g',sortie:'b-r',transfert:'b-bl',inventaire:'b-gr'};
   const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> <button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}</td></tr>`;}).join('');
-  const pagerBtns=[`<button ${p<=1?'disabled':''} onclick="mvtPage=${p-1};renderMvts(document.getElementById('contentArea'),${p-1})">‹</button>`,...Array.from({length:Math.min(pages,5)},(_,i)=>Math.max(1,p-2)+i).filter(n=>n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="mvtPage=${n};renderMvts(document.getElementById('contentArea'),${n})">${n}</button>`),`<button ${p>=pages?'disabled':''} onclick="mvtPage=${p+1};renderMvts(document.getElementById('contentArea'),${p+1})">›</button>`].join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-right-left" style="color:var(--g2)"></i> Mouvements de stock</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="exportMvtCSV()"><i class="fas fa-download"></i> CSV</button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div><div class="stock-page"><div class="card"><div class="card-hd">Tous les mouvements (${total})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Type/Cadre</th><th>Produit</th><th>Quantité</th><th>Dépôt</th><th>Fournisseur</th><th>Motif</th><th>Auteur</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun mouvement</td></tr>'}</tbody></table><div class="pager">${pagerBtns}<span style="font-size:11px;color:var(--text3)">${total} enregistrements</span></div></div></div></div>`;
+  const pagerBtns=[`<button ${p<=1?'disabled':''} onclick="mvtPage=${p-1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p-1})">‹</button>`,...Array.from({length:Math.min(pages,5)},(_,i)=>Math.max(1,p-2)+i).filter(n=>n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="mvtPage=${n};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${n})">${n}</button>`),`<button ${p>=pages?'disabled':''} onclick="mvtPage=${p+1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p+1})">›</button>`].join('');
+  const depOpts='<option value="">Tous dépôts</option>'+deps.map(d=>`<option value="${d.id}" ${mvtFilters.depotId==String(d.id)?'selected':''}>${esc(d.nom)}</option>`).join('');
+  const prodOpts='<option value="">Tous produits</option>'+prods.map(pr=>`<option value="${pr.id}" ${mvtFilters.produitId==String(pr.id)?'selected':''}>${esc(pr.nom)}</option>`).join('');
+  const catOpts='<option value="">Toutes familles</option>'+Object.entries(CATEGORIE_LBL).map(([k,l])=>`<option value="${k}" ${mvtFilters.categorie===k?'selected':''}>${l}</option>`).join('');
+  const typeOpts=['entree','sortie','transfert','inventaire'].map(t=>`<option value="${t}" ${mvtFilters.type===t?'selected':''}>${typeLbl[t]}</option>`).join('');
+  const filterBar=`<div class="card" style="margin-bottom:12px"><div class="card-hd">🔎 Filtres — journal de mouvements</div><div class="card-bd" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
+    <div class="fg"><label>Du</label><input type="date" id="mfDateMin" value="${mvtFilters.dateMin}"></div>
+    <div class="fg"><label>Au</label><input type="date" id="mfDateMax" value="${mvtFilters.dateMax}"></div>
+    <div class="fg"><label>Dépôt</label><select id="mfDepot">${depOpts}</select></div>
+    <div class="fg"><label>Produit</label><select id="mfProduit">${prodOpts}</select></div>
+    <div class="fg"><label>Famille</label><select id="mfCategorie">${catOpts}</select></div>
+    <div class="fg"><label>Type</label><select id="mfType"><option value="">Tous types</option>${typeOpts}</select></div>
+    <div style="display:flex;gap:6px"><button class="btn btn-p btn-sm" onclick="applyMvtFilterForm()"><i class="fas fa-filter"></i> Filtrer</button><button class="btn btn-gh btn-sm" onclick="resetMvtFilters()">Réinit.</button></div>
+  </div></div>`;
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-right-left" style="color:var(--g2)"></i> Mouvements de stock</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-gh" onclick="exportMvtCSV()"><i class="fas fa-download"></i> CSV</button><button class="btn btn-sm btn-gh" onclick="mvtJournalApercu()"><i class="fas fa-eye"></i> Aperçu journal</button><button class="btn btn-sm btn-gh" onclick="mvtJournalPrint()"><i class="fas fa-print"></i> Imprimer journal</button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div><div class="stock-page">${filterBar}
+    <div class="card"><div class="card-hd">Mouvements filtrés (${total})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Type/Cadre</th><th>Produit</th><th>Quantité</th><th>Dépôt</th><th>Fournisseur</th><th>Motif</th><th>Auteur</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun mouvement pour ces filtres</td></tr>'}</tbody></table><div class="pager">${pagerBtns}<span style="font-size:11px;color:var(--text3)">${total} enregistrements</span></div></div></div></div>`;
 }
+window.applyMvtFilterForm=function(){
+  mvtFilters={
+    dateMin:document.getElementById('mfDateMin').value,dateMax:document.getElementById('mfDateMax').value,
+    depotId:document.getElementById('mfDepot').value,produitId:document.getElementById('mfProduit').value,
+    categorie:document.getElementById('mfCategorie').value,type:document.getElementById('mfType').value,cadre:''
+  };
+  mvtPage=1;renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),1);
+};
+window.resetMvtFilters=function(){
+  mvtFilters={dateMin:'',dateMax:'',depotId:'',produitId:'',categorie:'',type:'',cadre:''};
+  mvtPage=1;renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),1);
+};
 
 async function openMvtModal(type='entree',prodId=null,depotId=null,editId=null){
   const[prods,deps,fourns]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
@@ -7017,13 +7074,294 @@ window.mvtPrint=async function(id){
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
 };
+// ── Journal de mouvements filtré — aperçu et impression A4 (période, dépôt, produit, famille, type) ──
+async function buildMvtJournalHtml(preview){
+  const[allMvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const mvts=applyMvtFilters(allMvts,prods).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||a.ts-b.ts);
+  const cfg=await getExploitationSettings();
+  const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
+  let valEntrees=0,valSorties=0;
+  const rows=mvts.map(m=>{
+    const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);
+    const v=(m.prixUnit||0)*m.quantite;if(m.type==='entree')valEntrees+=v;else if(m.type==='sortie')valSorties+=v;
+    return `<tr><td>${m.piece||'—'}</td><td>${m.date||'—'}</td><td>${typeLbl[m.type]||m.type}</td><td>${esc(m.cadreLabel||m.cadre||'—')}</td><td>${esc(pr?pr.nom:'—')}</td><td style="text-align:right">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td>${esc(ds?ds.nom:'—')}${dd?' → '+esc(dd.nom):''}</td><td>${esc(f?f.nom:'—')}</td><td style="text-align:right">${Math.round(v).toLocaleString()}</td><td style="font-size:10px">${esc(m.motif||'—')}</td><td style="font-size:10px">${esc(m.auteur||'—')}</td></tr>`;
+  }).join('');
+  const filtreLbl=[
+    mvtFilters.dateMin?'Du '+mvtFilters.dateMin:'',mvtFilters.dateMax?'Au '+mvtFilters.dateMax:'',
+    mvtFilters.depotId?'Dépôt : '+esc(deps.find(d=>String(d.id)===mvtFilters.depotId)?.nom||''):'',
+    mvtFilters.produitId?'Produit : '+esc(prods.find(p=>String(p.id)===mvtFilters.produitId)?.nom||''):'',
+    mvtFilters.categorie?'Famille : '+(CATEGORIE_LBL[mvtFilters.categorie]||mvtFilters.categorie):'',
+    mvtFilters.type?'Type : '+(typeLbl[mvtFilters.type]||mvtFilters.type):''
+  ].filter(Boolean).join(' · ')||'Aucun filtre — tous les mouvements';
+
+  // ── Récapitulatifs groupés (entrées/sorties/valeur) par dépôt, famille, produit ──
+  function grouper(keyFn,labelFn){
+    const g={};
+    for(const m of mvts){
+      const k=keyFn(m);if(k===null)continue;
+      if(!g[k]) g[k]={label:labelFn(m),entrees:0,sorties:0,valEnt:0,valSor:0};
+      const v=(m.prixUnit||0)*m.quantite;
+      if(m.type==='entree'){g[k].entrees+=m.quantite;g[k].valEnt+=v;}
+      else if(m.type==='sortie'){g[k].sorties+=m.quantite;g[k].valSor+=v;}
+    }
+    return Object.values(g).sort((a,b)=>(b.valEnt+b.valSor)-(a.valEnt+a.valSor));
+  }
+  const parDepot=grouper(
+    m=>m.depotDestId||m.depotSrcId||null,
+    m=>{const d=deps.find(x=>x.id===(m.depotDestId||m.depotSrcId));return d?d.nom:'—';}
+  );
+  const parFamille=grouper(
+    m=>{const p=prods.find(x=>x.id===m.produitId);return p?p.categorie:null;},
+    m=>{const p=prods.find(x=>x.id===m.produitId);return CATEGORIE_LBL[p?.categorie]||p?.categorie||'—';}
+  );
+  const parProduit=grouper(
+    m=>m.produitId,
+    m=>{const p=prods.find(x=>x.id===m.produitId);return p?p.nom:'—';}
+  );
+  const buildRecapTable=(titre,rowsData)=>`<div style="margin-bottom:14px"><div style="font-weight:700;font-size:12px;margin-bottom:4px">${titre}</div>
+    <table><thead><tr><th>Libellé</th><th style="text-align:right">Entrées (qté)</th><th style="text-align:right">Sorties (qté)</th><th style="text-align:right">Valeur entrées</th><th style="text-align:right">Valeur sorties</th></tr></thead>
+    <tbody>${rowsData.map(r=>`<tr><td>${esc(r.label)}</td><td style="text-align:right">${r.entrees.toLocaleString('fr-FR')}</td><td style="text-align:right">${r.sorties.toLocaleString('fr-FR')}</td><td style="text-align:right;color:#059669">${Math.round(r.valEnt).toLocaleString()}</td><td style="text-align:right;color:#c1121f">${Math.round(r.valSor).toLocaleString()}</td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:#999">—</td></tr>'}</tbody></table>
+  </div>`;
+  const recapHtml=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    ${buildRecapTable('📦 Par dépôt',parDepot)}
+    ${buildRecapTable('🏷️ Par famille',parFamille)}
+  </div>
+  ${buildRecapTable('🔖 Par produit',parProduit)}`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Journal des mouvements</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:1000px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    .filtres{background:#f3f4f6;border-radius:6px;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#555}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:5px 6px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;font-size:10px}
+    tfoot td{font-weight:700;background:#f9fafb}
+    .kpis{display:flex;gap:14px;margin-bottom:12px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4 landscape}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">JOURNAL DES MOUVEMENTS DE STOCK</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="filtres">🔎 ${filtreLbl}</div>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${mvts.length}</div>Mouvements</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#059669">+${Math.round(valEntrees).toLocaleString()}</div>Valeur entrées (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">−${Math.round(valSorties).toLocaleString()}</div>Valeur sorties (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(valEntrees-valSorties).toLocaleString()}</div>Solde net (FCFA)</div>
+    </div>
+    ${recapHtml}
+    <div style="font-weight:700;font-size:12px;margin-bottom:4px">📋 Détail chronologique</div>
+    <table><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Cadre</th><th>Produit</th><th style="text-align:right">Quantité</th><th>Dépôt</th><th>Fournisseur</th><th style="text-align:right">Valeur</th><th>Motif</th><th>Auteur</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:#999">Aucun mouvement pour ces filtres</td></tr>'}</tbody></table>
+  </div></body></html>`;
+}
+window.mvtJournalPrint=async function(){
+  const html=await buildMvtJournalHtml();
+  const w=window.open('','_blank','width=1100,height=750');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+};
+window.mvtJournalApercu=window.mvtJournalPrint;
+
 async function exportMvtCSV(){
-  const[mvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const[allMvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const mvts=applyMvtFilters(allMvts,prods);
   const rows=['Pièce,Date,Cadre,Type,Produit,Quantité,Unité,Dépôt src,Dépôt dest,Fournisseur,Prix,Valeur,Motif,Auteur'];
   for(const m of mvts.slice().sort((a,b)=>b.ts-a.ts)){const p=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);rows.push(`${m.piece||''},${m.date},${m.cadreLabel||m.cadre||''},${m.type},${p?.nom||''},${m.quantite},${m.unite||''},${ds?.nom||''},${dd?.nom||''},${f?.nom||''},${m.prixUnit||0},${(m.prixUnit||0)*m.quantite},"${(m.motif||'').replace(/"/g,'""')}",${m.auteur||''}`);}
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download='mouvements.csv';a.click();toast('CSV exporté');
 }
 window.exportMvtCSV=exportMvtCSV;
+
+// ══ INVENTAIRES — comptage physique, écarts, validation, état valorisé imprimable ══
+let invDraft=null; // session en cours d'édition {id,ref,date,depotId,statut,lignes:[...]}
+async function invNumero(date){
+  const d=(date||new Date().toISOString().slice(0,10)).replace(/-/g,'');
+  const invs=await getAll(S.INVENTAIRES);
+  const n=invs.filter(i=>i.ref&&i.ref.startsWith('INV-'+d)).length+1;
+  return `INV-${d}-${String(n).padStart(3,'0')}`;
+}
+async function renderInventaires(ca){
+  const[invs,deps]=await Promise.all([getAll(S.INVENTAIRES),getAll(S.DEPOTS)]);
+  const sorted=invs.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const statutCls={brouillon:'b-a',valide:'b-g'};const statutLbl={brouillon:'Brouillon',valide:'Validé'};
+  const rows=sorted.map(i=>{
+    const dep=deps.find(d=>d.id===i.depotId);
+    const ecartVal=(i.lignes||[]).reduce((a,l)=>a+(l.compte-l.theorique)*(l.prixUnit||0),0);
+    return `<tr><td><strong>${esc(i.ref||'—')}</strong><br><span style="font-size:10px;color:var(--text3)">${i.date||'—'}</span></td>
+      <td>${esc(dep?dep.nom:'—')}</td>
+      <td><span class="badge ${statutCls[i.statut]||'b-gr'}">${statutLbl[i.statut]||i.statut}</span></td>
+      <td>${(i.lignes||[]).length} réf.</td>
+      <td style="font-weight:700;color:${ecartVal<0?'var(--red)':ecartVal>0?'var(--g2)':'inherit'}">${ecartVal>0?'+':''}${Math.round(ecartVal).toLocaleString()} F</td>
+      <td style="font-size:10px;color:var(--text3)">${esc(i.auteur||'—')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-xs btn-gh" title="Aperçu" onclick="invApercu(${i.id})"><i class="fas fa-eye"></i></button>
+        <button class="btn btn-xs btn-gh" title="Imprimer" onclick="invPrint(${i.id})"><i class="fas fa-print"></i></button>
+        ${i.statut==='brouillon'?`<button class="btn btn-xs btn-gh" title="Continuer la saisie" onclick="invContinue(${i.id})"><i class="fas fa-pen"></i></button> <button class="btn btn-xs btn-gh" title="Supprimer" onclick="invDelete(${i.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}
+      </td></tr>`;
+  }).join('');
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-clipboard-check" style="color:var(--g2)"></i> Inventaires</div><button class="btn btn-p btn-sm" onclick="openInvModal()"><i class="fas fa-plus"></i> Nouvel inventaire</button></div><div class="stock-page">
+    <div class="card"><div class="card-hd">Sessions d'inventaire (${sorted.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Dépôt</th><th>Statut</th><th>Réf.</th><th>Écart valorisé</th><th>Auteur</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun inventaire réalisé</td></tr>'}</tbody></table></div></div>
+  </div>`;
+}
+window.renderInventaires=renderInventaires;
+
+window.openInvModal=async function(){
+  invDraft=null;
+  const deps=await getAll(S.DEPOTS);
+  document.getElementById('invDepotSel').innerHTML=deps.map(d=>`<option value="${d.id}">${esc(d.nom)}</option>`).join('');
+  document.getElementById('invDateSel').value=new Date().toISOString().slice(0,10);
+  document.getElementById('invGenBody').innerHTML='';
+  openOverlay('mInvGen');
+};
+// Génère les lignes théoriques (stock système) pour le dépôt choisi : produits ayant un solde
+// non nul dans ce dépôt OU dont le dépôt d'affectation est celui-ci — évite les ruptures fantômes.
+window.invGenererLignes=async function(){
+  const depotId=parseInt(document.getElementById('invDepotSel').value);
+  const date=document.getElementById('invDateSel').value;
+  if(!depotId||!date){toast('Dépôt et date requis','err');return;}
+  const[prods,bal]=await Promise.all([getAll(S.PRODUITS),getBalance()]);
+  const candidats=prods.filter(p=>(bal[`${p.id}_${depotId}`]||0)!==0||p.depotAffecteId===depotId);
+  const lignes=candidats.map(p=>({produitId:p.id,nom:p.nom,unite:p.unite,prixUnit:p.prix||0,theorique:Math.round((bal[`${p.id}_${depotId}`]||0)*100)/100,compte:Math.round((bal[`${p.id}_${depotId}`]||0)*100)/100}));
+  invDraft={id:invDraft?.id||null,ref:invDraft?.ref||null,date,depotId,statut:'brouillon',lignes};
+  renderInvSaisie();
+};
+function renderInvSaisie(){
+  if(!invDraft) return;
+  const rows=invDraft.lignes.map((l,idx)=>`<tr><td>${esc(l.nom)}</td><td style="text-align:right;color:var(--text3)">${l.theorique} ${l.unite||''}</td>
+    <td style="text-align:right"><input type="number" step="0.01" value="${l.compte}" style="width:90px;text-align:right" oninput="invSetCompte(${idx},this.value)" onchange="invSetCompte(${idx},this.value)"></td>
+    <td id="invEcart${idx}" style="text-align:right;font-weight:700;color:${l.compte-l.theorique<0?'var(--red)':l.compte-l.theorique>0?'var(--g2)':'inherit'}">${(l.compte-l.theorique)>0?'+':''}${(Math.round((l.compte-l.theorique)*100)/100)} ${l.unite||''}</td>
+    <td id="invVal${idx}" style="text-align:right;color:var(--text3)">${Math.round((l.compte-l.theorique)*(l.prixUnit||0)).toLocaleString()} F</td></tr>`).join('');
+  document.getElementById('invGenBody').innerHTML=`
+    <div class="tbl-wrap" style="max-height:340px;overflow-y:auto"><table class="tbl"><thead><tr><th>Produit</th><th style="text-align:right">Théorique</th><th style="text-align:right">Compté *</th><th style="text-align:right">Écart</th><th style="text-align:right">Valorisation écart</th></tr></thead><tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucun produit pour ce dépôt</td></tr>'}</tbody></table></div>
+    <div class="modal-footer" style="margin-top:10px">
+      <button class="btn btn-s" onclick="closeOverlay('mInvGen')">Annuler</button>
+      <button class="btn btn-gh" onclick="saveInvDraft()"><i class="fas fa-save"></i> Enregistrer brouillon</button>
+      <button class="btn btn-p" onclick="validerInv()"><i class="fas fa-check-double"></i> Valider l'inventaire</button>
+    </div>`;
+}
+window.invSetCompte=function(idx,val){
+  if(!invDraft) return;
+  invDraft.lignes[idx].compte=parseFloat(val)||0;
+  const l=invDraft.lignes[idx];const ecart=Math.round((l.compte-l.theorique)*100)/100;
+  const ecartCell=document.getElementById('invEcart'+idx),valCell=document.getElementById('invVal'+idx);
+  if(ecartCell){ ecartCell.textContent=(ecart>0?'+':'')+ecart+' '+(l.unite||''); ecartCell.style.color=ecart<0?'var(--red)':ecart>0?'var(--g2)':'inherit'; }
+  if(valCell){ const v=Math.round(ecart*(l.prixUnit||0)); valCell.textContent=v.toLocaleString()+' F'; }
+};
+window.saveInvDraft=async function(){
+  if(!invDraft||!invDraft.lignes.length){toast('Aucune ligne à enregistrer','err');return;}
+  if(!invDraft.ref) invDraft.ref=await invNumero(invDraft.date);
+  const data={ref:invDraft.ref,date:invDraft.date,depotId:invDraft.depotId,statut:'brouillon',lignes:invDraft.lignes,auteur:currentUser?.nom||'Système',auteurId:currentUser?.id||null,ts:Date.now()};
+  if(invDraft.id) await updRec(S.INVENTAIRES,invDraft.id,data);
+  else invDraft.id=await addRec(S.INVENTAIRES,data);
+  closeOverlay('mInvGen');invDraft=null;toast('Inventaire enregistré en brouillon');await renderInventaires(stCA());
+};
+// ── Validation : verrouille la session et génère les mouvements de correction (cadre inventaire) ──
+window.validerInv=async function(){
+  if(!invDraft||!invDraft.lignes.length){toast('Aucune ligne à valider','err');return;}
+  if(!confirm('Valider cet inventaire ?\nLes écarts seront corrigés par des mouvements de stock automatiques. Cette action est définitive.')) return;
+  if(!invDraft.ref) invDraft.ref=await invNumero(invDraft.date);
+  try{
+    for(const l of invDraft.lignes){
+      const ecart=Math.round((l.compte-l.theorique)*100)/100;
+      if(ecart===0) continue;
+      await regMvt({
+        type: ecart>0?'entree':'sortie', produitId:l.produitId,
+        depotSrcId: ecart<0?invDraft.depotId:null, depotDestId: ecart>0?invDraft.depotId:null,
+        quantite: Math.abs(ecart), unite:l.unite, prixUnit:l.prixUnit,
+        ref: invDraft.ref, motif:`Régularisation inventaire ${invDraft.ref}`, date:invDraft.date,
+        cadre:'inventaire', force:true
+      });
+    }
+    const data={ref:invDraft.ref,date:invDraft.date,depotId:invDraft.depotId,statut:'valide',lignes:invDraft.lignes,
+      auteur:currentUser?.nom||'Système',auteurId:currentUser?.id||null,
+      validePar:currentUser?.nom||'Système',dateValidation:new Date().toISOString(),ts:Date.now()};
+    if(invDraft.id) await updRec(S.INVENTAIRES,invDraft.id,data);
+    else invDraft.id=await addRec(S.INVENTAIRES,data);
+  }catch(e){ toast('⛔ '+e.message,'err'); return; }
+  const doneId=invDraft.id;closeOverlay('mInvGen');invDraft=null;
+  toast('✅ Inventaire validé — écarts régularisés dans le stock');
+  await renderInventaires(stCA());
+  invPrint(doneId);
+};
+window.invContinue=async function(id){
+  const invs=await getAll(S.INVENTAIRES);const i=invs.find(x=>x.id===id);
+  if(!i){toast('Inventaire introuvable','err');return;}
+  if(i.statut!=='brouillon'){toast('Inventaire déjà validé — non modifiable','err');return;}
+  invDraft={id:i.id,ref:i.ref,date:i.date,depotId:i.depotId,statut:'brouillon',lignes:i.lignes};
+  const deps=await getAll(S.DEPOTS);
+  document.getElementById('invDepotSel').innerHTML=deps.map(d=>`<option value="${d.id}" ${d.id===i.depotId?'selected':''}>${esc(d.nom)}</option>`).join('');
+  document.getElementById('invDateSel').value=i.date;
+  openOverlay('mInvGen');renderInvSaisie();
+};
+window.invDelete=async function(id){
+  const invs=await getAll(S.INVENTAIRES);const i=invs.find(x=>x.id===id);
+  if(!i){toast('Inventaire introuvable','err');return;}
+  if(i.statut!=='brouillon'){toast('Impossible de supprimer un inventaire validé','err');return;}
+  if(!confirm('Supprimer ce brouillon d\'inventaire ?')) return;
+  await delRec(S.INVENTAIRES,id);toast('Brouillon supprimé');await renderInventaires(stCA());
+};
+// ── État d'inventaire imprimable : théorique, compté, écart, valorisation ──
+async function buildInvHtml(id){
+  const[invs,deps,cfg]=await Promise.all([getAll(S.INVENTAIRES),getAll(S.DEPOTS),getExploitationSettings()]);
+  const i=invs.find(x=>x.id===id); if(!i) return null;
+  const dep=deps.find(d=>d.id===i.depotId);
+  let totTheo=0,totCompte=0,totEcart=0;
+  const rows=(i.lignes||[]).slice().sort((a,b)=>(a.nom||'').localeCompare(b.nom||'')).map(l=>{
+    const ecart=Math.round((l.compte-l.theorique)*100)/100;
+    const valTheo=l.theorique*(l.prixUnit||0),valCompte=l.compte*(l.prixUnit||0),valEcart=ecart*(l.prixUnit||0);
+    totTheo+=valTheo;totCompte+=valCompte;totEcart+=valEcart;
+    return `<tr style="${ecart!==0?'background:#fffbeb':''}"><td>${esc(l.nom)}</td><td style="text-align:right">${l.theorique} ${l.unite||''}</td><td style="text-align:right;font-weight:700">${l.compte} ${l.unite||''}</td><td style="text-align:right;color:${ecart<0?'#c1121f':ecart>0?'#059669':'#888'}">${ecart>0?'+':''}${ecart} ${l.unite||''}</td><td style="text-align:right">${Math.round(valTheo).toLocaleString()}</td><td style="text-align:right;font-weight:700">${Math.round(valCompte).toLocaleString()}</td><td style="text-align:right;color:${valEcart<0?'#c1121f':valEcart>0?'#059669':'#888'}">${valEcart>0?'+':''}${Math.round(valEcart).toLocaleString()}</td></tr>`;
+  }).join('');
+  const nbEcarts=(i.lignes||[]).filter(l=>Math.round((l.compte-l.theorique)*100)!==0).length;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${i.ref}</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:950px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    .badge-num{background:#2d6a4f;color:#fff;padding:3px 10px;border-radius:5px;font-weight:700;display:inline-block}
+    .statut{display:inline-block;padding:3px 10px;border-radius:5px;font-weight:700;font-size:11px;margin-left:6px}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    th,td{padding:5px 6px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;font-size:10px}
+    tfoot td{font-weight:800;background:#f9fafb}
+    .kpis{display:flex;gap:14px;margin-bottom:12px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800}
+    .sig{display:flex;justify-content:space-between;margin-top:40px}
+    .sig div{width:30%;text-align:center;border-top:1px solid #999;padding-top:6px;font-size:11px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">ÉTAT D'INVENTAIRE</div><div class="badge-num">${esc(i.ref||'—')}</div>
+      <span class="statut" style="background:${i.statut==='valide'?'#d8f3dc':'#fff3e0'};color:${i.statut==='valide'?'#166534':'#b45309'}">${i.statut==='valide'?'✓ VALIDÉ':'⏳ BROUILLON'}</span></div></div>
+    <table><tr><th>Date</th><td>${i.date||'—'}</td><th>Dépôt</th><td>${esc(dep?dep.nom:'—')}</td></tr>
+    <tr><th>Réalisé par</th><td>${esc(i.auteur||'—')}</td><th>Validé par</th><td>${i.statut==='valide'?esc(i.validePar||'—')+' le '+new Date(i.dateValidation).toLocaleDateString('fr-FR'):'—'}</td></tr></table>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${(i.lignes||[]).length}</div>Références comptées</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:${nbEcarts?'#c1121f':'#059669'}">${nbEcarts}</div>Écarts détectés</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(totTheo).toLocaleString()}</div>Stock valorisé théorique (F)</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(totCompte).toLocaleString()}</div>Stock valorisé compté (F)</div>
+    </div>
+    <table><thead><tr><th>Produit</th><th style="text-align:right">Théorique</th><th style="text-align:right">Compté</th><th style="text-align:right">Écart (qté)</th><th style="text-align:right">Val. théorique</th><th style="text-align:right">Val. comptée</th><th style="text-align:right">Écart valorisé</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${Math.round(totTheo).toLocaleString()}</td><td style="text-align:right">${Math.round(totCompte).toLocaleString()}</td><td style="text-align:right;color:${totEcart<0?'#c1121f':'#059669'}">${totEcart>0?'+':''}${Math.round(totEcart).toLocaleString()}</td></tr></tfoot>
+    </table>
+    <div class="sig"><div>Responsable dépôt</div><div>Compteur</div><div>Validation direction</div></div>
+  </div></body></html>`;
+}
+window.invApercu=async function(id){ const html=await buildInvHtml(id); if(!html){toast('Inventaire introuvable','err');return;} const w=window.open('','_blank','width=1000,height=750'); if(!w){toast('Autoriser les pop-ups','err');return;} w.document.write(html);w.document.close(); };
+window.invPrint=window.invApercu;
 
 // ══ MODULE APPROVISIONNEMENT — page à onglets : BC / Réception / Réappro auto / Produits & Matières ══
 function apCA(){ return document.getElementById('approTabContent') || document.getElementById('contentArea'); }
@@ -7519,7 +7857,6 @@ async function renderCommandes(ca){
       <td><span class="badge ${SALE_STATUT_CSS[s.statut]||'b-gr'}">${SALE_STATUT_LABEL[s.statut]||s.statut}</span></td>
       <td style="color:var(--text3);font-size:11px">${PAIE_MODE_LABEL[s.paie]||s.paie||'—'}${s.dateEcheance?`<div style="font-size:10px;color:#5b21b6">Ech. ${s.dateEcheance}</div>`:''}</td>
       <td style="white-space:nowrap">
-      <td style="white-space:nowrap">
         ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'confirmed')" title="Confirmer"><i class="fas fa-check"></i></button> `:''}
         ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
         ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
@@ -7577,7 +7914,6 @@ window.filterCommandes=async function(clientId){
       <td style="font-weight:700;color:var(--g2)">${(s.totalHT||0).toLocaleString()} F</td>
       <td><span class="badge ${SALE_STATUT_CSS[s.statut]||'b-gr'}">${SALE_STATUT_LABEL[s.statut]||s.statut}</span></td>
       <td style="color:var(--text3);font-size:11px">${PAIE_MODE_LABEL[s.paie]||s.paie||'—'}${s.dateEcheance?`<div style="font-size:10px;color:#5b21b6">Ech. ${s.dateEcheance}</div>`:''}</td>
-      <td style="white-space:nowrap">
       <td style="white-space:nowrap">
         ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'confirmed')" title="Confirmer"><i class="fas fa-check"></i></button> `:''}
         ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
@@ -7728,6 +8064,10 @@ async function restoreSaleLines(lignes) {
 }
 
 async function openSaleModal(id, presetClientId) {
+  if(id){
+    const existing=(await getAll(S.SALES)).find(x=>x.id===id);
+    if(existing?.fneReference){ toast('⛔ Facture certifiée FNE — non modifiable. Émettez un avoir FNE pour toute correction.','err'); return; }
+  }
   var clients = await getAll(S.CLIENTS);
   var flocks  = await getAll(S.FLOCKS);
 
@@ -7881,8 +8221,13 @@ window.changeSaleStatut=async function(id,newStatut){
 };
 
 window.delSale=async(id)=>{
-  if(!confirm('Supprimer cette commande ?')) return;
-  await delRec(S.SALES,id);toast('Commande supprimée');
+  const sales=await getAll(S.SALES);const s=sales.find(x=>x.id===id);
+  if(!s){toast('Commande introuvable','err');return;}
+  if(s.fneReference){toast('⛔ Facture certifiée FNE — suppression interdite. Émettez un avoir FNE à la place.','err');return;}
+  if(!confirm('Supprimer cette commande ?'+((s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?'\nLes mouvements de stock liés (sortie livraison) seront également annulés.':''))) return;
+  const mvtsLies=(await getAll(S.MVTS)).filter(m=>m.ref===s.ref&&m.motif&&m.motif.indexOf('Vente commande')===0);
+  for(const m of mvtsLies) await delRec(S.MVTS,m.id);
+  await delRec(S.SALES,id);toast('Commande supprimée'+(mvtsLies.length?' — '+mvtsLies.length+' mouvement(s) de stock annulé(s)':''));
   await renderCommandes(document.getElementById('contentArea'));
 };
 
@@ -8139,6 +8484,8 @@ async function saveCond(){
   var notes = document.getElementById('condNotes').value.trim();
   var depotSrcId = parseInt(document.getElementById('condDepotSrc').value);
   var depotDestId = parseInt(document.getElementById('condDepotDest').value);
+  if(!depotSrcId||isNaN(depotSrcId)){ toast('⛔ Dépôt de stockage œufs bruts requis','err'); return; }
+  if(!depotDestId||isNaN(depotDestId)){ toast('⛔ Dépôt destination (plateaux) requis','err'); return; }
 
   // Calibres
   var cPetit    = parseInt(document.getElementById('calPetit')?.value)||0;
@@ -8232,6 +8579,7 @@ async function saveCond(){
   // opération saisie ici — plus besoin de la ressaisir dans "Saisie du jour".
   if(flockId) await addRec(S.EGG_PROD,{flockId:flockId,date:date,eggCount:bruts,eggsBroken:casses,mortality:0,operatorId:opId});
 
+  try{
   if(pBruts){
     // Entrée : la collecte du jour (remplace l'ancienne saisie "Ponte du jour" séparée)
     await regMvt({cadre:'conditionnement',type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotSrcId,
@@ -8277,6 +8625,9 @@ async function saveCond(){
     if(pCar && cartons > 0)
       await regMvt({cadre:'conditionnement',type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:depotDestId,
         quantite:cartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:ref,motif:motifBase+' (entree cartons)',date:date,ts:mvtTs++});
+  }
+  }catch(e){
+    toast('⚠ Session enregistrée mais mouvements de stock incomplets : '+e.message+' — vérifier la configuration des produits/dépôts puis corriger via le module Mouvements','err');
   }
 
   // ── Alimentation du jour (optionnelle) ──
@@ -8700,10 +9051,12 @@ async function renderCond(ca){
       <td><span class="badge b-bl">${s.plateaux} plt</span></td>
       <td><span class="badge b-g">${s.cartons} ctn</span></td>
       <td style="font-size:${s.oeufs_bruts>0?(100-(s.oeufs_casses/s.oeufs_bruts*100)).toFixed(1):100}%;color:var(--text3);font-size:11px">${s.oeufs_bruts>0?(100-s.oeufs_casses/s.oeufs_bruts*100).toFixed(1):100}%</td>
+      <td style="font-weight:700;color:#166534">${Math.round(valeurCondSession(s)).toLocaleString('fr-FR')} F</td>
       <td><button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="editCond(${s.id})" title="Modifier cette session"><i class="fas fa-pen"></i></button><button class="btn-del" onclick="delCond(${s.id})" title="Annuler cette session"><i class="fas fa-trash"></i></button></td>
     </tr>`;
   }).join('');
 
+  const totValeur = sorted.reduce((a,s)=>a+valeurCondSession(s),0);
   const totBruts = sorted.reduce((a,s)=>a+s.oeufs_bruts,0);
   const totCar   = sorted.reduce((a,s)=>a+s.cartons,0);
   const totPlt   = sorted.reduce((a,s)=>a+s.plateaux,0);
@@ -8720,6 +9073,8 @@ async function renderCond(ca){
           <option value="">Tous les lots</option>${lotSelect}
         </select>
         <button class="btn btn-gh btn-sm" onclick="openCondBomListModal()"><i class="fas fa-puzzle-piece"></i> Nomenclatures (BOM)</button>
+        <button class="btn btn-gh btn-sm" onclick="previewEtat('prodcond')"><i class="fas fa-eye"></i> Aperçu rapport</button>
+        <button class="btn btn-gh btn-sm" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
         <button class="btn btn-p btn-sm" onclick="openCondModal()"><i class="fas fa-plus"></i> Nouvelle session</button>
       </div>
     </div>
@@ -8732,6 +9087,7 @@ async function renderCond(ca){
         <div class="kpi kpi-g" style="border-left-color:var(--purple)"><div class="kpi-lbl">Cartons</div><div class="kpi-val">${qCar}</div><div class="kpi-sub">= ${qCar*360} œufs</div></div>
         <div class="kpi kpi-b"><div class="kpi-lbl">Sessions totales</div><div class="kpi-val">${sorted.length}</div><div class="kpi-sub">${totBruts.toLocaleString()} œufs traités</div></div>
         <div class="kpi kpi-g"><div class="kpi-lbl">Production cumulée</div><div class="kpi-val">${totCar}</div><div class="kpi-sub">cartons · ${totPlt} plateaux</div></div>
+        <div class="kpi kpi-g" style="border-left-color:#166534"><div class="kpi-lbl">💰 Valeur cumulée</div><div class="kpi-val">${Math.round(totValeur/1000)}K</div><div class="kpi-sub">FCFA · tarifs calibrés</div></div>
       </div>
 
       <!-- RÈGLES MÉTIER -->
@@ -8750,7 +9106,7 @@ async function renderCond(ca){
         ${sorted.length > 0 ? `
         <div class="card-bd tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>Date</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Rendement</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Plateaux</th><th>Cartons</th><th>Rendement</th><th>Valeur</th><th></th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>` : `
@@ -14567,6 +14923,20 @@ async function collectApprovisionnementData(dateMin, dateMax){
   return { bcsP, recsP, montantCommande, montantReceptionne, bcEnAttente, bcEnRetard, delaiMoyen, topFournisseurs, topProduits, fourns };
 }
 
+// ── Valorisation FCFA d'une session de conditionnement — basée sur CALIBRE_TARIFS.
+// prixCarton = 12×prixPlateau pour chaque calibre (cohérence vérifiée) : valoriser au
+// plateau suffit donc, que les plateaux soient bundlés en carton ou non.
+function valeurCondSession(c){
+  const calDetail = (c.cal_petit||0)+(c.cal_moyen||0)+(c.cal_gros||0)+(c.cal_tres_gros||0);
+  if(calDetail>0){
+    return (c.plt_petit||0)*CALIBRE_TARIFS.petit.prixPlateau
+      +(c.plt_moyen||0)*CALIBRE_TARIFS.moyen.prixPlateau
+      +(c.plt_gros||0)*CALIBRE_TARIFS.gros.prixPlateau
+      +(c.plt_tres_gros||0)*CALIBRE_TARIFS.tresGros.prixPlateau;
+  }
+  // Session sans détail calibre : valorisation estimée au tarif moyen (Moyen)
+  return (c.plateaux||0)*CALIBRE_TARIFS.moyen.prixPlateau;
+}
 // ── Collecte : Production vs Conditionnement, groupée par Bâtiment > Ligne ──
 async function collectProdCondData(dateMin, dateMax, lotId=''){
   const [flocks, eggProd, mortalite, feeds, waters, cond, buildings, lines] = await Promise.all([
@@ -14588,24 +14958,25 @@ async function collectProdCondData(dateMin, dateMax, lotId=''){
     const nets    = condF.reduce((a,c)=>a+(c.oeufs_nets||0),0);
     const plateaux= condF.reduce((a,c)=>a+(c.plateaux||0),0);
     const cartons = condF.reduce((a,c)=>a+(c.cartons||0),0);
+    const valeurFCFA = condF.reduce((a,c)=>a+valeurCondSession(c),0);
     const tauxCond = oeufs>0 ? (nets/oeufs*100) : 0;
     const tauxCasse = bruts>0 ? (casses/bruts*100) : 0;
     const ecart = oeufs - bruts; // œufs produits mais pas encore engagés en conditionnement sur la période (peut être négatif si on conditionne un stock antérieur)
     const batimentNom = buildings.find(b=>b.id===f.buildingId)?.nom || f.line || 'Sans bâtiment';
     const ligneNom = lines.find(l=>l.id===f.lineId)?.nom || f.ligne || 'Sans ligne';
     return { id:f.id, nom:f.nom, batiment:batimentNom, ligne:ligneNom,
-      oeufs, morts, alimKg, eauL, bruts, casses, nets, plateaux, cartons, tauxCond, tauxCasse, ecart };
+      oeufs, morts, alimKg, eauL, bruts, casses, nets, plateaux, cartons, valeurFCFA, tauxCond, tauxCasse, ecart };
   });
 
   // Regroupement Bâtiment > Ligne (un bâtiment peut contenir plusieurs lignes)
   const parBatiment = {};
   batLots.forEach(b=>{
-    if(!parBatiment[b.batiment]) parBatiment[b.batiment] = { batiment:b.batiment, parLigne:{}, oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0 };
+    if(!parBatiment[b.batiment]) parBatiment[b.batiment] = { batiment:b.batiment, parLigne:{}, oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0, valeurFCFA:0 };
     const bg = parBatiment[b.batiment];
-    if(!bg.parLigne[b.ligne]) bg.parLigne[b.ligne] = { ligne:b.ligne, lots:[], oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0 };
+    if(!bg.parLigne[b.ligne]) bg.parLigne[b.ligne] = { ligne:b.ligne, lots:[], oeufs:0, morts:0, alimKg:0, eauL:0, bruts:0, casses:0, nets:0, plateaux:0, cartons:0, valeurFCFA:0 };
     const lg = bg.parLigne[b.ligne];
     lg.lots.push(b);
-    [bg,lg].forEach(g=>{ g.oeufs+=b.oeufs; g.morts+=b.morts; g.alimKg+=b.alimKg; g.eauL+=b.eauL; g.bruts+=b.bruts; g.casses+=b.casses; g.nets+=b.nets; g.plateaux+=b.plateaux; g.cartons+=b.cartons; });
+    [bg,lg].forEach(g=>{ g.oeufs+=b.oeufs; g.morts+=b.morts; g.alimKg+=b.alimKg; g.eauL+=b.eauL; g.bruts+=b.bruts; g.casses+=b.casses; g.nets+=b.nets; g.plateaux+=b.plateaux; g.cartons+=b.cartons; g.valeurFCFA+=b.valeurFCFA; });
   });
   const withRates = g => ({ ...g, tauxCond: g.oeufs>0?(g.nets/g.oeufs*100):0, tauxCasse: g.bruts>0?(g.casses/g.bruts*100):0 });
   const batiments = Object.values(parBatiment).map(bg=>({
@@ -14615,8 +14986,8 @@ async function collectProdCondData(dateMin, dateMax, lotId=''){
 
   const total = batLots.reduce((a,b)=>({
     oeufs:a.oeufs+b.oeufs, morts:a.morts+b.morts, alimKg:a.alimKg+b.alimKg, eauL:a.eauL+b.eauL,
-    bruts:a.bruts+b.bruts, casses:a.casses+b.casses, nets:a.nets+b.nets, plateaux:a.plateaux+b.plateaux, cartons:a.cartons+b.cartons
-  }), {oeufs:0,morts:0,alimKg:0,eauL:0,bruts:0,casses:0,nets:0,plateaux:0,cartons:0});
+    bruts:a.bruts+b.bruts, casses:a.casses+b.casses, nets:a.nets+b.nets, plateaux:a.plateaux+b.plateaux, cartons:a.cartons+b.cartons, valeurFCFA:a.valeurFCFA+b.valeurFCFA
+  }), {oeufs:0,morts:0,alimKg:0,eauL:0,bruts:0,casses:0,nets:0,plateaux:0,cartons:0,valeurFCFA:0});
   total.tauxCond = total.oeufs>0 ? (total.nets/total.oeufs*100) : 0;
   total.tauxCasse = total.bruts>0 ? (total.casses/total.bruts*100) : 0;
 
@@ -14638,6 +15009,7 @@ function buildCorpsProdCond(data, cfg){
         <td style="text-align:right">${b.cartons}</td>
         <td style="text-align:right;color:${b.tauxCasse>5?'#c1121f':'#666'}">${b.tauxCasse.toFixed(1)}%</td>
         <td style="text-align:right"><span class="${b.tauxCond>=90?'badge-ok':b.tauxCond>=70?'badge-warn':'badge-err'}">${b.tauxCond.toFixed(0)}%</span></td>
+        <td style="text-align:right;font-weight:700;color:#166534">${Math.round(b.valeurFCFA).toLocaleString('fr-FR')}</td>
       </tr>`;
   const totalRowHtml = (label,g) => `
       <tr class="total-row">
@@ -14651,12 +15023,13 @@ function buildCorpsProdCond(data, cfg){
         <td style="text-align:right">${g.cartons}</td>
         <td style="text-align:right">${g.tauxCasse.toFixed(1)}%</td>
         <td style="text-align:right">${g.tauxCond.toFixed(0)}%</td>
+        <td style="text-align:right;color:#166534">${Math.round(g.valeurFCFA).toLocaleString('fr-FR')}</td>
       </tr>`;
   const theadHtml = `<thead><tr>
         <th>Lot</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th>
         <th style="text-align:right">Aliment</th><th style="text-align:right">Eau</th>
         <th style="text-align:right">Œufs cond.</th><th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th>
-        <th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th>
+        <th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th><th style="text-align:right">Valeur (FCFA)</th>
       </tr></thead>`;
 
   const batBlocks = data.batiments.map(bg=>{
@@ -14679,6 +15052,7 @@ function buildCorpsProdCond(data, cfg){
     <div class="kpi-box"><div class="kpi-val">${t.nets.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Œufs conditionnés</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCond>=90?'#1a5c2a':t.tauxCond>=70?'#92400e':'#c1121f'}">${t.tauxCond.toFixed(0)}%</div><div class="kpi-lbl">Taux conditionné</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCasse>5?'#c1121f':'#1a5c2a'}">${t.tauxCasse.toFixed(1)}%</div><div class="kpi-lbl">Taux de casse</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${Math.round(t.valeurFCFA).toLocaleString('fr-FR')}</div><div class="kpi-lbl">Valeur produite (FCFA)</div></div>
   </div>
   ${batBlocks}
   <div class="section">
@@ -14692,11 +15066,14 @@ function buildCorpsProdCond(data, cfg){
       <tr><td>Plateaux / Cartons obtenus</td><td style="text-align:right">${t.plateaux.toLocaleString('fr-FR')} plateaux / ${t.cartons.toLocaleString('fr-FR')} cartons</td></tr>
       <tr><td>Mortalité totale</td><td style="text-align:right;color:#c1121f">${t.morts}</td></tr>
       <tr><td>Aliment consommé / Eau consommée</td><td style="text-align:right">${t.alimKg.toLocaleString('fr-FR')} kg / ${t.eauL.toLocaleString('fr-FR')} L</td></tr>
+      <tr><td><strong>Valeur totale produite (tarifs calibrés)</strong></td><td style="text-align:right;font-weight:800;color:#166534">${Math.round(t.valeurFCFA).toLocaleString('fr-FR')} FCFA</td></tr>
+      <tr><td>Valeur moyenne par œuf net conditionné</td><td style="text-align:right">${t.nets>0?Math.round(t.valeurFCFA/t.nets).toLocaleString('fr-FR'):0} FCFA</td></tr>
     </tbody></table>
     <p style="font-size:10px;color:#888;margin-top:4px">
       Écart = œufs produits − œufs entrés en conditionnement sur la même période (stock intermédiaire non encore conditionné, ou conditionnement d'un stock antérieur si négatif) :
       <strong style="color:${(t.oeufs-t.bruts)<0?'#c1121f':'#1a5c2a'}">${(t.oeufs-t.bruts).toLocaleString('fr-FR')} œufs</strong>
     </p>
+    <p style="font-size:10px;color:#888;margin-top:2px">Valorisation calculée aux tarifs calibrés du barème plateau (Paramétrage). Sessions sans détail de calibre valorisées au tarif "Moyen" par défaut — indicatif.</p>
   </div>`;
 }
 
