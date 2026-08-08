@@ -1347,6 +1347,11 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
       <option value="entree">📥 Entrée</option><option value="sortie">📤 Sortie</option>
       <option value="transfert">🔄 Transfert</option><option value="inventaire">📋 Inventaire</option>
     </select></div>
+    <div class="fg"><label>Cadre logistique *</label><select id="mvtCadre">
+      <option value="manuel">Saisie manuelle</option><option value="ajustement">Ajustement/correction</option>
+      <option value="inventaire">Inventaire physique</option><option value="transfert">Transfert inter-dépôt</option>
+      <option value="reception">Réception hors BC</option><option value="vente">Vente/Livraison</option>
+    </select></div>
     <div class="fg"><label>Date</label><input id="mvtDate" type="date"></div>
     <div class="fg"><label>Produit *</label><select id="mvtProd" onchange="updateMvtStockHint()"></select></div>
     <div class="fg"><label>Quantité *</label><input id="mvtQty" type="number" step="0.01" placeholder="0"></div>
@@ -1356,12 +1361,19 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>Fournisseur</label><select id="mvtFourn"><option value="">—</option></select></div>
     <div class="fg"><label>Référence</label><input id="mvtRef" placeholder="optionnel"></div>
     <div class="fg"><label>Prix unitaire FCFA</label><input id="mvtPrix" type="number" placeholder="0"></div>
-    <div class="fg fg-full"><label>Motif</label><textarea id="mvtMotif" placeholder="optionnel"></textarea></div>
+    <div class="fg fg-full"><label>Motif *</label><textarea id="mvtMotif" placeholder="obligatoire — justification du mouvement"></textarea></div>
   </div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mMvt')">Annuler</button>
     <button class="btn btn-p" onclick="saveMvt()"><i class="fas fa-check"></i> Valider</button>
   </div>
+</div></div>
+
+<!-- MOUVEMENT APERCU -->
+<div class="overlay" id="mMvtApercu">
+<div class="modal" style="max-width:560px">
+  <div id="mMvtApercuBody"></div>
+  <div class="modal-footer"><button class="btn btn-s" onclick="closeOverlay('mMvtApercu')">Fermer</button></div>
 </div></div>
 
 <!-- DEPOT MODAL -->
@@ -2725,22 +2737,82 @@ function stockEnAlerte(p,qty){
 }
 
 // ════════════════════════════════════════════════════════
-//  STOCK MOVEMENT HELPER (from lot operations)
+//  MOTEUR CENTRAL MOUVEMENTS STOCK — point d'écriture unique
+//  Tout mouvement (manuel ou automatique) passe par regMvt().
+//  Garantit : numéro de pièce, cadre logistique, auteur, contrôle disponibilité.
 // ════════════════════════════════════════════════════════
-async function autoMvt(type,prodNom,categorie,qty,depotType,date,motif){
+const MVT_CADRES={
+  manuel:'Saisie manuelle',reception:'Réception fournisseur',vente:'Vente/Livraison',
+  fabrication:'Fabrication aliment',conditionnement:'Conditionnement œufs',
+  alimentation:'Alimentation lot',vaccination:'Vaccination/Prophylaxie',abattage:'Abattage',
+  collecte:'Collecte ponte',inventaire:'Inventaire physique',transfert:'Transfert inter-dépôt',
+  ajustement:'Ajustement/correction'
+};
+async function mvtNumero(date){
+  const d=(date||new Date().toISOString().slice(0,10)).replace(/-/g,'');
+  const mvts=await getAll(S.MVTS);
+  const n=mvts.filter(m=>m.piece&&m.piece.startsWith('MVT-'+d)).length+1;
+  return `MVT-${d}-${String(n).padStart(3,'0')}`;
+}
+// Écriture atomique + contrôlée d'un mouvement. force=true (défaut) préserve le comportement
+// des flux métier automatiques ; force=false bloque toute sortie/transfert en stock insuffisant
+// (utilisé par la saisie manuelle, seul point où un opérateur peut créer une incohérence).
+async function regMvt(data){
+  const{type,produitId,depotSrcId=null,depotDestId=null,quantite,cadre='manuel',force=true}=data;
+  if(!produitId||!quantite||quantite<=0) throw new Error('Produit et quantité requis');
+  if(!['entree','sortie','transfert','inventaire'].includes(type)) throw new Error('Type de mouvement invalide');
+  if((type==='sortie'||type==='transfert')&&!depotSrcId) throw new Error('Dépôt source requis');
+  if((type==='entree'||type==='transfert'||type==='inventaire')&&!depotDestId) throw new Error('Dépôt destination requis');
+  if(type==='transfert'&&depotSrcId===depotDestId) throw new Error('Dépôt source et destination identiques');
+  const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===produitId);
+  if(!p) throw new Error('Produit introuvable');
+  if((type==='sortie'||type==='transfert')&&!force){
+    const bal=await getBalance();const dispo=bal[`${produitId}_${depotSrcId}`]||0;
+    if(quantite>dispo+0.0001) throw new Error(`Stock insuffisant dans ce dépôt (disponible : ${dispo.toFixed(2)} ${p.unite||''})`);
+  }
+  const date=data.date||new Date().toISOString().slice(0,10);
+  const piece=data.piece||await mvtNumero(date);
+  const rec=Object.assign({},data,{
+    unite:data.unite||p.unite||'',prixUnit:data.prixUnit||p.prix||0,date,
+    cadre,cadreLabel:MVT_CADRES[cadre]||cadre,piece,
+    auteurId:currentUser?.id||null,auteur:currentUser?.nom||'Système',
+    ts:data.ts||Date.now()
+  });
+  delete rec.force;
+  const id=await addRec(S.MVTS,rec);
+  return Object.assign({id},rec);
+}
+// Modifie un mouvement existant : annule l'effet précédent puis recrée avec les nouvelles
+// valeurs (même numéro de pièce conservé). Rollback automatique si la nouvelle saisie est invalide.
+async function modMvt(id,patch){
+  const mvts=await getAll(S.MVTS);const old=mvts.find(m=>m.id===id);
+  if(!old) throw new Error('Mouvement introuvable');
+  await delRec(S.MVTS,id);
+  try{
+    const rec=await regMvt(Object.assign({},old,patch,{piece:old.piece,force:patch.force!==undefined?patch.force:false}));
+    return rec;
+  }catch(e){ await addRec(S.MVTS,Object.assign({},old,{id:undefined})); throw e; }
+}
+// Supprime définitivement un mouvement (l'effet sur le solde disparaît immédiatement).
+async function delMvt(id){
+  const mvts=await getAll(S.MVTS);const m=mvts.find(x=>x.id===id);
+  if(!m) throw new Error('Mouvement introuvable');
+  await delRec(S.MVTS,id);
+  return m;
+}
+// Compat ascendante — redirige vers le moteur central (conserve la traçabilité pour les flux existants).
+async function autoMvt(type,prodNom,categorie,qty,depotType,date,motif,cadre='manuel'){
   const prods=await getAll(S.PRODUITS);
   const prod=prods.find(p=>p.nom===prodNom)||prods.find(p=>p.categorie===categorie);
-  if(!prod) return;
+  if(!prod) return null;
   const deps=await getAll(S.DEPOTS);
   const depot=deps.find(d=>d.type===depotType)||deps[0];
-  if(!depot) return;
-  await addRec(S.MVTS,{
-    type,produitId:prod.id,
-    depotSrcId:type==='sortie'?depot.id:null,
-    depotDestId:type==='entree'?depot.id:null,
-    quantite:qty,unite:prod.unite,prixUnit:prod.prix||0,
-    fournId:null,ref:'AUTO',motif,date,ts:Date.now()
-  });
+  if(!depot) return null;
+  try{
+    return await regMvt({type,produitId:prod.id,depotSrcId:type==='sortie'?depot.id:null,
+      depotDestId:type==='entree'?depot.id:null,quantite:qty,unite:prod.unite,prixUnit:prod.prix||0,
+      ref:'AUTO',motif,date,cadre});
+  }catch(e){ toast('⚠ '+e.message,'err'); return null; }
 }
 
 // ════════════════════════════════════════════════════════
@@ -5050,7 +5122,7 @@ window.saveWsSaisie=async function(type){
     if(eggs>0&&defDep){
       var prods=await getAll(S.PRODUITS);
       var pBruts=findCondProduit(prods,'bruts');
-      if(pBruts) await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:defDep.id,quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,fournId:null,ref:'AUTO',motif:'Collecte S'+getSemaineNum(lot.startDate,date)+' - '+lot.nom,date,ts:Date.now()});
+      if(pBruts) await regMvt({cadre:'collecte',type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:defDep.id,quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,fournId:null,ref:'AUTO',motif:'Collecte S'+getSemaineNum(lot.startDate,date)+' - '+lot.nom,date,ts:Date.now()});
     }
     var nbSem=getSemaineNum(lot.startDate,date);
     toast('Ponte S'+nbSem+' - '+eggs+' oeufs ('+date+')');
@@ -5270,7 +5342,7 @@ window.savePonte=async function(){
   if(eggs>0&&depotDestId){
     var prods=await getAll(S.PRODUITS);
     var pBruts=findCondProduit(prods,'bruts');
-    if(pBruts) await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
+    if(pBruts) await regMvt({cadre:'collecte',type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
       quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,
       fournId:null,ref:'AUTO',motif:'Collecte lot '+lot.nom,date:date,ts:Date.now()});
   }
@@ -5302,7 +5374,7 @@ window.saveAbattage=async()=>{
         depotAffecteId:depotViande.id,unite:'kg',prix:0,seuil:0,ref:'VIA-AUTO'});
       pViande={id:newId};
     }
-    await addRec(S.MVTS,{type:'entree',produitId:pViande.id,depotSrcId:null,depotDestId:depotViande.id,
+    await regMvt({cadre:'abattage',type:'entree',produitId:pViande.id,depotSrcId:null,depotDestId:depotViande.id,
       quantite:kg,unite:'kg',prixUnit:pViande.prix||0,fournId:null,ref:'AUTO',
       motif:`Abattage lot ${lot.nom||lot.id}`,date,ts:Date.now()});
   }
@@ -5316,7 +5388,7 @@ window.saveFeed=async()=>{
   await addRec(S.FEEDING,{flockId:lot.id,date,quantityKg:kg,feedType:type,operatorId:getSjResponsableId()});
   // Auto-stock: sortie aliment
   const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.nom===type);
-  if(p){const deps=await getAll(S.DEPOTS);const d=deps.find(x=>x.type==='aliment')||deps[0];if(d) await addRec(S.MVTS,{type:'sortie',produitId:p.id,depotSrcId:d.id,depotDestId:null,quantite:kg,unite:'kg',prixUnit:p.prix||0,fournId:null,ref:'AUTO',motif:`Alimentation lot ${lot.nom}`,date,ts:Date.now()});}
+  if(p){const deps=await getAll(S.DEPOTS);const d=deps.find(x=>x.type==='aliment')||deps[0];if(d) await regMvt({cadre:'alimentation',type:'sortie',produitId:p.id,depotSrcId:d.id,depotDestId:null,quantite:kg,unite:'kg',prixUnit:p.prix||0,fournId:null,ref:'AUTO',motif:`Alimentation lot ${lot.nom}`,date,ts:Date.now()});}
   toast(`✓ Aliment enregistré — ${kg}kg (stock mis à jour)`);await refreshLot();
 };
 window.saveWater=async()=>{
@@ -5842,7 +5914,7 @@ window.resetNutrition=async function(type){
   // Auto-stock sortie médicament
   if(prodId&&qty>0&&depotId){
     const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===prodId);
-    if(p) await addRec(S.MVTS,{type:'sortie',produitId:prodId,depotSrcId:depotId,depotDestId:null,quantite:qty,unite:p.unite,prixUnit:p.prix||0,fournId:null,ref:'AUTO',motif:`Vaccination: ${t.action} lot ${window._lot?.nom||''}`,date,ts:Date.now()});
+    if(p) await regMvt({cadre:'vaccination',type:'sortie',produitId:prodId,depotSrcId:depotId,depotDestId:null,quantite:qty,unite:p.unite,prixUnit:p.prix||0,fournId:null,ref:'AUTO',motif:`Vaccination: ${t.action} lot ${window._lot?.nom||''}`,date,ts:Date.now()});
   }
   closeOverlay('mVacc');toast('✓ Vaccination enregistrée (stock mis à jour)');await refreshLot();
 };
@@ -6686,8 +6758,13 @@ window.msgCreerGroupe=async function(){
 // ══ STOCKS ══
 let stocksCharts={cat:null,dep:null};
 async function renderStocks(ca){
-  const[prods,deps]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS)]);
+  const[prods,deps,mvts]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.MVTS)]);
   const stockTot=await getStockTotal();const bal=await getBalance();
+  // ── Indicateurs logistiques 30 derniers jours (pilotage des flux) ──
+  const j30=Date.now()-30*86400000;
+  const mvts30=mvts.filter(m=>m.ts>=j30);
+  let valEntrees30=0,valSorties30=0;
+  for(const m of mvts30){const v=(m.prixUnit||0)*m.quantite;if(m.type==='entree')valEntrees30+=v;else if(m.type==='sortie')valSorties30+=v;}
   const cats=['aliment','medicament','oeuf','viande','materiel','intrant'];
   const catL={aliment:'🌾 Aliment',medicament:'💊 Médicaments',oeuf:'🥚 Œufs',viande:'🍗 Viande',materiel:'🔧 Matériel',intrant:'📦 Intrants'};
   const catLSimple={aliment:'Aliment',medicament:'Médicaments',oeuf:'Œufs',viande:'Viande',materiel:'Matériel',intrant:'Intrants'};
@@ -6715,6 +6792,12 @@ async function renderStocks(ca){
       <div class="kpi ${critiques.length>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">⚠️ Articles critiques</div><div class="kpi-val">${critiques.length}</div><div class="kpi-sub">Sous le seuil d'alerte</div></div>
       <div class="kpi ${faibles.length>0?'kpi-a':'kpi-g'}"><div class="kpi-lbl">🟡 Stock faible</div><div class="kpi-val">${faibles.length}</div><div class="kpi-sub">Sous 1,5× le seuil</div></div>
       <div class="kpi ${ruptures.length>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">🚫 Ruptures</div><div class="kpi-val">${ruptures.length}</div><div class="kpi-sub">Stock à zéro ou négatif</div></div>
+    </div>
+    <div class="g4">
+      <div class="kpi kpi-g"><div class="kpi-lbl">📥 Entrées (30j)</div><div class="kpi-val">${Math.round(valEntrees30/1000)}K</div><div class="kpi-sub">FCFA</div></div>
+      <div class="kpi kpi-r"><div class="kpi-lbl">📤 Sorties (30j)</div><div class="kpi-val">${Math.round(valSorties30/1000)}K</div><div class="kpi-sub">FCFA</div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">🔄 Rotation stock</div><div class="kpi-val">${valeurTotale>0?(valSorties30/valeurTotale).toFixed(2):'0'}</div><div class="kpi-sub">Sorties 30j / valeur stock</div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">📋 Mouvements (30j)</div><div class="kpi-val">${mvts30.length}</div><div class="kpi-sub"><a href="#" onclick="goTo('mvts');return false" style="color:var(--g2)">Voir le journal →</a></div></div>
     </div>
     ${topAlertes.length?`<div class="card" style="border:1.5px solid #fcd34d">
       <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Articles à surveiller (${critiques.length+faibles.length})</span></div>
@@ -6759,34 +6842,50 @@ async function renderStocks(ca){
 }
 
 // ══ MOUVEMENTS ══
+let mvtEditId=null;
 async function renderMvts(ca,p=1){
   const[mvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
   const sorted=mvts.slice().sort((a,b)=>b.ts-a.ts);const PAGE=15;const total=sorted.length;const pages=Math.max(1,Math.ceil(total/PAGE));
   const slice=sorted.slice((p-1)*PAGE,p*PAGE);
   const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
   const typeCls={entree:'b-g',sortie:'b-r',transfert:'b-bl',inventaire:'b-gr'};
-  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);return `<tr><td style="color:var(--text3)">${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span></td><td><strong>${pr?pr.nom:'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+ds.nom.split(' ').slice(0,2).join(' '):''}${dd?' → '+dd.nom.split(' ').slice(0,2).join(' '):''}</td><td style="font-size:11px;color:var(--text3)">${f?f.nom:'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${m.motif||'—'}</td></tr>`;}).join('');
+  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> <button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}</td></tr>`;}).join('');
   const pagerBtns=[`<button ${p<=1?'disabled':''} onclick="mvtPage=${p-1};renderMvts(document.getElementById('contentArea'),${p-1})">‹</button>`,...Array.from({length:Math.min(pages,5)},(_,i)=>Math.max(1,p-2)+i).filter(n=>n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="mvtPage=${n};renderMvts(document.getElementById('contentArea'),${n})">${n}</button>`),`<button ${p>=pages?'disabled':''} onclick="mvtPage=${p+1};renderMvts(document.getElementById('contentArea'),${p+1})">›</button>`].join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-right-left" style="color:var(--g2)"></i> Mouvements de stock</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="exportMvtCSV()"><i class="fas fa-download"></i> CSV</button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div><div class="stock-page"><div class="card"><div class="card-hd">Tous les mouvements (${total})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Type</th><th>Produit</th><th>Quantité</th><th>Dépôt</th><th>Fournisseur</th><th>Motif</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun mouvement</td></tr>'}</tbody></table><div class="pager">${pagerBtns}<span style="font-size:11px;color:var(--text3)">${total} enregistrements</span></div></div></div></div>`;
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-right-left" style="color:var(--g2)"></i> Mouvements de stock</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="exportMvtCSV()"><i class="fas fa-download"></i> CSV</button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div><div class="stock-page"><div class="card"><div class="card-hd">Tous les mouvements (${total})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Type/Cadre</th><th>Produit</th><th>Quantité</th><th>Dépôt</th><th>Fournisseur</th><th>Motif</th><th>Auteur</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun mouvement</td></tr>'}</tbody></table><div class="pager">${pagerBtns}<span style="font-size:11px;color:var(--text3)">${total} enregistrements</span></div></div></div></div>`;
 }
 
-async function openMvtModal(type='entree',prodId=null,depotId=null){
+async function openMvtModal(type='entree',prodId=null,depotId=null,editId=null){
   const[prods,deps,fourns]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
-  document.getElementById('mvtType').value=type;document.getElementById('mvtDate').value=new Date().toISOString().slice(0,10);document.getElementById('mvtQty').value='';document.getElementById('mvtRef').value='';document.getElementById('mvtMotif').value='';document.getElementById('mvtPrix').value='';
-  document.getElementById('mvtProd').innerHTML=prods.map(p=>`<option value="${p.id}" ${p.id===prodId?'selected':''}>${p.nom} (${p.unite})</option>`).join('');
-  const depOpts=deps.map(d=>`<option value="${d.id}" ${d.id===depotId?'selected':''}>${d.nom}</option>`).join('');
+  mvtEditId=editId;
+  let m=null;
+  if(editId){ const mvts=await getAll(S.MVTS); m=mvts.find(x=>x.id===editId); if(!m){toast('Mouvement introuvable','err');return;} }
+  document.getElementById('mMvtTitle').textContent=editId?`Modifier mouvement — ${m.piece||''}`:'Nouveau mouvement';
+  document.getElementById('mvtType').value=m?m.type:type;
+  document.getElementById('mvtCadre').value=m?(m.cadre||'manuel'):'manuel';
+  document.getElementById('mvtDate').value=m?m.date:new Date().toISOString().slice(0,10);
+  document.getElementById('mvtQty').value=m?m.quantite:'';
+  document.getElementById('mvtRef').value=m?(m.ref||''):'';
+  document.getElementById('mvtMotif').value=m?(m.motif||''):'';
+  document.getElementById('mvtPrix').value=m?(m.prixUnit||''):'';
+  document.getElementById('mvtProd').innerHTML=prods.map(p=>`<option value="${p.id}" ${p.id===(m?m.produitId:prodId)?'selected':''}>${esc(p.nom)} (${p.unite})</option>`).join('');
+  const depOpts=deps.map(d=>`<option value="${d.id}">${esc(d.nom)}</option>`).join('');
   document.getElementById('mvtSrc').innerHTML=depOpts;document.getElementById('mvtDest').innerHTML=depOpts;
-  // Transfert : présélectionner une destination différente de la source pour éviter
-  // un transfert dépôt→lui-même passé inaperçu (les deux listes étaient identiques par défaut).
-  if(type==='transfert' && deps.length>1){
-    const srcId = depotId || deps[0].id;
-    const destCandidate = deps.find(d=>d.id!==srcId);
-    if(destCandidate) document.getElementById('mvtDest').value = destCandidate.id;
+  if(m){ document.getElementById('mvtSrc').value=m.depotSrcId||''; document.getElementById('mvtDest').value=m.depotDestId||''; document.getElementById('mvtFourn').value=m.fournId||''; }
+  else{ if(depotId){document.getElementById('mvtSrc').value=depotId;document.getElementById('mvtDest').value=depotId;}
+    // Transfert : présélectionner une destination différente de la source pour éviter
+    // un transfert dépôt→lui-même passé inaperçu (les deux listes étaient identiques par défaut).
+    if(type==='transfert' && deps.length>1){
+      const srcId = depotId || deps[0].id;
+      const destCandidate = deps.find(d=>d.id!==srcId);
+      if(destCandidate) document.getElementById('mvtDest').value = destCandidate.id;
+    }
   }
-  document.getElementById('mvtFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
+  document.getElementById('mvtFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${esc(f.nom)}</option>`).join('');
+  if(m) document.getElementById('mvtFourn').value=m.fournId||'';
   toggleMvtFields();updateMvtStockHint();openOverlay('mMvt');
 }
 window.openMvtModal=openMvtModal;
+window.mvtEdit=(id)=>openMvtModal(undefined,null,null,id);
 function toggleMvtFields(){const t=document.getElementById('mvtType').value;document.getElementById('mvtSrcWrap').style.display=t==='sortie'||t==='transfert'?'flex':'none';document.getElementById('mvtDestWrap').style.display=t==='entree'||t==='transfert'||t==='inventaire'?'flex':'none';updateMvtStockHint();}
 window.toggleMvtFields=toggleMvtFields;
 // Affiche le stock disponible du produit sélectionné dans le dépôt source (sortie/transfert),
@@ -6803,27 +6902,90 @@ window.updateMvtStockHint=async function(){
   hint.textContent='Stock disponible dans ce dépôt : '+q.toFixed(2);
   hint.style.color = q<=0 ? 'var(--red)' : 'var(--text3)';
 };
+// ── Enregistrer / Modifier — point d'entrée unique de la saisie manuelle, contrôlée (force:false) ──
 async function saveMvt(){
-  const type=document.getElementById('mvtType').value;const date=document.getElementById('mvtDate').value;
+  const type=document.getElementById('mvtType').value;const cadre=document.getElementById('mvtCadre').value;const date=document.getElementById('mvtDate').value;
   const prodId=parseInt(document.getElementById('mvtProd').value);const qty=parseFloat(document.getElementById('mvtQty').value);
   const prix=parseFloat(document.getElementById('mvtPrix').value)||0;const ref=document.getElementById('mvtRef').value.trim();const motif=document.getElementById('mvtMotif').value.trim();
   const fournId=document.getElementById('mvtFourn').value?parseInt(document.getElementById('mvtFourn').value):null;
   const src=document.getElementById('mvtSrc').value?parseInt(document.getElementById('mvtSrc').value):null;
   const dest=document.getElementById('mvtDest').value?parseInt(document.getElementById('mvtDest').value):null;
   if(!date||!prodId||!qty||qty<=0){toast('Produit, date, quantité requis','err');return;}
+  if(!motif){toast('Motif obligatoire — cadre logistique et métier','err');return;}
   if(type==='transfert'){
     if(!src||!dest){toast('Dépôt source et destination requis pour un transfert','err');return;}
     if(src===dest){toast('Le dépôt source et destination doivent être différents','err');return;}
   }
-  const prods=await getAll(S.PRODUITS);const p=prods.find(x=>x.id===prodId);
-  await addRec(S.MVTS,{type,produitId:prodId,depotSrcId:src,depotDestId:dest,quantite:qty,unite:p?.unite||'',prixUnit:prix,fournId,ref,motif,date,ts:Date.now()});
-  closeOverlay('mMvt');toast('Mouvement enregistré');await render();
+  const wasEdit=!!mvtEditId;
+  try{
+    if(mvtEditId) await modMvt(mvtEditId,{type,produitId:prodId,depotSrcId:src,depotDestId:dest,quantite:qty,prixUnit:prix,fournId,ref,motif,date,cadre});
+    else await regMvt({type,produitId:prodId,depotSrcId:src,depotDestId:dest,quantite:qty,prixUnit:prix,fournId,ref,motif,date,cadre,force:false});
+  }catch(e){ toast('⛔ '+e.message,'err'); return; }
+  mvtEditId=null;closeOverlay('mMvt');toast(wasEdit?'Mouvement modifié':'Mouvement enregistré');await render();
 }
 window.saveMvt=saveMvt;
+window.mvtDelete=async function(id){
+  if(!confirm('Supprimer définitivement ce mouvement ?\nLe solde de stock sera recalculé immédiatement.')) return;
+  try{ await delMvt(id); toast('Mouvement supprimé'); await render(); }
+  catch(e){ toast('⛔ '+e.message,'err'); }
+};
+// ── Aperçu — fiche mouvement en lecture seule avant impression ──
+window.mvtApercu=async function(id){
+  const[mvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const m=mvts.find(x=>x.id===id); if(!m){toast('Mouvement introuvable','err');return;}
+  const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);
+  const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
+  const rows=[['Pièce',m.piece||'—'],['Type',typeLbl[m.type]||m.type],['Cadre',m.cadreLabel||m.cadre||'—'],['Date',m.date||'—'],
+    ['Produit',pr?pr.nom:'—'],['Quantité',`${m.quantite} ${m.unite||''}`],['Valeur',`${Math.round((m.prixUnit||0)*m.quantite).toLocaleString()} FCFA`],
+    ['Dépôt source',ds?ds.nom:'—'],['Dépôt destination',dd?dd.nom:'—'],['Fournisseur',f?f.nom:'—'],['Référence',m.ref||'—'],
+    ['Motif',m.motif||'—'],['Auteur',m.auteur||'—']];
+  const html=`<div class="card" style="max-width:520px;margin:0 auto"><div class="card-hd"><span>📄 Aperçu mouvement ${esc(m.piece||'')}</span><button class="btn btn-sm btn-p" onclick="mvtPrint(${id})"><i class="fas fa-print"></i> Imprimer</button></div><div class="card-bd">${rows.map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,.06);font-size:12px"><span style="color:var(--text3)">${k}</span><span style="font-weight:600">${esc(String(v))}</span></div>`).join('')}</div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML=html;openOverlay('mMvtApercu');
+};
+// ── Imprimer — bon de mouvement A4 ──
+window.mvtPrint=async function(id){
+  const[mvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const m=mvts.find(x=>x.id===id); if(!m){toast('Mouvement introuvable','err');return;}
+  const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);
+  const cfg=await getExploitationSettings();
+  const typeLbl={entree:'BON D\'ENTRÉE',sortie:'BON DE SORTIE',transfert:'BON DE TRANSFERT',inventaire:'FICHE D\'INVENTAIRE'};
+  const valeur=Math.round((m.prixUnit||0)*m.quantite);
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${m.piece||'Mouvement'}</title><style>
+    body{font-family:Arial,sans-serif;font-size:13px;color:#222;margin:0;padding:20px}
+    .doc{max-width:700px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:16px}
+    .doc-type{font-size:20px;font-weight:800;color:#2d6a4f}
+    .badge-num{background:#2d6a4f;color:#fff;padding:3px 10px;border-radius:5px;font-weight:700;display:inline-block}
+    table{width:100%;border-collapse:collapse;margin:14px 0}
+    td,th{padding:8px 10px;border:1px solid #e5e7eb;font-size:12px;text-align:left}
+    th{background:#f3f4f6}
+    .sig{display:flex;justify-content:space-between;margin-top:50px}
+    .sig div{width:45%;text-align:center;border-top:1px solid #999;padding-top:6px;font-size:11px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">${typeLbl[m.type]||m.type}</div><div class="badge-num">${esc(m.piece||'—')}</div></div></div>
+    <table><tr><th>Date</th><td>${m.date||'—'}</td><th>Cadre</th><td>${esc(m.cadreLabel||m.cadre||'—')}</td></tr>
+    <tr><th>Produit</th><td colspan="3">${esc(pr?pr.nom:'—')}</td></tr>
+    <tr><th>Quantité</th><td>${m.quantite} ${m.unite||''}</td><th>Valeur</th><td>${valeur.toLocaleString()} FCFA</td></tr>
+    <tr><th>Dépôt source</th><td>${esc(ds?ds.nom:'—')}</td><th>Dépôt destination</th><td>${esc(dd?dd.nom:'—')}</td></tr>
+    <tr><th>Fournisseur</th><td>${esc(f?f.nom:'—')}</td><th>Référence</th><td>${esc(m.ref||'—')}</td></tr>
+    <tr><th>Motif</th><td colspan="3">${esc(m.motif||'—')}</td></tr>
+    <tr><th>Enregistré par</th><td colspan="3">${esc(m.auteur||'—')}</td></tr></table>
+    <div class="sig"><div>Responsable dépôt</div><div>Demandeur / Réceptionnaire</div></div>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=900,height=700');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+};
 async function exportMvtCSV(){
-  const[mvts,prods,deps]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS)]);
-  const rows=['Date,Type,Produit,Quantité,Unité,Dépôt src,Dépôt dest,Prix,Valeur,Motif'];
-  for(const m of mvts.slice().sort((a,b)=>b.ts-a.ts)){const p=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);rows.push(`${m.date},${m.type},${p?.nom||''},${m.quantite},${m.unite||''},${ds?.nom||''},${dd?.nom||''},${m.prixUnit||0},${(m.prixUnit||0)*m.quantite},"${m.motif||''}"`);}
+  const[mvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const rows=['Pièce,Date,Cadre,Type,Produit,Quantité,Unité,Dépôt src,Dépôt dest,Fournisseur,Prix,Valeur,Motif,Auteur'];
+  for(const m of mvts.slice().sort((a,b)=>b.ts-a.ts)){const p=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);rows.push(`${m.piece||''},${m.date},${m.cadreLabel||m.cadre||''},${m.type},${p?.nom||''},${m.quantite},${m.unite||''},${ds?.nom||''},${dd?.nom||''},${f?.nom||''},${m.prixUnit||0},${(m.prixUnit||0)*m.quantite},"${(m.motif||'').replace(/"/g,'""')}",${m.auteur||''}`);}
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download='mouvements.csv';a.click();toast('CSV exporté');
 }
 window.exportMvtCSV=exportMvtCSV;
@@ -6979,7 +7141,7 @@ async function saveRecCreate(){
   const newRecId = await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:recLignes,livraisonComplete:allDone,operatorId:currentUser?.id||1,ts:Date.now()});
   // Les mouvements de stock portent désormais recId, pour pouvoir être retrouvés/annulés lors d'une modification ou suppression ultérieure de cette réception
   for(const r of received){
-    await addRec(S.MVTS,{type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:newRecId,ts:Date.now()});
+    await regMvt({cadre:'reception',type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:newRecId,ts:Date.now()});
   }
   closeOverlay('mRec');toast(allDone?'✓ Réception enregistrée — commande soldée, bon de réception archivé':'✓ Réception partielle enregistrée — bon de réception archivé');await renderBCs(apCA());
   // Proposer l'aperçu / impression immédiate du bon de réception (livraison de la commande)
@@ -7066,7 +7228,7 @@ async function saveRecUpdate(){
   const oldMvts=await findRecMvts(rec,bc);
   for(const m of oldMvts) await delRec(S.MVTS,m.id);
   for(const e of newLignes){
-    await addRec(S.MVTS,{type:'entree',produitId:e.produitId,depotDestId:depotId,depotSrcId:null,quantite:e.qteRecue,unite:e.unite,prixUnit:e.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:rec.id,ts:rec.ts||Date.now()});
+    await regMvt({cadre:'reception',type:'entree',produitId:e.produitId,depotDestId:depotId,depotSrcId:null,quantite:e.qteRecue,unite:e.unite,prixUnit:e.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:rec.id,ts:rec.ts||Date.now()});
   }
   await updRec(S.RECS,rec.id,{...rec,date,bl:bl||'',depotId,lignes:newLignes,livraisonComplete:allDone});
   recEditId=null;closeOverlay('mRec');toast('✓ Réception mise à jour — stock et commande resynchronisés');
@@ -7656,7 +7818,7 @@ async function saveSale() {
       var p = prods.find(function(x){ return x.id===l.produitId; });
       var depotId = p ? p.depotAffecteId : null;
       if (depotId) {
-        await addRec(S.MVTS, {
+        await regMvt({cadre:'vente',
           type:'sortie', produitId:l.produitId, depotSrcId:depotId, depotDestId:null,
           quantite:l.qte, unite:l.unite, prixUnit:l.prixUnit, fournId:null,
           ref:ref, motif:'Vente commande '+ref, date:dateLiv||date, ts:Date.now()
@@ -8037,48 +8199,48 @@ async function saveCond(){
 
   if(pBruts){
     // Entrée : la collecte du jour (remplace l'ancienne saisie "Ponte du jour" séparée)
-    await addRec(S.MVTS,{type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotSrcId,
+    await regMvt({cadre:'conditionnement',type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotSrcId,
       quantite:bruts,unite:'unite',prixUnit:pBruts.prix||0,fournId:null,ref:ref,motif:motifBase+' (collecte du jour)',date:date,ts:mvtTs++});
     // Sortie : consommation immédiate pour le conditionnement
-    await addRec(S.MVTS,{type:'sortie',produitId:pBruts.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pBruts.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:bruts,unite:'unite',prixUnit:pBruts.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie bruts)',date:date,ts:mvtTs++});
   }
 
   if(alvSel && alvQte > 0)
-    await addRec(S.MVTS,{type:'sortie',produitId:alvSel.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvSel.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:plateaux*alvQte,unite:'unite',prixUnit:alvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles)',date:date,ts:mvtTs++});
 
   if(alvCouvSel && alvCouvQte > 0 && cartonsProduits > 0)
-    await addRec(S.MVTS,{type:'sortie',produitId:alvCouvSel.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvCouvSel.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:cartonsProduits*alvCouvQte,unite:'unite',prixUnit:alvCouvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles de couverture)',date:date,ts:mvtTs++});
 
   if(pCartonVide && bom.cartonQte > 0 && cartonsProduits > 0)
-    await addRec(S.MVTS,{type:'sortie',produitId:pCartonVide.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pCartonVide.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:cartonsProduits*bom.cartonQte,unite:'unite',prixUnit:pCartonVide.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie cartons vides - BOM)',date:date,ts:mvtTs++});
 
   if(pFicelle && bom.ficelleQte > 0 && cartonsProduits > 0)
-    await addRec(S.MVTS,{type:'sortie',produitId:pFicelle.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pFicelle.id,depotSrcId:depotSrcId,depotDestId:null,
       quantite:cartonsProduits*bom.ficelleQte,unite:'unite',prixUnit:pFicelle.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie ficelles - BOM)',date:date,ts:mvtTs++});
 
   // Mouvements par calibre si calibres saisis
   if(sommeCal > 0){
     // Plateaux par calibre
-    if(pltPetit>0&&pPltPetit) await addRec(S.MVTS,{type:'entree',produitId:pPltPetit.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltPetit,unite:'plateau',prixUnit:CALIBRE_TARIFS.petit.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Petit)',date:date,ts:mvtTs++});
-    if(pltMoyen>0&&pPltMoyen) await addRec(S.MVTS,{type:'entree',produitId:pPltMoyen.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltMoyen,unite:'plateau',prixUnit:CALIBRE_TARIFS.moyen.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Moyen)',date:date,ts:mvtTs++});
-    if(pltGros>0&&pPltGros) await addRec(S.MVTS,{type:'entree',produitId:pPltGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.gros.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Gros)',date:date,ts:mvtTs++});
-    if(pltTresGros>0&&pPltTresGros) await addRec(S.MVTS,{type:'entree',produitId:pPltTresGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltTresGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.tresGros.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Tres Gros)',date:date,ts:mvtTs++});
+    if(pltPetit>0&&pPltPetit) await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltPetit.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltPetit,unite:'plateau',prixUnit:CALIBRE_TARIFS.petit.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Petit)',date:date,ts:mvtTs++});
+    if(pltMoyen>0&&pPltMoyen) await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltMoyen.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltMoyen,unite:'plateau',prixUnit:CALIBRE_TARIFS.moyen.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Moyen)',date:date,ts:mvtTs++});
+    if(pltGros>0&&pPltGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.gros.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Gros)',date:date,ts:mvtTs++});
+    if(pltTresGros>0&&pPltTresGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltTresGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:pltTresGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.tresGros.prixPlateau,fournId:null,ref:ref,motif:motifBase+' (plateaux Tres Gros)',date:date,ts:mvtTs++});
     // Cartons par calibre
-    if(carPetit>0&&pCarPetit) await addRec(S.MVTS,{type:'entree',produitId:pCarPetit.id,depotSrcId:null,depotDestId:depotDestId,quantite:carPetit,unite:'carton',prixUnit:CALIBRE_TARIFS.petit.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Petit)',date:date,ts:mvtTs++});
-    if(carMoyen>0&&pCarMoyen) await addRec(S.MVTS,{type:'entree',produitId:pCarMoyen.id,depotSrcId:null,depotDestId:depotDestId,quantite:carMoyen,unite:'carton',prixUnit:CALIBRE_TARIFS.moyen.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Moyen)',date:date,ts:mvtTs++});
-    if(carGros>0&&pCarGros) await addRec(S.MVTS,{type:'entree',produitId:pCarGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:carGros,unite:'carton',prixUnit:CALIBRE_TARIFS.gros.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Gros)',date:date,ts:mvtTs++});
-    if(carTresGros>0&&pCarTresGros) await addRec(S.MVTS,{type:'entree',produitId:pCarTresGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:carTresGros,unite:'carton',prixUnit:CALIBRE_TARIFS.tresGros.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Tres Gros)',date:date,ts:mvtTs++});
+    if(carPetit>0&&pCarPetit) await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarPetit.id,depotSrcId:null,depotDestId:depotDestId,quantite:carPetit,unite:'carton',prixUnit:CALIBRE_TARIFS.petit.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Petit)',date:date,ts:mvtTs++});
+    if(carMoyen>0&&pCarMoyen) await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarMoyen.id,depotSrcId:null,depotDestId:depotDestId,quantite:carMoyen,unite:'carton',prixUnit:CALIBRE_TARIFS.moyen.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Moyen)',date:date,ts:mvtTs++});
+    if(carGros>0&&pCarGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:carGros,unite:'carton',prixUnit:CALIBRE_TARIFS.gros.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Gros)',date:date,ts:mvtTs++});
+    if(carTresGros>0&&pCarTresGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarTresGros.id,depotSrcId:null,depotDestId:depotDestId,quantite:carTresGros,unite:'carton',prixUnit:CALIBRE_TARIFS.tresGros.prixCarton,fournId:null,ref:ref,motif:motifBase+' (cartons Tres Gros)',date:date,ts:mvtTs++});
   } else {
     // Sans calibre: mouvements generiques
     if(pPlt)
-      await addRec(S.MVTS,{type:'entree',produitId:pPlt.id,depotSrcId:null,depotDestId:depotDestId,
+      await regMvt({cadre:'conditionnement',type:'entree',produitId:pPlt.id,depotSrcId:null,depotDestId:depotDestId,
         quantite:plateaux,unite:'plateau',prixUnit:pPlt.prix||0,fournId:null,ref:ref,motif:motifBase+' (entree plateaux)',date:date,ts:mvtTs++});
     if(pCar && cartons > 0)
-      await addRec(S.MVTS,{type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:depotDestId,
+      await regMvt({cadre:'conditionnement',type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:depotDestId,
         quantite:cartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:ref,motif:motifBase+' (entree cartons)',date:date,ts:mvtTs++});
   }
 
@@ -8090,7 +8252,7 @@ async function saveCond(){
     if(alimKg>0 && alimProdId && flockId){
       var pAlim = prods.find(function(p){return p.id===alimProdId;});
       await addRec(S.FEEDING,{flockId:flockId,date:date,quantityKg:alimKg,feedType:pAlim?pAlim.nom:'Aliment',operatorId:opId});
-      if(pAlim && alimDepotId) await addRec(S.MVTS,{type:'sortie',produitId:pAlim.id,depotSrcId:alimDepotId,depotDestId:null,
+      if(pAlim && alimDepotId) await regMvt({cadre:'alimentation',type:'sortie',produitId:pAlim.id,depotSrcId:alimDepotId,depotDestId:null,
         quantite:alimKg,unite:'kg',prixUnit:pAlim.prix||0,fournId:null,ref:ref,motif:'Alimentation'+nomLot,date:date,ts:mvtTs++});
     }
   }
@@ -8118,7 +8280,7 @@ async function saveCond(){
       if(pt) await updRec(S.PROPHY,prophyTaskId,Object.assign({},pt,{realizedDate:date,realizedProduitId:prophyProdId,realizedQty:prophyQty}));
       if(prophyProdId && prophyQty>0 && prophyDepotId){
         var pMed = prods.find(function(p){return p.id===prophyProdId;});
-        if(pMed) await addRec(S.MVTS,{type:'sortie',produitId:pMed.id,depotSrcId:prophyDepotId,depotDestId:null,
+        if(pMed) await regMvt({cadre:'vaccination',type:'sortie',produitId:pMed.id,depotSrcId:prophyDepotId,depotDestId:null,
           quantite:prophyQty,unite:pMed.unite||'',prixUnit:pMed.prix||0,fournId:null,ref:ref,motif:'Prophylaxie: '+(pt?pt.action:'')+nomLot,date:date,ts:mvtTs++});
       }
     }
@@ -10623,7 +10785,7 @@ window.saveReforme = async function() {
         });
         pViande = { id: newId };
       }
-      await addRec(S.MVTS, {
+      await regMvt({cadre:'abattage',
         type: 'entree', produitId: pViande.id, depotSrcId: null, depotDestId: depotViandeId,
         quantite: Math.max(0, poidsCarcasse - pertesSanit), unite: 'kg', prixUnit: prixCarcasse || 0,
         fournId: null, ref: ref || 'AUTO', motif: `Abattage lot ${window._lot?.nom||flockId}`,
@@ -13405,8 +13567,9 @@ window.saveOF=async function(statut){
     for(const ig of (r?.ingredients||[])){
       if(!ig.produitId||!ig.qte)continue;
       const qConso=Math.round(ig.qte*factor*100)/100;
-      await addRec(S.MVTS,{
-        type:'sortie',produitId:ig.produitId,depotSrcId:null,depotDestId:null,
+      if(!depotId){ toast('⛔ Dépôt requis — sortie matières premières impossible sans dépôt','err'); return; }
+      await regMvt({cadre:'fabrication',
+        type:'sortie',produitId:ig.produitId,depotSrcId:depotId,depotDestId:null,
         quantite:qConso,unite:ig.unite||'kg',prixUnit:0,
         ref:ref,motif:'Fabrication aliment '+ref,date,ts:Date.now()
       });
@@ -13419,7 +13582,7 @@ window.saveOF=async function(statut){
         const newId=await addRec(S.PRODUITS,{nom:r.nom,categorie:'aliment',stade:'encours',depotAffecteId:depotId,unite:'kg',prix:0,seuil:100,ref:'FAB-AUTO'});
         pa={id:newId};
       }
-      await addRec(S.MVTS,{
+      await regMvt({cadre:'fabrication',
         type:'entree',produitId:pa.id,depotSrcId:null,depotDestId:depotId,
         quantite:qte,unite:'kg',prixUnit:0,ref,motif:'Production OF '+ref,date,ts:Date.now()
       });
@@ -13443,7 +13606,8 @@ window.terminerOF=async function(id){
   const factor=o.factor||(o.qteProduite/(r?.qteRef||100));
   for(const ig of (r?.ingredients||[])){
     if(!ig.produitId||!ig.qte)continue;
-    await addRec(S.MVTS,{type:'sortie',produitId:ig.produitId,depotSrcId:null,depotDestId:null,
+    if(!o.depotId){ toast('⛔ Dépôt requis sur cet OF — sortie matières premières impossible','err'); return; }
+    await regMvt({cadre:'fabrication',type:'sortie',produitId:ig.produitId,depotSrcId:o.depotId,depotDestId:null,
       quantite:Math.round(ig.qte*factor*100)/100,unite:ig.unite||'kg',prixUnit:0,
       ref:o.ref,motif:'Fab. '+o.ref,date:o.date,ts:Date.now()});
   }
