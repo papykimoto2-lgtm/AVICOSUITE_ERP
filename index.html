@@ -1367,6 +1367,24 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
+<!-- RÈGLEMENT FOURNISSEUR (compte 401) -->
+<div class="overlay" id="mPayerBC">
+<div class="modal">
+  <h3><i class="fas fa-money-bill-wave"></i> Régler le fournisseur</h3>
+  <input type="hidden" id="payerBCId">
+  <div id="payerBCRecap" style="background:#f3f4f6;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px"></div>
+  <div class="form-grid">
+    <div class="fg"><label>Montant réglé *</label><input id="payerBCMontant" type="number" min="1"></div>
+    <div class="fg"><label>Date</label><input id="payerBCDate" type="date"></div>
+    <div class="fg"><label>Mode</label><select id="payerBCMode"><option value="virement">Virement</option><option value="cheque">Chèque</option><option value="especes">Espèces</option><option value="mobile_money">Mobile Money</option></select></div>
+    <div class="fg"><label>Référence</label><input id="payerBCRef" placeholder="N° chèque / virement"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mPayerBC')">Annuler</button>
+    <button class="btn btn-p" onclick="savePayerBC()"><i class="fas fa-check"></i> Enregistrer</button>
+  </div>
+</div></div>
+
 <!-- INVENTAIRE — GÉNÉRATION / SAISIE -->
 <div class="overlay" id="mInvGen">
 <div class="modal" style="max-width:820px">
@@ -7432,7 +7450,7 @@ async function renderBCs(ca){
   const statL={draft:'Brouillon',sent:'Envoyé',partial:'Partiel',done:'Réceptionné'};
   const statC={draft:'bc-draft',sent:'bc-sent',partial:'bc-partial',done:'bc-done'};
   const wait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
-  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}<button class="btn btn-sm btn-gh" onclick="printBC(${bc.id})" title="Aperçu / Imprimer le bon de commande"><i class="fas fa-print"></i></button> ${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const resteBC=bc.statut==='done'?getResteAPayerBC(bc):0;const payBtn=(bc.statut==='done'&&resteBC>0)?`<button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openPayerBCModal(${bc.id})" title="Reste dû : ${resteBC.toLocaleString()} F"><i class="fas fa-money-bill-wave"></i> Payer</button> `:(bc.statut==='done'?`<span class="badge b-g" style="font-size:9px" title="Soldé">✓ Soldé</span> `:'');const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}${payBtn}<button class="btn btn-sm btn-gh" onclick="printBC(${bc.id})" title="Aperçu / Imprimer le bon de commande"><i class="fas fa-print"></i></button> ${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="goApproSub('receptions')"><i class="fas fa-truck-ramp-box"></i> Réceptions</button><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div></div><div class="stock-page">
     <div class="g4"><div class="kpi kpi-b"><div class="kpi-lbl">Total BC</div><div class="kpi-val">${bcs.length}</div></div><div class="kpi kpi-a"><div class="kpi-lbl">En attente</div><div class="kpi-val">${wait}</div></div><div class="kpi kpi-g"><div class="kpi-lbl">Réceptionnés</div><div class="kpi-val">${bcs.filter(b=>b.statut==='done').length}</div></div><div class="kpi kpi-b"><div class="kpi-lbl">Brouillons</div><div class="kpi-val">${bcs.filter(b=>b.statut==='draft').length}</div></div></div>
     <div class="card"><div class="card-hd">Bons de commande</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Référence</th><th>Date</th><th>Fournisseur</th><th>Lignes</th><th>Total HT</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun bon de commande</td></tr>'}</tbody></table></div></div>
@@ -9662,8 +9680,8 @@ async function renderFinance(ca){
   var fin=await computeFinanceGlobale();
   var roi=fin.totalCharges>0?(fin.margeGlobale/fin.totalCharges*100):0;
   var txCh=fin.totalRecettes>0?(fin.totalCharges/fin.totalRecettes*100):0;
-  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget'].map(function(t){
-    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel'};
+  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','tiers'].map(function(t){
+    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',tiers:'👥 Comptes Tiers'};
     return '<button class="tab-btn '+(finTab===t?'on':'')+'" data-tab="'+t+'" onclick="switchFinTab(\''+t+'\')">'+labs[t]+'</button>';
   }).join('');
 
@@ -9708,6 +9726,7 @@ async function renderFinTab(fin){
   else if(finTab==='charges') await renderFinCharges(el,fin);
   else if(finTab==='tresorerie') renderFinTreso(el,fin);
   else if(finTab==='budget') renderFinBudget(el,fin);
+  else if(finTab==='tiers') await renderFinTiers(el);
 }
 
 // ── 1. SYNTHESE ──
@@ -11378,6 +11397,41 @@ function agingClass(j) {
   if (j<=60) return 'aging-60';
   return 'aging-90';
 }
+// ── Règlements fournisseurs (compte 401) — même logique que les paiements clients (411) ──
+function getMontantPayeBC(bc) {
+  if (!bc.paiements || !bc.paiements.length) return 0;
+  return bc.paiements.reduce(function(a,p){return a+(p.montant||0);}, 0);
+}
+function getResteAPayerBC(bc) {
+  return Math.max(0, (bc.totalHT||0) - getMontantPayeBC(bc));
+}
+window.openPayerBCModal=async function(bcId){
+  const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===bcId);
+  if(!bc){toast('Bon de commande introuvable','err');return;}
+  const fourns=await getAll(S.FOURNISSEURS);const f=fourns.find(x=>x.id===bc.fournId);
+  document.getElementById('payerBCId').value=bcId;
+  document.getElementById('payerBCRecap').innerHTML=`<strong>${esc(bc.ref||'—')}</strong> — ${esc(f?f.nom:'—')}<br>Total : ${(bc.totalHT||0).toLocaleString()} F · Déjà réglé : ${getMontantPayeBC(bc).toLocaleString()} F · <strong style="color:var(--red)">Reste dû : ${getResteAPayerBC(bc).toLocaleString()} F</strong>`;
+  document.getElementById('payerBCMontant').value=getResteAPayerBC(bc);
+  document.getElementById('payerBCDate').value=new Date().toISOString().slice(0,10);
+  document.getElementById('payerBCMode').value='virement';
+  document.getElementById('payerBCRef').value='';
+  openOverlay('mPayerBC');
+};
+window.savePayerBC=async function(){
+  const bcId=parseInt(document.getElementById('payerBCId').value);
+  const montant=parseFloat(document.getElementById('payerBCMontant').value)||0;
+  const date=document.getElementById('payerBCDate').value;
+  const mode=document.getElementById('payerBCMode').value;
+  const ref=document.getElementById('payerBCRef').value.trim();
+  if(!montant||montant<=0){toast('Montant requis','err');return;}
+  const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===bcId);
+  if(!bc){toast('Bon de commande introuvable','err');return;}
+  const paiements=(bc.paiements||[]).slice();
+  paiements.push({date,montant,mode,ref,ts:Date.now(),auteur:currentUser?.nom||'Système'});
+  await updRec(S.BCS,bcId,Object.assign({},bc,{paiements,ts:Date.now()}));
+  closeOverlay('mPayerBC');toast('Règlement fournisseur enregistré');
+  await renderFinTiers(document.getElementById('finTabContent')||document.getElementById('contentArea'));
+};
 
 window.livrerVente = async function(id) {
   var sales = await getAll(S.SALES);
@@ -12446,7 +12500,7 @@ window.renderCreances = async function(ca) {
             : '<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal(\'sale\','+s.id+')" title="Teledeclarer FNE"><i class="fas fa-stamp"></i></button>') : '')
         + '</td></tr>';
     }).join('');
-  ca.innerHTML = '<div class="page-header"><div class="page-header-title"><i class="fas fa-hourglass-half" style="color:#5b21b6"></i> Creances clients</div></div>'
+  ca.innerHTML = '<div class="page-header"><div class="page-header-title"><i class="fas fa-hourglass-half" style="color:#5b21b6"></i> Creances clients</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printBalanceAgee(\'client\',true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printBalanceAgee(\'client\')"><i class="fas fa-print"></i> Imprimer</button></div></div>'
     + '<div class="g4" style="margin-bottom:14px">'
     + '<div class="kpi kpi-r"><div class="kpi-lbl">Total a encaisser</div><div class="kpi-val" style="font-size:16px;color:#dc2626">'+totalCreance.toLocaleString('fr-FR')+'</div><div class="kpi-sub">FCFA</div></div>'
     + '<div class="kpi kpi-a"><div class="kpi-lbl">En retard</div><div class="kpi-val" style="font-size:16px;color:#d97706">'+totalRetard.toLocaleString('fr-FR')+'</div><div class="kpi-sub">FCFA depassees</div></div>'
@@ -12463,6 +12517,194 @@ window.renderCreances = async function(ca) {
     + '<thead><tr><th>Facture</th><th>Client</th><th>Total</th><th>Paye</th><th>Reste du</th><th>Avancement</th><th>Echeance</th><th>Actions</th></tr></thead>'
     + '<tbody>'+(rows||'<tr><td colspan="8" style="text-align:center;padding:30px;color:#999">Aucune creance ouverte</td></tr>')+'</tbody>'
     + '</table></div></div>';
+};
+
+// ══════════════════════════════════════════════════════
+//  COMPTES TIERS — Balance âgée (411 clients / 401 fournisseurs) + Relevé de compte
+// ══════════════════════════════════════════════════════
+let tiersMode='balance', tiersType='client', tiersSelId=null;
+async function renderFinTiers(el){
+  if(!el) return;
+  el.innerHTML=`<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <div class="tab-nav" style="margin:0">
+      <button class="tab-btn ${tiersMode==='balance'?'on':''}" onclick="switchTiersMode('balance')"><i class="fas fa-scale-balanced"></i> Balance âgée</button>
+      <button class="tab-btn ${tiersMode==='releve'?'on':''}" onclick="switchTiersMode('releve')"><i class="fas fa-file-lines"></i> Relevé de compte</button>
+    </div>
+    <div class="tab-nav" style="margin:0">
+      <button class="tab-btn ${tiersType==='client'?'on':''}" onclick="switchTiersType('client')">👤 Clients (411)</button>
+      <button class="tab-btn ${tiersType==='fournisseur'?'on':''}" onclick="switchTiersType('fournisseur')">🚚 Fournisseurs (401)</button>
+    </div>
+  </div><div id="tiersBody"></div>`;
+  await renderTiersBody();
+}
+window.switchTiersMode=async function(m){ tiersMode=m; await renderFinTiers(document.getElementById('finTabContent')); };
+window.switchTiersType=async function(t){ tiersType=t; tiersSelId=null; await renderFinTiers(document.getElementById('finTabContent')); };
+async function renderTiersBody(){
+  const body=document.getElementById('tiersBody'); if(!body) return;
+  if(tiersMode==='balance') await renderBalanceAgeeUnifiee(body,tiersType);
+  else await renderReleveCompte(body,tiersType);
+}
+// ── Ligne de balance âgée générique (client ou fournisseur) ──
+async function getBalanceAgeeLignes(type){
+  if(type==='client'){
+    const[sales,clients]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS)]);
+    return sales.filter(s=>s.statut==='invoiced'||s.statut==='delivered').map(s=>{
+      const c=clients.find(x=>x.id===s.clientId)||{};
+      const reste=getResteAPayer(s);const j=s.dateEcheance?joursRetard(s.dateEcheance):0;
+      return{ref:s.numFacture||s.ref||'—',tiersNom:c.nom||'—',tiersVille:c.ville||'',date:s.dateFacture||s.date||'—',
+        total:s.totalHT||0,paye:getMontantPaye(s),reste,joursAge:j,aCls:agingClass(j)};
+    }).filter(l=>l.reste>0);
+  }
+  const[bcs,fourns]=await Promise.all([getAll(S.BCS),getAll(S.FOURNISSEURS)]);
+  return bcs.filter(b=>b.statut==='done').map(b=>{
+    const f=fourns.find(x=>x.id===b.fournId)||{};
+    const reste=getResteAPayerBC(b);
+    const j=Math.floor((new Date().setHours(0,0,0,0)-new Date(b.date))/86400000);
+    return{ref:b.ref||'—',tiersNom:f.nom||'—',tiersVille:f.ville||'',date:b.date||'—',
+      total:b.totalHT||0,paye:getMontantPayeBC(b),reste,joursAge:j>0?j:0,aCls:agingClass(j)};
+  }).filter(l=>l.reste>0);
+}
+async function renderBalanceAgeeUnifiee(el,type){
+  const lignes=(await getBalanceAgeeLignes(type)).sort((a,b)=>b.joursAge-a.joursAge);
+  const totalDu=lignes.reduce((a,l)=>a+l.reste,0);
+  let b0=0,b30=0,b60=0,b90=0;
+  lignes.forEach(l=>{const j=l.joursAge;if(j<=0)b0+=l.reste;else if(j<=30)b30+=l.reste;else if(j<=60)b60+=l.reste;else b90+=l.reste;});
+  const rows=lignes.map(l=>`<tr><td><strong>${esc(l.ref)}</strong><div style="font-size:10px;color:var(--text3)">${l.date}</div></td>
+    <td><strong>${esc(l.tiersNom)}</strong><div style="font-size:10px;color:var(--text3)">${esc(l.tiersVille)}</div></td>
+    <td style="font-weight:700">${l.total.toLocaleString('fr-FR')} F</td>
+    <td style="color:#2563eb">${l.paye.toLocaleString('fr-FR')} F</td>
+    <td style="font-weight:700;color:var(--red)">${l.reste.toLocaleString('fr-FR')} F</td>
+    <td><span class="badge ${l.aCls}" style="padding:3px 8px;border-radius:20px;font-size:10px">${l.joursAge>0?l.joursAge+' j':'Non échu'}</span></td></tr>`).join('');
+  el.innerHTML=`<div class="page-header" style="padding:0 0 10px"><div></div><div style="display:flex;gap:6px">
+    <button class="btn btn-sm btn-gh" onclick="printBalanceAgee('${type}',true)"><i class="fas fa-eye"></i> Aperçu</button>
+    <button class="btn btn-sm btn-gh" onclick="printBalanceAgee('${type}')"><i class="fas fa-print"></i> Imprimer</button></div></div>
+  <div class="g4" style="margin-bottom:14px">
+    <div class="kpi kpi-r"><div class="kpi-lbl">Total ${type==='client'?'à encaisser':'dû fournisseurs'}</div><div class="kpi-val" style="font-size:16px">${totalDu.toLocaleString('fr-FR')}</div><div class="kpi-sub">FCFA</div></div>
+    <div class="kpi kpi-b"><div class="kpi-lbl">${type==='client'?'Factures':'Bons de commande'} ouverts</div><div class="kpi-val">${lignes.length}</div></div>
+  </div>
+  <div class="card" style="margin-bottom:14px"><div class="card-hd">Analyse d'ancienneté (Aging)</div>
+    <div class="card-bd" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+      <div style="text-align:center;padding:12px;border-radius:8px" class="aging-0"><div style="font-size:10px;font-weight:700;text-transform:uppercase">Non échu</div><div style="font-size:16px;font-weight:700;margin-top:4px">${b0.toLocaleString('fr-FR')} F</div></div>
+      <div style="text-align:center;padding:12px;border-radius:8px" class="aging-30"><div style="font-size:10px;font-weight:700;text-transform:uppercase">1-30 j</div><div style="font-size:16px;font-weight:700;margin-top:4px">${b30.toLocaleString('fr-FR')} F</div></div>
+      <div style="text-align:center;padding:12px;border-radius:8px" class="aging-60"><div style="font-size:10px;font-weight:700;text-transform:uppercase">31-60 j</div><div style="font-size:16px;font-weight:700;margin-top:4px">${b60.toLocaleString('fr-FR')} F</div></div>
+      <div style="text-align:center;padding:12px;border-radius:8px" class="aging-90"><div style="font-size:10px;font-weight:700;text-transform:uppercase">+60 j</div><div style="font-size:16px;font-weight:700;margin-top:4px">${b90.toLocaleString('fr-FR')} F</div></div>
+    </div></div>
+  <div class="card"><div class="card-hd">Détail — ${type==='client'?'Comptes clients (411)':'Comptes fournisseurs (401)'}</div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>${type==='client'?'Facture':'Bon de commande'}</th><th>${type==='client'?'Client':'Fournisseur'}</th><th>Total</th><th>Réglé</th><th>Reste dû</th><th>Ancienneté</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Aucun solde ouvert</td></tr>'}</tbody></table></div></div>`;
+}
+window.printBalanceAgee=async function(type,preview){
+  const lignes=(await getBalanceAgeeLignes(type)).sort((a,b)=>b.joursAge-a.joursAge);
+  const cfg=await getExploitationSettings();
+  const totalDu=lignes.reduce((a,l)=>a+l.reste,0);
+  let b0=0,b30=0,b60=0,b90=0;
+  lignes.forEach(l=>{const j=l.joursAge;if(j<=0)b0+=l.reste;else if(j<=30)b30+=l.reste;else if(j<=60)b60+=l.reste;else b90+=l.reste;});
+  const rows=lignes.map(l=>`<tr><td>${esc(l.ref)}</td><td>${l.date}</td><td>${esc(l.tiersNom)}</td><td style="text-align:right">${l.total.toLocaleString('fr-FR')}</td><td style="text-align:right">${l.paye.toLocaleString('fr-FR')}</td><td style="text-align:right;font-weight:700">${l.reste.toLocaleString('fr-FR')}</td><td style="text-align:right">${l.joursAge>0?l.joursAge+' j':'Non échu'}</td></tr>`).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Balance âgée</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:950px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    th,td{padding:5px 6px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;font-size:10px}
+    tfoot td{font-weight:800;background:#f9fafb}
+    .kpis{display:flex;gap:14px;margin-bottom:12px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">BALANCE ÂGÉE — ${type==='client'?'COMPTES CLIENTS (411)':'COMPTES FOURNISSEURS (401)'}</div><div style="font-size:10px;color:#888">Éditée le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${lignes.length}</div>Comptes ouverts</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${totalDu.toLocaleString('fr-FR')}</div>Total dû (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#059669">${b0.toLocaleString('fr-FR')}</div>Non échu (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${b90.toLocaleString('fr-FR')}</div>+60 jours (FCFA)</div>
+    </div>
+    <table><thead><tr><th>Réf.</th><th>Date</th><th>${type==='client'?'Client':'Fournisseur'}</th><th style="text-align:right">Total</th><th style="text-align:right">Réglé</th><th style="text-align:right">Reste dû</th><th style="text-align:right">Ancienneté</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucun solde ouvert</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="5">TOTAL</td><td style="text-align:right">${totalDu.toLocaleString('fr-FR')}</td><td></td></tr></tfoot></table>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=1000,height=750');
+  if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
+  w.document.write(html);w.document.close();
+};
+
+// ── Relevé de compte tiers — grand livre auxiliaire chronologique (factures/BC + règlements + solde) ──
+async function renderReleveCompte(el,type){
+  const tiersList = type==='client' ? await getAll(S.CLIENTS) : await getAll(S.FOURNISSEURS);
+  const opts=tiersList.map(t=>`<option value="${t.id}" ${tiersSelId==t.id?'selected':''}>${esc(t.nom)}</option>`).join('');
+  el.innerHTML=`<div class="card" style="margin-bottom:12px"><div class="card-bd" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+    <div class="fg" style="min-width:220px"><label>${type==='client'?'Client':'Fournisseur'}</label><select id="tiersSelInput" onchange="selectTiers(this.value)"><option value="">— Sélectionner —</option>${opts}</select></div>
+    ${tiersSelId?`<button class="btn btn-sm btn-gh" onclick="printReleveCompte('${type}',${tiersSelId},true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printReleveCompte('${type}',${tiersSelId})"><i class="fas fa-print"></i> Imprimer</button>`:''}
+  </div></div><div id="tiersReleveTable"></div>`;
+  if(tiersSelId) await afficherReleveTable(type,tiersSelId);
+}
+window.selectTiers=async function(id){ tiersSelId=id?parseInt(id):null; await renderFinTiers(document.getElementById('finTabContent')); };
+async function getReleveLignes(type,id){
+  if(type==='client'){
+    const sales=(await getAll(S.SALES)).filter(s=>s.clientId===id&&(s.statut==='invoiced'||s.statut==='paid'||s.statut==='delivered'));
+    const lignes=[];
+    sales.forEach(s=>{
+      lignes.push({date:s.dateFacture||s.date,libelle:'Facture '+(s.numFacture||s.ref||''),debit:s.totalHT||0,credit:0,ts:s.ts||0});
+      (s.paiements||[]).forEach(p=>lignes.push({date:p.date,libelle:'Règlement '+(p.mode||'')+(p.ref?' — '+p.ref:''),debit:0,credit:p.montant||0,ts:p.ts||0}));
+    });
+    return lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||'')||a.ts-b.ts);
+  }
+  const bcs=(await getAll(S.BCS)).filter(b=>b.fournId===id&&b.statut==='done');
+  const lignes=[];
+  bcs.forEach(b=>{
+    lignes.push({date:b.date,libelle:'Bon de commande '+(b.ref||''),debit:0,credit:b.totalHT||0,ts:b.ts||0});
+    (b.paiements||[]).forEach(p=>lignes.push({date:p.date,libelle:'Règlement '+(p.mode||'')+(p.ref?' — '+p.ref:''),debit:p.montant||0,credit:0,ts:p.ts||0}));
+  });
+  return lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||'')||a.ts-b.ts);
+}
+async function afficherReleveTable(type,id){
+  const el=document.getElementById('tiersReleveTable'); if(!el) return;
+  const lignes=await getReleveLignes(type,id);
+  let solde=0;
+  const rows=lignes.map(l=>{solde+=(l.debit-l.credit);return`<tr><td>${l.date||'—'}</td><td>${esc(l.libelle)}</td><td style="text-align:right;color:#2563eb">${l.debit?l.debit.toLocaleString('fr-FR'):''}</td><td style="text-align:right;color:#059669">${l.credit?l.credit.toLocaleString('fr-FR'):''}</td><td style="text-align:right;font-weight:700">${solde.toLocaleString('fr-FR')}</td></tr>`;}).join('');
+  el.innerHTML=`<div class="card"><div class="card-hd">Grand livre auxiliaire — Solde actuel : <span style="color:${solde>0?'var(--red)':'var(--g2)'}">${solde.toLocaleString('fr-FR')} F</span></div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>Date</th><th>Libellé</th><th style="text-align:right">${type==='client'?'Débit (facturé)':'Débit (réglé)'}</th><th style="text-align:right">${type==='client'?'Crédit (réglé)':'Crédit (dû)'}</th><th style="text-align:right">Solde</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Aucun mouvement</td></tr>'}</tbody></table></div></div>`;
+}
+window.printReleveCompte=async function(type,id,preview){
+  const tiersList = type==='client' ? await getAll(S.CLIENTS) : await getAll(S.FOURNISSEURS);
+  const t=tiersList.find(x=>x.id===id); if(!t){toast('Tiers introuvable','err');return;}
+  const lignes=await getReleveLignes(type,id);
+  const cfg=await getExploitationSettings();
+  let solde=0;
+  const rows=lignes.map(l=>{solde+=(l.debit-l.credit);return`<tr><td>${l.date||'—'}</td><td>${esc(l.libelle)}</td><td style="text-align:right">${l.debit?l.debit.toLocaleString('fr-FR'):''}</td><td style="text-align:right">${l.credit?l.credit.toLocaleString('fr-FR'):''}</td><td style="text-align:right;font-weight:700">${solde.toLocaleString('fr-FR')}</td></tr>`;}).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Relevé de compte — ${esc(t.nom)}</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:800px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    th,td{padding:5px 6px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;font-size:10px}
+    tfoot td{font-weight:800;background:#f9fafb}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">RELEVÉ DE COMPTE</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <p><strong>${type==='client'?'Client':'Fournisseur'} :</strong> ${esc(t.nom)} ${t.ville?'— '+esc(t.ville):''}</p>
+    <table><thead><tr><th>Date</th><th>Libellé</th><th style="text-align:right">${type==='client'?'Débit':'Débit (réglé)'}</th><th style="text-align:right">${type==='client'?'Crédit (réglé)':'Crédit'}</th><th style="text-align:right">Solde</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucun mouvement</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="4">SOLDE ${solde>0?'DÛ':'CRÉDITEUR'}</td><td style="text-align:right;color:${solde>0?'#c1121f':'#059669'}">${Math.abs(solde).toLocaleString('fr-FR')} FCFA</td></tr></tfoot></table>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=900,height=750');
+  if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
+  w.document.write(html);w.document.close();
 };
 
 
