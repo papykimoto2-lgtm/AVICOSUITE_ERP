@@ -6121,8 +6121,34 @@ async function renderDash(ca){
   for(const p of prods){const q=stockTot[p.id]||0;valeur+=q*(p.prix||0);if(stockEnAlerte(p,q)) critiques++;}
   const bcWait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
   const crit=prods.filter(p=>stockEnAlerte(p,stockTot[p.id]||0));
-  const today=new Date().toISOString().slice(0,10).slice(0,7);
-  const mvtsMois=mvts.filter(m=>m.date&&m.date.startsWith(today)).length;
+  const todayStr=new Date().toISOString().slice(0,10);
+  const curMonth=todayStr.slice(0,7);
+  const mvtsMois=mvts.filter(m=>m.date&&m.date.startsWith(curMonth)).length;
+  const prevMonthDate=new Date();prevMonthDate.setDate(1);prevMonthDate.setMonth(prevMonthDate.getMonth()-1);
+  const prevMonth=prevMonthDate.toISOString().slice(0,7);
+  const mvtsMoisPrec=mvts.filter(m=>m.date&&m.date.startsWith(prevMonth)).length;
+  const trendMvts=mvtsMoisPrec>0?Math.round((mvtsMois-mvtsMoisPrec)/mvtsMoisPrec*100):null;
+  const bcEnRetard=bcs.filter(b=>(b.statut==='sent'||b.statut==='partial')&&b.dateLiv&&b.dateLiv<todayStr);
+
+  // Taux de remplissage par dépôt — recalculé une fois, réutilisé pour le panneau et les actions
+  const depFill=deps.map(dep=>{
+    const depQ=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===dep.id).reduce((a,[,v])=>a+Math.max(0,v),0);
+    const pct=dep.capacite>0?Math.min(100,depQ/dep.capacite*100):0;
+    return{dep,depQ,pct};
+  });
+  const depSatures=depFill.filter(d=>d.pct>85);
+
+  // Activité 14 derniers jours (entrées/sorties par jour)
+  const days14=[...Array(14)].map((_,i)=>{const d=new Date();d.setDate(d.getDate()-(13-i));return d.toISOString().slice(0,10);});
+  const dayData=days14.map(d=>({d,e:mvts.filter(m=>m.date===d&&m.type==='entree').length,s:mvts.filter(m=>m.date===d&&m.type==='sortie').length}));
+  const maxDay=Math.max(1,...dayData.map(x=>x.e+x.s));
+
+  // Top articles en valeur de stock
+  const topArticles=prods.map(p=>({nom:p.nom,val:(stockTot[p.id]||0)*(p.prix||0)})).filter(a=>a.val>0).sort((a,b)=>b.val-a.val).slice(0,6);
+  const maxArtVal=Math.max(1,...topArticles.map(a=>a.val));
+
+  const trendBadge=(pct)=>pct===null?'':`<span style="font-size:10px;font-weight:700;margin-left:6px;color:${pct>=0?'var(--g2)':'var(--red)'}">${pct>=0?'▲':'▼'} ${Math.abs(pct)}%</span>`;
+  const nbActions=crit.length+bcEnRetard.length+depSatures.length;
 
   if(dashChart){dashChart.destroy();dashChart=null;}
   ca.innerHTML=`
@@ -6145,15 +6171,31 @@ async function renderDash(ca){
     </div>
     <div class="stock-page">
       <div class="g4">
-        <div class="kpi kpi-g"><div class="kpi-lbl">Valeur totale</div><div class="kpi-val">${Math.round(valeur/1000)}K</div><div class="kpi-sub">FCFA estimés</div></div>
-        <div class="kpi ${critiques>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">Articles critiques</div><div class="kpi-val">${critiques}</div><div class="kpi-sub">Sous seuil d'alerte</div></div>
-        <div class="kpi kpi-a"><div class="kpi-lbl">Commandes en attente</div><div class="kpi-val">${bcWait}</div><div class="kpi-sub">À réceptionner</div></div>
-        <div class="kpi kpi-b"><div class="kpi-lbl">Mouvements ce mois</div><div class="kpi-val">${mvtsMois}</div><div class="kpi-sub">Entrées + sorties</div></div>
+        <div class="kpi kpi-g"><div class="kpi-lbl">📦 Valeur totale</div><div class="kpi-val">${Math.round(valeur/1000)}K</div><div class="kpi-sub">FCFA estimés</div></div>
+        <div class="kpi ${critiques>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">⚠️ Articles critiques</div><div class="kpi-val">${critiques}</div><div class="kpi-sub">Sous seuil d'alerte</div></div>
+        <div class="kpi kpi-a"><div class="kpi-lbl">🚚 Commandes en attente</div><div class="kpi-val">${bcWait}</div><div class="kpi-sub">${bcEnRetard.length>0?`<strong style="color:var(--red)">${bcEnRetard.length} en retard</strong>`:'À réceptionner'}</div></div>
+        <div class="kpi kpi-b"><div class="kpi-lbl">🔄 Mouvements ce mois</div><div class="kpi-val">${mvtsMois}${trendBadge(trendMvts)}</div><div class="kpi-sub">vs ${mvtsMoisPrec} mois précédent</div></div>
       </div>
-      ${crit.length?`<div style="margin-bottom:16px"><div style="font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><i class="fas fa-exclamation-triangle" style="color:var(--red)"></i> Alertes stock critique (${crit.length})</div>${crit.map(p=>{const q=stockTot[p.id]||0;const pct=p.seuil>0?Math.min(100,q/p.seuil*100):0;return `<div style="background:${q<=0?'var(--red-bg)':'var(--amber-bg)'};border:1px solid ${q<=0?'#fca5a5':'#fcd34d'};border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px"><i class="fas fa-exclamation-circle" style="color:${q<=0?'var(--red)':'var(--amber-d)'}"></i><div style="flex:1"><strong>${p.nom}</strong> — Stock: <strong>${q.toFixed(1)} ${p.unite}</strong> / Seuil: ${p.seuil}<div class="prog" style="width:120px;margin-top:3px"><div class="prog-fill" style="width:${pct}%;background:${q<=0?'var(--red)':'var(--amber)'}"></div></div></div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree')">📥 Saisir entrée</button></div>`;}).join('')}</div>`:''}
+      ${nbActions>0?`<div class="card" style="margin-bottom:16px;border:1.5px solid #fcd34d">
+        <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Actions prioritaires (${nbActions})</span></div>
+        <div class="card-bd" style="display:flex;flex-direction:column;gap:8px">
+          ${crit.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-box-open" style="color:var(--red)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${crit.length} article${crit.length>1?'s':''}</strong> sous le seuil critique</div><button class="btn btn-sm btn-p" onclick="goTo('stocks')">Voir</button></div>`:''}
+          ${bcEnRetard.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--amber-bg);border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-truck" style="color:var(--amber-d)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${bcEnRetard.length} commande${bcEnRetard.length>1?'s':''}</strong> en retard de livraison fournisseur</div><button class="btn btn-sm btn-p" onclick="goTo('bcs')">Relancer</button></div>`:''}
+          ${depSatures.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-warehouse" style="color:var(--red)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${depSatures.length} dépôt${depSatures.length>1?'s':''}</strong> proche(s) de saturation (&gt;85%)</div><button class="btn btn-sm btn-p" onclick="goTo('depots')">Voir</button></div>`:''}
+        </div>
+      </div>`:''}
+      ${crit.length?`<div style="margin-bottom:16px"><div style="font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><i class="fas fa-exclamation-triangle" style="color:var(--red)"></i> Détail alertes stock critique (${crit.length})</div>${crit.map(p=>{const q=stockTot[p.id]||0;const pct=p.seuil>0?Math.min(100,q/p.seuil*100):0;return `<div style="background:${q<=0?'var(--red-bg)':'var(--amber-bg)'};border:1px solid ${q<=0?'#fca5a5':'#fcd34d'};border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px"><i class="fas fa-exclamation-circle" style="color:${q<=0?'var(--red)':'var(--amber-d)'}"></i><div style="flex:1"><strong>${p.nom}</strong> — Stock: <strong>${q.toFixed(1)} ${p.unite}</strong> / Seuil: ${p.seuil}<div class="prog" style="width:120px;margin-top:3px"><div class="prog-fill" style="width:${pct}%;background:${q<=0?'var(--red)':'var(--amber)'}"></div></div></div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree')">📥 Saisir entrée</button></div>`;}).join('')}</div>`:''}
       <div style="display:grid;grid-template-columns:1fr auto;gap:14px;margin-bottom:14px;align-items:start">
         <div class="card" style="margin-bottom:0"><div class="card-hd">📦 Valeur par catégorie</div><div class="card-bd" style="position:relative;height:200px"><canvas id="dashChart"></canvas></div></div>
-        <div class="card" style="min-width:220px;margin-bottom:0"><div class="card-hd">🏭 Taux de remplissage</div><div class="card-bd">${deps.map(dep=>{const depQ=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===dep.id).reduce((a,[,v])=>a+Math.max(0,v),0);const pct=dep.capacite>0?Math.min(100,depQ/dep.capacite*100):0;const cl=pct>85?'var(--red)':pct>60?'var(--amber)':'var(--g3)';return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span><strong>${dep.nom.split(' ')[0]}</strong></span><span style="color:var(--text3)">${Math.round(depQ)}/${dep.capacite}</span></div><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${cl}"></div></div></div>`;}).join('')}</div></div>
+        <div class="card" style="min-width:220px;margin-bottom:0"><div class="card-hd">🏭 Taux de remplissage</div><div class="card-bd">${depFill.map(({dep,depQ,pct})=>{const cl=pct>85?'var(--red)':pct>60?'var(--amber)':'var(--g3)';return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span><strong>${dep.nom.split(' ')[0]}</strong></span><span style="color:var(--text3)">${Math.round(depQ)}/${dep.capacite}</span></div><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${cl}"></div></div></div>`;}).join('')}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;align-items:start">
+        <div class="card" style="margin-bottom:0"><div class="card-hd">📈 Activité — 14 derniers jours</div><div class="card-bd">
+          <div style="display:flex;align-items:flex-end;gap:3px;height:90px">${dayData.map(x=>{const hE=Math.round(x.e/maxDay*80),hS=Math.round(x.s/maxDay*80);return `<div title="${x.d} : ${x.e} entrées, ${x.s} sorties" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%"><div style="background:var(--g3);border-radius:2px 2px 0 0;width:100%;height:${hE}px;min-height:${x.e>0?'2px':'0'}"></div><div style="background:var(--red);opacity:.75;border-radius:0 0 2px 2px;width:100%;height:${hS}px;min-height:${x.s>0?'2px':'0'}"></div></div>`;}).join('')}</div>
+          <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-top:6px"><span>${days14[0].slice(5)}</span><span>${days14[13].slice(5)}</span></div>
+          <div style="display:flex;gap:12px;margin-top:8px;font-size:10px"><span><span style="display:inline-block;width:8px;height:8px;background:var(--g3);border-radius:2px;margin-right:4px"></span>Entrées</span><span><span style="display:inline-block;width:8px;height:8px;background:var(--red);opacity:.75;border-radius:2px;margin-right:4px"></span>Sorties</span></div>
+        </div></div>
+        <div class="card" style="margin-bottom:0"><div class="card-hd">💰 Top articles en valeur</div><div class="card-bd">${topArticles.length?topArticles.map(a=>`<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px"><strong>${esc(a.nom)}</strong></span><span style="color:var(--text3)">${Math.round(a.val/1000)}K</span></div><div class="prog"><div class="prog-fill" style="width:${Math.max(4,a.val/maxArtVal*100)}%;background:var(--g2)"></div></div></div>`).join(''):'<div style="text-align:center;color:var(--text3);padding:14px">Aucune donnée</div>'}</div></div>
       </div>
       <div class="card"><div class="card-hd"><span>📋 Derniers mouvements</span><button class="btn btn-sm btn-gh" onclick="goTo('mvts')">Tout voir →</button></div><div class="card-bd tbl-wrap">${buildMvtTable(mvts.slice().sort((a,b)=>b.ts-a.ts).slice(0,8),prods,deps)}</div></div>
     </div>
@@ -6822,11 +6864,22 @@ async function saveRec(){
   inputs.forEach(inp=>{const qty=parseFloat(inp.value)||0;if(qty>0) received.push({idx:parseInt(inp.dataset.idx),produitId:parseInt(inp.dataset.pid),qty,prixUnit:parseFloat(inp.dataset.px)||0,unite:inp.dataset.u});});
   if(!received.length){toast('Entrez les quantités reçues','err');return;}
   const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===recBCId);if(!bc) return;
-  for(const r of received){if(bc.lignes[r.idx]) bc.lignes[r.idx].qteLivree=(bc.lignes[r.idx].qteLivree||0)+r.qty;await addRec(S.MVTS,{type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,ts:Date.now()});}
+  // ── Contexte livraison partielle : mémoriser l'avancement de chaque ligne AVANT cette réception,
+  // pour que le bon de réception imprimé reste exact même si d'autres réceptions suivent plus tard ──
+  const recLignes=[];
+  for(const r of received){
+    const ligneBC=bc.lignes[r.idx];
+    const qteCommandee=ligneBC?.qte||0;
+    const qteAvant=ligneBC?.qteLivree||0;
+    if(ligneBC) ligneBC.qteLivree=qteAvant+r.qty;
+    const qteApres=qteAvant+r.qty;
+    recLignes.push({produitId:r.produitId,designation:ligneBC?.designation||'',qteRecue:r.qty,prixUnit:r.prixUnit,unite:r.unite,qteCommandee,qteAvant,qteApres,resteApres:Math.max(0,qteCommandee-qteApres)});
+    await addRec(S.MVTS,{type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,ts:Date.now()});
+  }
   const allDone=bc.lignes.every(l=>l.qteLivree>=l.qte);await updRec(S.BCS,recBCId,{...bc,statut:allDone?'done':'partial'});
-  // ── CONNEXION BC→RECS : archiver la réception pour traçabilité ──
-  const newRecId = await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:received.map(r=>({produitId:r.produitId,qteRecue:r.qty,prixUnit:r.prixUnit,unite:r.unite})),operatorId:currentUser?.id||1,ts:Date.now()});
-  closeOverlay('mRec');toast('✓ Réception enregistrée — stock mis à jour + bon de réception archivé');await renderBCs(document.getElementById('contentArea'));
+  // ── CONNEXION BC→RECS : archiver la réception pour traçabilité (avec le statut partiel/complet figé) ──
+  const newRecId = await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:recLignes,livraisonComplete:allDone,operatorId:currentUser?.id||1,ts:Date.now()});
+  closeOverlay('mRec');toast(allDone?'✓ Réception enregistrée — commande soldée, bon de réception archivé':'✓ Réception partielle enregistrée — bon de réception archivé');await renderBCs(document.getElementById('contentArea'));
   // Proposer l'aperçu / impression immédiate du bon de réception (livraison de la commande)
   if(newRecId>0 && confirm('Réception enregistrée. Voulez-vous ouvrir l\'aperçu du bon de réception à imprimer ?')){
     printBR(newRecId);
@@ -11292,16 +11345,30 @@ function buildAndPrintBC(bc, f, cfg){
   var statC={draft:'#6b7280',sent:'#1565c0',partial:'#b45309',done:'#166534'};
   var lignes = bc.lignes && bc.lignes.length ? bc.lignes : [];
   var totalHT = bc.totalHT || lignes.reduce((a,l)=>a+(l.qte||0)*(l.prixUnit||0),0);
+  var hasSuivi = bc.statut==='partial' || bc.statut==='done' || lignes.some(l=>(l.qteLivree||0)>0);
   var rows = lignes.map(l=>{
     var lt = (l.qte||0)*(l.prixUnit||0);
+    var livre = l.qteLivree||0;
+    var reste = Math.max(0,(l.qte||0)-livre);
+    var suiviCells = hasSuivi ? (
+        `<td style="text-align:right;color:#1565c0">${livre}</td>`
+      + `<td style="text-align:right">${reste>0?`<span style="color:#b45309;font-weight:700">${reste}</span>`:'<span style="color:#166534;font-weight:700">✓</span>'}</td>`
+      ) : '';
     return `<tr><td><strong>${esc(l.designation||'--')}</strong></td>`
       + `<td style="text-align:right">${l.qte||0}</td>`
       + `<td>${esc(l.unite||'u')}</td>`
+      + suiviCells
       + `<td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td>`
       + `<td style="text-align:right;font-weight:700">${Math.round(lt).toLocaleString('fr-FR')} ${cfg.devise||'F'}</td></tr>`;
   }).join('');
+  var theadSuivi = hasSuivi ? '<th style="text-align:right">Livré</th><th style="text-align:right">Reste</th>' : '';
   var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
     ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
+  var statutBanner = bc.statut==='partial'
+    ? '<div style="background:#fff3e0;border:1.5px solid #f9c74f;color:#b45309;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px"><span style="font-size:15px">⚠️</span> COMMANDE PARTIELLEMENT LIVRÉE — voir le détail « Livré / Reste » ci-dessous.</div>'
+    : (bc.statut==='done'
+      ? '<div style="background:#f0fdf4;border:1.5px solid #86efac;color:#166534;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px"><span style="font-size:15px">✅</span> COMMANDE INTÉGRALEMENT RÉCEPTIONNÉE.</div>'
+      : '');
 
   var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
   <title>Bon de commande ${esc(bc.ref||'')}</title>
@@ -11346,6 +11413,7 @@ function buildAndPrintBC(bc, f, cfg){
       </div>
     </div>
   </div>
+  ${statutBanner}
   <div class="parties">
     <div class="party party-em">
       <div class="plbl">Acheteur / Émetteur</div>
@@ -11365,8 +11433,8 @@ function buildAndPrintBC(bc, f, cfg){
     </div>
   </div>
   <table>
-    <thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th>Unité</th><th style="text-align:right">PU</th><th style="text-align:right">Total</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+    <thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th>Unité</th>${theadSuivi}<th style="text-align:right">PU</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="'+(hasSuivi?7:5)+'" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
   </table>
   <div class="totaux">
     <div class="tht"><span>TOTAL COMMANDE</span><span>${Math.round(totalHT).toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
@@ -11406,17 +11474,35 @@ window.printBC = async function(id){
 // réception imprimable — le pendant "livraison" du bon de commande.
 function buildAndPrintBR(rec, bc, f, dep, cfg){
   var prodsMap = rec._prodsMap || {};
+  var bcLignesMap = {};
+  (bc?.lignes||[]).forEach(l=>{ bcLignesMap[l.produitId] = l; });
   var rows = (rec.lignes||[]).map(l=>{
     var nom = prodsMap[l.produitId]?.nom || l.designation || ('Produit #'+l.produitId);
+    var bl = bcLignesMap[l.produitId];
+    var commande = bl ? (bl.qte||0) : null;
+    var cumul    = bl ? (bl.qteLivree||0) : null;
+    var solde    = (commande!=null && cumul!=null) ? Math.max(0, commande - cumul) : null;
+    var soldeCell = solde==null ? '<span style="color:#999">—</span>'
+      : (solde>0 ? `<span style="color:#b45309;font-weight:700">${solde}</span>` : '<span style="color:#166534;font-weight:700">✓ soldé</span>');
     return `<tr><td><strong>${esc(nom)}</strong></td>`
-      + `<td style="text-align:right;font-weight:700;font-size:13px">${l.qteRecue||0}</td>`
+      + `<td style="text-align:right">${commande!=null?commande:'—'}</td>`
+      + `<td style="text-align:right;font-weight:700;font-size:13px;color:#1e40af">${l.qteRecue||0}</td>`
+      + `<td style="text-align:right">${cumul!=null?cumul:'—'}</td>`
+      + `<td style="text-align:right">${soldeCell}</td>`
       + `<td>${esc(l.unite||'u')}</td>`
-      + `<td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td>`
-      + `<td style="text-align:right;font-weight:700">${Math.round((l.qteRecue||0)*(l.prixUnit||0)).toLocaleString('fr-FR')} ${cfg.devise||'F'}</td></tr>`;
+      + `<td style="text-align:right">${Math.round((l.qteRecue||0)*(l.prixUnit||0)).toLocaleString('fr-FR')} ${cfg.devise||'F'}</td></tr>`;
   }).join('');
   var totalRec = (rec.lignes||[]).reduce((a,l)=>a+(l.qteRecue||0)*(l.prixUnit||0),0);
   var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
     ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
+  var isPartial = bc?.statut==='partial';
+  var isDone    = bc?.statut==='done';
+  var statutBanner = isPartial
+    ? '<div style="background:#fff3e0;border:1.5px solid #f9c74f;color:#b45309;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px"><span style="font-size:15px">⚠️</span> LIVRAISON PARTIELLE — Il reste des quantités à livrer sur ce bon de commande.</div>'
+    : (isDone
+      ? '<div style="background:#f0fdf4;border:1.5px solid #86efac;color:#166534;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px"><span style="font-size:15px">✅</span> LIVRAISON COMPLÈTE — Commande intégralement soldée.</div>'
+      : '');
+  var numLivraison = rec._numLivraison ? `Livraison n° ${rec._numLivraison}${rec._totalLivraisons>rec._numLivraison?' (en cours)':' / '+rec._totalLivraisons}<br>` : '';
 
   var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
   <title>Bon de réception ${esc(bc?.ref||'')}${rec.bl?' — BL '+esc(rec.bl):''}</title>
@@ -11433,8 +11519,8 @@ function buildAndPrintBR(rec, bc, f, dep, cfg){
     .party-cl{background:#f8f9fa;border:1px solid #e5e7eb}
     .plbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px}
     table{width:100%;border-collapse:collapse;margin-bottom:14px}
-    thead th{background:#1e40af;color:#fff;padding:8px 10px;font-size:10px;font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.3px}
-    tbody td{padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:11px}
+    thead th{background:#1e40af;color:#fff;padding:7px 8px;font-size:9px;font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.3px}
+    tbody td{padding:7px 8px;border-bottom:1px solid #e5e7eb;font-size:11px}
     tbody tr:nth-child(even){background:#f9fafb}
     .totaux{float:right;width:280px;margin-top:4px}
     .trow{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-bottom:1px solid #eee}
@@ -11454,11 +11540,13 @@ function buildAndPrintBR(rec, bc, f, dep, cfg){
       <div class="doc-type">BON DE RÉCEPTION</div>
       <div class="doc-meta">
         <strong>${esc(bc?.ref||'—')}</strong>${rec.bl?' — BL fournisseur '+esc(rec.bl):''}<br>
+        ${numLivraison}
         Date de réception : <strong>${rec.date||'—'}</strong><br>
         ${dep?.nom?'Dépôt : <strong>'+esc(dep.nom)+'</strong><br>':''}
       </div>
     </div>
   </div>
+  ${statutBanner}
   <div class="parties">
     <div class="party party-em">
       <div class="plbl">Réceptionnaire</div>
@@ -11474,11 +11562,11 @@ function buildAndPrintBR(rec, bc, f, dep, cfg){
     </div>
   </div>
   <table>
-    <thead><tr><th>Désignation produit</th><th style="text-align:right">Qté reçue</th><th>Unité</th><th style="text-align:right">PU</th><th style="text-align:right">Total</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+    <thead><tr><th>Désignation produit</th><th style="text-align:right">Commandé</th><th style="text-align:right">Reçu ce jour</th><th style="text-align:right">Cumul reçu</th><th style="text-align:right">Solde restant</th><th>Unité</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
   </table>
   <div class="totaux">
-    <div class="tht"><span>TOTAL RÉCEPTIONNÉ</span><span>${Math.round(totalRec).toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
+    <div class="tht"><span>TOTAL RÉCEPTIONNÉ CE JOUR</span><span>${Math.round(totalRec).toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
   </div>
   <div class="sign">
     <div class="sbox">Signature & cachet livreur/fournisseur<br><br><br><br></div>
@@ -11508,6 +11596,10 @@ window.printBR = async function(recId){
   var f   = fourns.find(x=>x.id===rec.fournId) || {};
   var dep = deps.find(x=>x.id===rec.depotId) || {};
   rec._prodsMap = Object.fromEntries(prods.map(p=>[p.id,p]));
+  // Numéro de cette livraison parmi toutes les réceptions du même BC (ordre chronologique)
+  var sameBc = recs.filter(r=>r.bcId===rec.bcId).sort((a,b)=>(a.ts||0)-(b.ts||0));
+  rec._numLivraison = sameBc.findIndex(r=>r.id===rec.id) + 1;
+  rec._totalLivraisons = sameBc.length;
   var cfg = await getExploitationSettings();
   buildAndPrintBR(rec, bc, f, dep, cfg);
 };
@@ -11517,25 +11609,31 @@ async function renderReceptions(ca){
   var [recs, bcs, fourns, deps] = await Promise.all([
     getAll(S.RECS), getAll(S.BCS), getAll(S.FOURNISSEURS), getAll(S.DEPOTS)
   ]);
+  var statL={draft:'Brouillon',sent:'Envoyé',partial:'Partielle',done:'Complète'};
+  var statC={draft:'#6b7280',sent:'#1565c0',partial:'#b45309',done:'#166534'};
+  var statBg={draft:'#f3f4f6',sent:'#e3f2fd',partial:'#fff3e0',done:'#f0fdf4'};
   var rows = recs.slice().sort((a,b)=>(b.ts||0)-(a.ts||0)).map(r=>{
     var bc = bcs.find(x=>x.id===r.bcId);
     var f  = fourns.find(x=>x.id===r.fournId);
     var d  = deps.find(x=>x.id===r.depotId);
     var nbLignes = r.lignes?.length||0;
     var totalRec = (r.lignes||[]).reduce((a,l)=>a+(l.qteRecue||0)*(l.prixUnit||0),0);
+    var st = bc?.statut;
+    var stBadge = st ? `<span class="badge" style="padding:3px 8px;border-radius:20px;font-size:10px;color:${statC[st]||'#555'};background:${statBg[st]||'#f3f4f6'};font-weight:700">${statL[st]||st}</span>` : '—';
     return `<tr><td><strong>${esc(bc?.ref||'—')}</strong>${r.bl?'<div style="font-size:10px;color:var(--text3)">BL '+esc(r.bl)+'</div>':''}</td>`
       + `<td style="color:var(--text3)">${r.date||'—'}</td>`
       + `<td>${esc(f?.nom||'—')}</td>`
       + `<td>${esc(d?.nom||'—')}</td>`
       + `<td>${nbLignes} ligne(s)</td>`
       + `<td style="font-weight:700">${Math.round(totalRec).toLocaleString()} F</td>`
+      + `<td>${stBadge}</td>`
       + `<td><button class="btn btn-sm btn-gh" onclick="printBR(${r.id})" title="Aperçu / Imprimer le bon de réception"><i class="fas fa-print"></i></button></td></tr>`;
   }).join('');
   ca.innerHTML = `<div class="page-header"><div class="page-header-title"><i class="fas fa-truck-ramp-box" style="color:var(--g2)"></i> Réceptions (bons de livraison fournisseur)</div>`
     + `<button class="btn btn-sm btn-gh" onclick="goTo('bcs')"><i class="fas fa-arrow-left"></i> Bons de commande</button></div>`
-    + `<div class="stock-page"><div class="card"><div class="card-hd">Toutes les réceptions (${recs.length})</div>`
-    + `<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>BC</th><th>Date</th><th>Fournisseur</th><th>Dépôt</th><th>Lignes</th><th>Total</th><th>Actions</th></tr></thead>`
-    + `<tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucune réception enregistrée</td></tr>'}</tbody></table></div></div></div>`;
+    + `<div class="stock-page"><div class="card"><div class="card-hd">Toutes les réceptions (${recs.length}) — le statut indique si la commande d'origine est soldée ou encore partielle</div>`
+    + `<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>BC</th><th>Date</th><th>Fournisseur</th><th>Dépôt</th><th>Lignes</th><th>Total</th><th>Statut commande</th><th>Actions</th></tr></thead>`
+    + `<tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucune réception enregistrée</td></tr>'}</tbody></table></div></div></div>`;
 }
 window.renderReceptions = renderReceptions;
 
@@ -14010,6 +14108,54 @@ async function collectRapportData(type, customMin=null, customMax=null){
   };
 }
 
+// ── Collecte : Approvisionnement (BC, réceptions, fournisseurs) sur une période ──
+async function collectApprovisionnementData(dateMin, dateMax){
+  const [bcs, fourns, recs] = await Promise.all([getAll(S.BCS), getAll(S.FOURNISSEURS), getAll(S.RECS)]);
+  const inPeriod = d => d && d >= dateMin && d <= dateMax;
+  const bcsP = bcs.filter(b=>inPeriod(b.date));
+  const recsP = recs.filter(r=>inPeriod(r.date));
+  const montantCommande = bcsP.reduce((a,b)=>a+(b.totalHT||0),0);
+  const montantReceptionne = recsP.reduce((a,r)=>a+(r.lignes||[]).reduce((s,l)=>s+(l.qteRecue||0)*(l.prixUnit||0),0),0);
+  const todayStr = new Date().toISOString().slice(0,10);
+  const bcEnAttente = bcs.filter(b=>b.statut==='sent'||b.statut==='partial');
+  const bcEnRetard = bcEnAttente.filter(b=>b.dateLiv && b.dateLiv < todayStr);
+
+  // Délai moyen de livraison : date de la commande → date de la réception, pour les réceptions de la période
+  const delais=[];
+  recsP.forEach(r=>{
+    const bc=bcs.find(x=>x.id===r.bcId);
+    if(bc && bc.date && r.date){
+      const j=Math.round((new Date(r.date)-new Date(bc.date))/86400000);
+      if(j>=0) delais.push(j);
+    }
+  });
+  const delaiMoyen = delais.length ? delais.reduce((a,b)=>a+b,0)/delais.length : null;
+
+  // Performance par fournisseur sur la période
+  const parFourn = {};
+  bcsP.forEach(b=>{
+    const nom = fourns.find(f=>f.id===b.fournId)?.nom || '—';
+    if(!parFourn[nom]) parFourn[nom]={nom,nbBC:0,montant:0,nbRetard:0};
+    parFourn[nom].nbBC++; parFourn[nom].montant+=b.totalHT||0;
+  });
+  bcEnRetard.forEach(b=>{
+    const nom = fourns.find(f=>f.id===b.fournId)?.nom || '—';
+    if(parFourn[nom]) parFourn[nom].nbRetard++;
+  });
+  const topFournisseurs = Object.values(parFourn).sort((a,b)=>b.montant-a.montant).slice(0,10);
+
+  // Top articles commandés sur la période
+  const parProduit={};
+  bcsP.forEach(b=>(b.lignes||[]).forEach(l=>{
+    const k=l.designation||'—';
+    if(!parProduit[k]) parProduit[k]={designation:k,qte:0,montant:0};
+    parProduit[k].qte+=l.qte||0; parProduit[k].montant+=(l.qte||0)*(l.prixUnit||0);
+  }));
+  const topProduits = Object.values(parProduit).sort((a,b)=>b.montant-a.montant).slice(0,10);
+
+  return { bcsP, recsP, montantCommande, montantReceptionne, bcEnAttente, bcEnRetard, delaiMoyen, topFournisseurs, topProduits, fourns };
+}
+
 // ── Collecte : Production vs Conditionnement, groupée par Bâtiment > Ligne ──
 async function collectProdCondData(dateMin, dateMax, lotId=''){
   const [flocks, eggProd, mortalite, feeds, waters, cond, buildings, lines] = await Promise.all([
@@ -14407,6 +14553,15 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#534AB7;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('stocks')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#534AB7;border:1.5px solid #c4b5fd;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('stocks')"><i class="fas fa-eye"></i></button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:0;border-left:4px solid #ea580c">
+        <div style="padding:11px 14px 4px;font-weight:700;font-size:13px">🚚 Approvisionnement</div>
+        <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">BC · Fournisseurs · Délais · Retards</div>
+        <div style="padding:0 10px 12px;display:flex;gap:7px">
+          <button style="flex:1;padding:11px 0;background:#ea580c;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('appro')"><i class="fas fa-print"></i> Imprimer</button>
+          <button style="padding:11px 14px;background:#fff;color:#ea580c;border:1.5px solid #fdba74;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('appro')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15152,6 +15307,7 @@ window.printEtatPeriodique = async function(type, preview=false){
   else if(type==='gmao') corps = buildCorpsGMAO(data, cfg);
   else if(type==='bilan') corps = buildCorpsBilan(data, cfg);
   else if(type==='prodcond') corps = buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId), cfg);
+  else if(type==='appro') corps = buildCorpsApprovisionnement(await collectApprovisionnementData(dateMin, dateMax), cfg);
 
   const html = buildDocumentImprimable(entreprise, corps, cfg, type, dateMin, dateMax, true);
   const w = window.open('','_blank','width=960,height=750');
@@ -15168,7 +15324,8 @@ function buildEnteteEtat(cfg, type, dateMin, dateMax){
   const titreType = {
     production:'ÉTAT DE PRODUCTION',finance:'ÉTAT FINANCIER',stocks:'ÉTAT DES STOCKS',
     commercial:'ÉTAT COMMERCIAL',gmao:'ÉTAT GMAO',bilan:'BILAN COMPLET',
-    prodcond:'PRODUCTION vs CONDITIONNEMENT (par ligne / bâtiment)'
+    prodcond:'PRODUCTION vs CONDITIONNEMENT (par ligne / bâtiment)',
+    appro:'ÉTAT D\'APPROVISIONNEMENT'
   }[type]||'ÉTAT PÉRIODIQUE';
   const fmtDate = d => d ? new Date(d).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}) : '—';
   return {logo, titreType, fmtDate, dateMin, dateMax};
@@ -15334,6 +15491,69 @@ function buildCorpsStocks(data, cfg){
     <table><thead><tr><th>Date</th><th>Type</th><th>Produit</th><th style="text-align:right">Quantité</th><th>Unité</th><th>Motif</th></tr></thead>
     <tbody>${mvtRows||'<tr><td colspan="6" style="text-align:center;color:#aaa">Aucun mouvement</td></tr>'}</tbody>
     </table>
+  </div>`;
+}
+
+// ── Corps : Approvisionnement ──
+function buildCorpsApprovisionnement(data, cfg){
+  const dev = cfg.devise||'FCFA';
+  const statutLbl={draft:'Brouillon',sent:'Envoyé',partial:'Partiel',done:'Soldé'};
+  const bcRows = data.bcsP.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(b=>{
+    const f=data.fourns.find(x=>x.id===b.fournId);
+    return `<tr>
+      <td>${b.date||'—'}</td>
+      <td><strong>${esc(b.ref||'—')}</strong></td>
+      <td>${esc(f?.nom||'—')}</td>
+      <td style="text-align:right;font-weight:700">${(b.totalHT||0).toLocaleString('fr-FR')} ${dev}</td>
+      <td style="text-align:center"><span class="${b.statut==='done'?'badge-ok':'badge-warn'}">${statutLbl[b.statut]||b.statut}</span></td>
+    </tr>`;
+  }).join('');
+  const retardRows = data.bcEnRetard.map(b=>{
+    const f=data.fourns.find(x=>x.id===b.fournId);
+    return `<tr style="background:#fff5f5">
+      <td><strong>${esc(b.ref||'—')}</strong></td>
+      <td>${esc(f?.nom||'—')}</td>
+      <td>${b.dateLiv||'—'}</td>
+      <td style="text-align:right;font-weight:700">${(b.totalHT||0).toLocaleString('fr-FR')} ${dev}</td>
+    </tr>`;
+  }).join('');
+  const fournRows = data.topFournisseurs.map(f=>`<tr>
+    <td><strong>${esc(f.nom)}</strong></td>
+    <td style="text-align:right">${f.nbBC}</td>
+    <td style="text-align:right;font-weight:700">${f.montant.toLocaleString('fr-FR')} ${dev}</td>
+    <td style="text-align:center">${f.nbRetard>0?`<span class="badge-err">${f.nbRetard} retard(s)</span>`:'<span class="badge-ok">✓ OK</span>'}</td>
+  </tr>`).join('');
+  const produitRows = data.topProduits.map(p=>`<tr>
+    <td><strong>${esc(p.designation)}</strong></td>
+    <td style="text-align:right">${p.qte.toLocaleString('fr-FR')}</td>
+    <td style="text-align:right;font-weight:700">${p.montant.toLocaleString('fr-FR')} ${dev}</td>
+  </tr>`).join('');
+  return `
+  <div class="kpis">
+    <div class="kpi-box"><div class="kpi-val">${data.bcsP.length}</div><div class="kpi-lbl">BC émis (période)</div></div>
+    <div class="kpi-box"><div class="kpi-val">${Math.round(data.montantCommande/1000).toLocaleString('fr-FR')}K</div><div class="kpi-lbl">Montant commandé ${dev}</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:${data.bcEnRetard.length?'#c1121f':'#059669'}">${data.bcEnRetard.length}</div><div class="kpi-lbl">Commandes en retard</div></div>
+    <div class="kpi-box"><div class="kpi-val">${data.delaiMoyen!==null?data.delaiMoyen.toFixed(1)+' j':'—'}</div><div class="kpi-lbl">Délai moyen livraison</div></div>
+  </div>
+  ${data.bcEnRetard.length?`<div class="section">
+    <div class="section-title">⚠ Commandes en retard de livraison</div>
+    <table><thead><tr><th>Réf.</th><th>Fournisseur</th><th>Livraison prévue</th><th style="text-align:right">Montant</th></tr></thead>
+    <tbody>${retardRows}</tbody></table>
+  </div>`:''}
+  <div class="section">
+    <div class="section-title">Performance fournisseurs (période)</div>
+    <table><thead><tr><th>Fournisseur</th><th style="text-align:right">Nb BC</th><th style="text-align:right">Montant</th><th style="text-align:center">Statut</th></tr></thead>
+    <tbody>${fournRows||'<tr><td colspan="4" style="text-align:center;color:#aaa">Aucun achat sur la période</td></tr>'}</tbody></table>
+  </div>
+  <div class="section">
+    <div class="section-title">Top articles commandés</div>
+    <table><thead><tr><th>Article</th><th style="text-align:right">Qté commandée</th><th style="text-align:right">Montant</th></tr></thead>
+    <tbody>${produitRows||'<tr><td colspan="3" style="text-align:center;color:#aaa">Aucune ligne</td></tr>'}</tbody></table>
+  </div>
+  <div class="section">
+    <div class="section-title">Bons de commande (période)</div>
+    <table><thead><tr><th>Date</th><th>Réf.</th><th>Fournisseur</th><th style="text-align:right">Montant</th><th style="text-align:center">Statut</th></tr></thead>
+    <tbody>${bcRows||'<tr><td colspan="5" style="text-align:center;color:#aaa">Aucun bon de commande</td></tr>'}</tbody></table>
   </div>`;
 }
 
