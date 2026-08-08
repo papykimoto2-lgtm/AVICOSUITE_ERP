@@ -6684,11 +6684,51 @@ window.msgCreerGroupe=async function(){
 // ══════════════════════════════════════════════════════════
 
 // ══ STOCKS ══
+let stocksCharts={cat:null,dep:null};
 async function renderStocks(ca){
   const[prods,deps]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS)]);
   const stockTot=await getStockTotal();const bal=await getBalance();
   const cats=['aliment','medicament','oeuf','viande','materiel','intrant'];
   const catL={aliment:'🌾 Aliment',medicament:'💊 Médicaments',oeuf:'🥚 Œufs',viande:'🍗 Viande',materiel:'🔧 Matériel',intrant:'📦 Intrants'};
+  const catLSimple={aliment:'Aliment',medicament:'Médicaments',oeuf:'Œufs',viande:'Viande',materiel:'Matériel',intrant:'Intrants'};
+
+  // ── TABLEAU DE BORD : indicateurs globaux + répartition de la valeur du stock ──
+  let valeurTotale=0;const critiques=[];const faibles=[];const ruptures=[];
+  for(const p of prods){
+    const q=stockTot[p.id]||0;valeurTotale+=q*(p.prix||0);
+    if(q<=0) ruptures.push(p);
+    if(stockEnAlerte(p,q)) critiques.push(p);
+    else if(!p.alerteDesactivee&&p.seuil>0&&q<p.seuil*1.5) faibles.push(p);
+  }
+  const catVals={};for(const p of prods){const v=(stockTot[p.id]||0)*(p.prix||0);catVals[p.categorie]=(catVals[p.categorie]||0)+v;}
+  const depInfo=deps.map(d=>{
+    const depQ=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===d.id).reduce((a,[,v])=>a+Math.max(0,v),0);
+    const depVal=prods.reduce((a,p)=>a+Math.max(0,bal[`${p.id}_${d.id}`]||0)*(p.prix||0),0);
+    const pct=d.capacite>0?Math.min(100,depQ/d.capacite*100):0;
+    return{dep:d,depQ,depVal,pct};
+  });
+  const topAlertes=[...critiques,...faibles].sort((a,b)=>(stockTot[a.id]||0)-(stockTot[b.id]||0)).slice(0,8).map(p=>({p,q:stockTot[p.id]||0}));
+
+  const dashHtml=`
+    <div class="g4">
+      <div class="kpi kpi-g"><div class="kpi-lbl">💰 Valeur totale du stock</div><div class="kpi-val">${Math.round(valeurTotale/1000)}K</div><div class="kpi-sub">FCFA · ${prods.length} référence(s)</div></div>
+      <div class="kpi ${critiques.length>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">⚠️ Articles critiques</div><div class="kpi-val">${critiques.length}</div><div class="kpi-sub">Sous le seuil d'alerte</div></div>
+      <div class="kpi ${faibles.length>0?'kpi-a':'kpi-g'}"><div class="kpi-lbl">🟡 Stock faible</div><div class="kpi-val">${faibles.length}</div><div class="kpi-sub">Sous 1,5× le seuil</div></div>
+      <div class="kpi ${ruptures.length>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">🚫 Ruptures</div><div class="kpi-val">${ruptures.length}</div><div class="kpi-sub">Stock à zéro ou négatif</div></div>
+    </div>
+    ${topAlertes.length?`<div class="card" style="border:1.5px solid #fcd34d">
+      <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Articles à surveiller (${critiques.length+faibles.length})</span></div>
+      <div class="card-bd" style="display:flex;flex-direction:column;gap:8px">
+        ${topAlertes.map(({p,q})=>{const al=stockEnAlerte(p,q);const pct=p.seuil>0?Math.min(100,q/p.seuil*100):0;return `<div style="display:flex;align-items:center;gap:10px;background:${al?'var(--red-bg)':'var(--amber-bg)'};border:1px solid ${al?'#fca5a5':'#fcd34d'};border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas ${al?'fa-box-open':'fa-exclamation-triangle'}" style="color:${al?'var(--red)':'var(--amber-d)'}"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${esc(p.nom)}</strong> — ${q.toFixed(1)} ${p.unite} <span style="color:var(--text3)">/ seuil ${p.seuil}</span><div class="prog" style="width:130px;margin-top:3px"><div class="prog-fill" style="width:${pct}%;background:${al?'var(--red)':'var(--amber)'}"></div></div></div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',${p.id})">📥 Entrée</button></div>`;}).join('')}
+      </div>
+    </div>`:''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+      <div class="card" style="margin-bottom:0"><div class="card-hd">📦 Valeur par catégorie</div><div class="card-bd" style="position:relative;height:200px"><canvas id="stocksCatChart"></canvas></div></div>
+      <div class="card" style="margin-bottom:0"><div class="card-hd">🏭 Valeur par dépôt</div><div class="card-bd" style="position:relative;height:200px"><canvas id="stocksDepChart"></canvas></div></div>
+    </div>
+    ${deps.length?`<div class="card"><div class="card-hd">📊 Taux de remplissage par dépôt</div><div class="card-bd">${depInfo.map(({dep,depQ,pct})=>{const cl=pct>85?'var(--red)':pct>60?'var(--amber)':'var(--g3)';return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span><strong>${esc(dep.nom)}</strong></span><span style="color:var(--text3)">${dep.capacite>0?Math.round(depQ)+'/'+dep.capacite:Math.round(depQ)+' (capacité non définie)'}</span></div><div class="prog"><div class="prog-fill" style="width:${dep.capacite>0?pct:0}%;background:${cl}"></div></div></div>`;}).join('')}</div></div>`:''}
+  `;
+
   let html='';
   for(const cat of cats){
     const cp=prods.filter(p=>p.categorie===cat);if(!cp.length) continue;
@@ -6701,7 +6741,21 @@ async function renderStocks(ca){
     }).join('');
     html+=`<div class="card"><div class="card-hd"><span>${catL[cat]}</span><span style="font-size:11px;color:var(--text3)">${cp.length} réf.</span></div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Produit</th><th>Par dépôt</th><th>Stock total</th><th>Niveau</th><th>Statut</th><th>Valeur</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-boxes-stacked" style="color:var(--g2)"></i> État des stocks</div><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Mouvement</button></div><div class="stock-page">${html||'<div style="color:var(--text3);text-align:center;padding:40px">Aucun produit. Créez-en un dans le catalogue.</div>'}</div>`;
+  if(stocksCharts.cat){stocksCharts.cat.destroy();stocksCharts.cat=null;}
+  if(stocksCharts.dep){stocksCharts.dep.destroy();stocksCharts.dep=null;}
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-boxes-stacked" style="color:var(--g2)"></i> État des stocks</div><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Mouvement</button></div><div class="stock-page">
+    <div style="font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><i class="fas fa-chart-pie" style="color:var(--g2)"></i> Tableau de bord</div>
+    ${dashHtml}
+    <div style="font-weight:700;font-size:13px;margin:18px 0 8px;display:flex;align-items:center;gap:6px"><i class="fas fa-list" style="color:var(--g2)"></i> Détail par catégorie</div>
+    ${html||'<div style="color:var(--text3);text-align:center;padding:40px">Aucun produit. Créez-en un dans le catalogue.</div>'}
+  </div>`;
+
+  const catLabelsKeys=Object.keys(catVals).filter(k=>catVals[k]>0);
+  const ctxCat=document.getElementById('stocksCatChart');
+  if(ctxCat&&catLabelsKeys.length) stocksCharts.cat=new Chart(ctxCat,{type:'doughnut',data:{labels:catLabelsKeys.map(k=>catLSimple[k]||k),datasets:[{data:catLabelsKeys.map(k=>Math.round(catVals[k]/1000)),backgroundColor:['#2d6a4f','#1565c0','#f9c74f','#c1121f','#6a1b9a','#888'],borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:11},boxWidth:12}}}}});
+  const depWithVal=depInfo.filter(d=>d.depVal>0);
+  const ctxDep=document.getElementById('stocksDepChart');
+  if(ctxDep&&depWithVal.length) stocksCharts.dep=new Chart(ctxDep,{type:'bar',data:{labels:depWithVal.map(d=>d.dep.nom),datasets:[{data:depWithVal.map(d=>Math.round(d.depVal/1000)),backgroundColor:'rgba(45,106,79,.6)',borderColor:'#2d6a4f',borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+'K'}},x:{grid:{display:false}}}}});
 }
 
 // ══ MOUVEMENTS ══
