@@ -1159,9 +1159,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <!-- 3. APPROVISIONNEMENT — intrants entrants (aliments, intrants vétérinaires…) -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ③ Approvisionnement</div>
   <div class="nav-item nav-item-biz" id="nav-fourns"  onclick="goTo('fourns')"><i class="fas fa-truck"></i> Fournisseurs</div>
-  <div class="nav-item nav-item-biz" id="nav-bcs"     onclick="goTo('bcs')"><i class="fas fa-file-invoice"></i> Bons de commande</div>
-  <div class="nav-item nav-item-biz" id="nav-reappro" onclick="goTo('reappro')"><i class="fas fa-robot"></i> Réappro. automatique</div>
-  <div class="nav-item nav-item-biz" id="nav-prods"   onclick="goTo('prods')"><i class="fas fa-tag"></i> Produits & Matières</div>
+  <div class="nav-item nav-item-biz" id="nav-appro"   onclick="goTo('appro')"><i class="fas fa-dolly"></i> Approvisionnement</div>
 
   <!-- 4. FABRICATION — transformation des matières premières en aliments -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ④ Fabrication</div>
@@ -3010,6 +3008,7 @@ function canAccessPage(page){
   const rp = ROLE_PERMS[currentUser.role];
   if(!rp) return false;
   if(rp.pages==='all') return true;
+  if(page==='appro') return ['bcs','receptions','reappro','prods'].some(p=>rp.pages.includes(p));
   return rp.pages.includes(page);
 }
 
@@ -4263,6 +4262,7 @@ async function render(){
   else if(curPage==='stocks') await renderStocks(ca);
   else if(curPage==='mvts') await renderMvts(ca,mvtPage);
   else if(curPage==='fourns') await renderFourns(ca);
+  else if(curPage==='appro') await renderApprovisionnement(ca);
   else if(curPage==='bcs') await renderBCs(ca);
   else if(curPage==='receptions') await renderReceptions(ca);
   else if(curPage==='prods') await renderProds(ca);
@@ -6774,6 +6774,43 @@ async function exportMvtCSV(){
 }
 window.exportMvtCSV=exportMvtCSV;
 
+// ══ MODULE APPROVISIONNEMENT — page à onglets : BC / Réception / Réappro auto / Produits & Matières ══
+function apCA(){ return document.getElementById('approTabContent') || document.getElementById('contentArea'); }
+let approTab='bcs';
+async function renderApprovisionnement(ca){
+  const allTabs=[
+    {id:'bcs',        page:'bcs',        icon:'fa-file-invoice',      label:'Bon de commande'},
+    {id:'receptions', page:'receptions', icon:'fa-truck-ramp-box',    label:'Bon de réception'},
+    {id:'reappro',    page:'reappro',    icon:'fa-robot',             label:'Réappro. automatique'},
+    {id:'prods',      page:'prods',      icon:'fa-tag',               label:'Produit et matière'},
+  ].filter(t=>canAccessPage(t.page));
+  if(!allTabs.length){ ca.innerHTML='<div class="page-header"><div class="page-header-title">Approvisionnement</div></div><div class="stock-page"><div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Accès non autorisé.</div></div></div>'; return; }
+  if(!allTabs.some(t=>t.id===approTab)) approTab=allTabs[0].id;
+  const tabNav=allTabs.map(t=>`<button class="tab-btn ${approTab===t.id?'on':''}" onclick="switchApproTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
+  ca.innerHTML=`
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-dolly" style="color:var(--g2)"></i> Approvisionnement</div></div>
+    <div class="tab-nav" id="approTabNav">${tabNav}</div>
+    <div id="approTabContent" class="stock-page"></div>
+  `;
+  await renderApproTab();
+}
+window.renderApprovisionnement=renderApprovisionnement;
+window.switchApproTab=async function(t){
+  approTab=t;
+  document.querySelectorAll('#approTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchApproTab('${t}')`));
+  await renderApproTab();
+};
+async function renderApproTab(){
+  const el=apCA();if(!el) return;
+  if(approTab==='bcs') await renderBCs(el);
+  else if(approTab==='receptions') await renderReceptions(el);
+  else if(approTab==='reappro') await renderReappro(el);
+  else if(approTab==='prods') await renderProds(el);
+}
+
+function goApproSub(id){ if(document.getElementById('approTabContent')) switchApproTab(id); else goTo(id); }
+window.goApproSub=goApproSub;
+
 // ══ FOURNISSEURS ══
 async function renderFourns(ca){
   const[fourns,bcs]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.BCS)]);
@@ -6807,7 +6844,7 @@ async function renderBCs(ca){
   const statC={draft:'bc-draft',sent:'bc-sent',partial:'bc-partial',done:'bc-done'};
   const wait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
   const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}<button class="btn btn-sm btn-gh" onclick="printBC(${bc.id})" title="Aperçu / Imprimer le bon de commande"><i class="fas fa-print"></i></button> ${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="goTo('receptions')"><i class="fas fa-truck-ramp-box"></i> Réceptions</button><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div></div><div class="stock-page">
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="goApproSub('receptions')"><i class="fas fa-truck-ramp-box"></i> Réceptions</button><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div></div><div class="stock-page">
     <div class="g4"><div class="kpi kpi-b"><div class="kpi-lbl">Total BC</div><div class="kpi-val">${bcs.length}</div></div><div class="kpi kpi-a"><div class="kpi-lbl">En attente</div><div class="kpi-val">${wait}</div></div><div class="kpi kpi-g"><div class="kpi-lbl">Réceptionnés</div><div class="kpi-val">${bcs.filter(b=>b.statut==='done').length}</div></div><div class="kpi kpi-b"><div class="kpi-lbl">Brouillons</div><div class="kpi-val">${bcs.filter(b=>b.statut==='draft').length}</div></div></div>
     <div class="card"><div class="card-hd">Bons de commande</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Référence</th><th>Date</th><th>Fournisseur</th><th>Lignes</th><th>Total HT</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun bon de commande</td></tr>'}</tbody></table></div></div>
   </div>`;
@@ -6843,11 +6880,11 @@ async function saveBC(statut){
   if(!lignes.length){toast('Ajoutez au moins une ligne','err');return;}
   const totalHT=lignes.reduce((a,l)=>a+l.qte*l.prixUnit,0);
   await addRec(S.BCS,{fournId,ref,date,dateLiv,statut,lignes,commentaire:comment,totalHT});
-  closeOverlay('mBC');toast(statut==='sent'?'BC envoyé':'Brouillon enregistré');await renderBCs(document.getElementById('contentArea'));
+  closeOverlay('mBC');toast(statut==='sent'?'BC envoyé':'Brouillon enregistré');await renderBCs(apCA());
 }
 window.saveBC=saveBC;
-window.markSent=async(id)=>{const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===id);if(bc){await updRec(S.BCS,id,{...bc,statut:'sent'});toast('BC envoyé');await renderBCs(document.getElementById('contentArea'));}};
-window.delBC=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.BCS,id);toast('BC supprimé');await renderBCs(document.getElementById('contentArea'));}};
+window.markSent=async(id)=>{const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===id);if(bc){await updRec(S.BCS,id,{...bc,statut:'sent'});toast('BC envoyé');await renderBCs(apCA());}};
+window.delBC=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.BCS,id);toast('BC supprimé');await renderBCs(apCA());}};
 
 async function openRecModal(bcId){
   recBCId=bcId;const[bcs,deps]=await Promise.all([getAll(S.BCS),getAll(S.DEPOTS)]);const bc=bcs.find(x=>x.id===bcId);if(!bc) return;
@@ -6879,7 +6916,7 @@ async function saveRec(){
   const allDone=bc.lignes.every(l=>l.qteLivree>=l.qte);await updRec(S.BCS,recBCId,{...bc,statut:allDone?'done':'partial'});
   // ── CONNEXION BC→RECS : archiver la réception pour traçabilité (avec le statut partiel/complet figé) ──
   const newRecId = await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:recLignes,livraisonComplete:allDone,operatorId:currentUser?.id||1,ts:Date.now()});
-  closeOverlay('mRec');toast(allDone?'✓ Réception enregistrée — commande soldée, bon de réception archivé':'✓ Réception partielle enregistrée — bon de réception archivé');await renderBCs(document.getElementById('contentArea'));
+  closeOverlay('mRec');toast(allDone?'✓ Réception enregistrée — commande soldée, bon de réception archivé':'✓ Réception partielle enregistrée — bon de réception archivé');await renderBCs(apCA());
   // Proposer l'aperçu / impression immédiate du bon de réception (livraison de la commande)
   if(newRecId>0 && confirm('Réception enregistrée. Voulez-vous ouvrir l\'aperçu du bon de réception à imprimer ?')){
     printBR(newRecId);
@@ -6952,10 +6989,10 @@ async function saveProd(){
   if(!data.nom){toast('Nom requis','err');return;}
   if(!depotAffecteId){toast('Dépôt d\'affectation requis','err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
-  closeOverlay('mProd');toast(id?'Produit mis à jour':'Produit créé');await renderProds(document.getElementById('contentArea'));
+  closeOverlay('mProd');toast(id?'Produit mis à jour':'Produit créé');await renderProds(apCA());
 }
 window.saveProd=saveProd;
-window.delProd=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(document.getElementById('contentArea'));}};
+window.delProd=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(apCA());}};
 
 // ══ PERSONNEL ══
 async function renderStaff(ca){
@@ -11062,7 +11099,7 @@ window.confirmFneSend = async function(){
   if(resp){
     closeOverlay('mFne');
     if(type==='sale') await renderCommandes(document.getElementById('contentArea'));
-    else await renderBCs(document.getElementById('contentArea'));
+    else await renderBCs(apCA());
   }
 };
 
@@ -11630,7 +11667,7 @@ async function renderReceptions(ca){
       + `<td><button class="btn btn-sm btn-gh" onclick="printBR(${r.id})" title="Aperçu / Imprimer le bon de réception"><i class="fas fa-print"></i></button></td></tr>`;
   }).join('');
   ca.innerHTML = `<div class="page-header"><div class="page-header-title"><i class="fas fa-truck-ramp-box" style="color:var(--g2)"></i> Réceptions (bons de livraison fournisseur)</div>`
-    + `<button class="btn btn-sm btn-gh" onclick="goTo('bcs')"><i class="fas fa-arrow-left"></i> Bons de commande</button></div>`
+    + `<button class="btn btn-sm btn-gh" onclick="goApproSub('bcs')"><i class="fas fa-arrow-left"></i> Bons de commande</button></div>`
     + `<div class="stock-page"><div class="card"><div class="card-hd">Toutes les réceptions (${recs.length}) — le statut indique si la commande d'origine est soldée ou encore partielle</div>`
     + `<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>BC</th><th>Date</th><th>Fournisseur</th><th>Dépôt</th><th>Lignes</th><th>Total</th><th>Statut commande</th><th>Actions</th></tr></thead>`
     + `<tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucune réception enregistrée</td></tr>'}</tbody></table></div></div></div>`;
@@ -16191,7 +16228,7 @@ async function renderReappro(ca){
 /* ── Fonctions window (appelées depuis le HTML) ── */
 
 window.refreshReappro=async function(){
-  const ca=document.getElementById('contentArea');
+  const ca=apCA();
   await renderReappro(ca);
   toast('🔄 Analyse actualisée');
 };
