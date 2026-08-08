@@ -2895,10 +2895,10 @@ const ROLE_PERMS = {
     pages:'all' },
   manager:    { label:'Manager',        icon:'fa-user-tie',    color:'#1565c0', bg:'#e3f2fd',
     pages:['dash','lots','finance','stocks','depots','mvts','clients','commandes','creances',
-           'simubande','fab','gmao','rapports','reappro','prods','fourns','bcs','cond',
+           'simubande','fab','gmao','rapports','reappro','prods','fourns','bcs','receptions','cond',
            'staff','settings','reprocouvoir'] },
   operateur:  { label:'Opérateur',      icon:'fa-hard-hat',    color:'#2d6a4f', bg:'#d8f3dc',
-    pages:['lots','stocks','depots','mvts','fab','cond','gmao','prods','rapports','reprocouvoir'] },
+    pages:['lots','stocks','depots','mvts','fab','cond','gmao','prods','rapports','reprocouvoir','receptions'] },
   commercial: { label:'Commercial',     icon:'fa-briefcase',   color:'#b45309', bg:'#fff3e0',
     pages:['dash','clients','commandes','creances','rapports','cond','stocks'] },
   veterinaire:{ label:'Vétérinaire',    icon:'fa-stethoscope', color:'#6a1b9a', bg:'#f3e5f5',
@@ -2911,6 +2911,7 @@ const ROLE_MODULE_PAGES = [
   {id:'reprocouvoir',label:'Repro. & Couvoir'},
   {id:'stocks',label:'Stocks'}, {id:'depots',label:'Dépôts'}, {id:'mvts',label:'Mouvements'},
   {id:'prods',label:'Produits & Matières'}, {id:'fourns',label:'Fournisseurs'}, {id:'bcs',label:'Bons de commande'},
+  {id:'receptions',label:'Réceptions'},
   {id:'cond',label:'Conditionnement'},
   {id:'clients',label:'Clients'}, {id:'commandes',label:'Commandes'}, {id:'creances',label:'Créances'},
   {id:'finance',label:'Finance'}, {id:'fab',label:'Fabrication aliments'},
@@ -4263,6 +4264,7 @@ async function render(){
   else if(curPage==='mvts') await renderMvts(ca,mvtPage);
   else if(curPage==='fourns') await renderFourns(ca);
   else if(curPage==='bcs') await renderBCs(ca);
+  else if(curPage==='receptions') await renderReceptions(ca);
   else if(curPage==='prods') await renderProds(ca);
   else if(curPage==='staff') await renderStaff(ca);
   else if(curPage==='cond') await renderCond(ca);
@@ -6762,8 +6764,8 @@ async function renderBCs(ca){
   const statL={draft:'Brouillon',sent:'Envoyé',partial:'Partiel',done:'Réceptionné'};
   const statC={draft:'bc-draft',sent:'bc-sent',partial:'bc-partial',done:'bc-done'};
   const wait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
-  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div><div class="stock-page">
+  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}<button class="btn btn-sm btn-gh" onclick="printBC(${bc.id})" title="Aperçu / Imprimer le bon de commande"><i class="fas fa-print"></i></button> ${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="goTo('receptions')"><i class="fas fa-truck-ramp-box"></i> Réceptions</button><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div></div><div class="stock-page">
     <div class="g4"><div class="kpi kpi-b"><div class="kpi-lbl">Total BC</div><div class="kpi-val">${bcs.length}</div></div><div class="kpi kpi-a"><div class="kpi-lbl">En attente</div><div class="kpi-val">${wait}</div></div><div class="kpi kpi-g"><div class="kpi-lbl">Réceptionnés</div><div class="kpi-val">${bcs.filter(b=>b.statut==='done').length}</div></div><div class="kpi kpi-b"><div class="kpi-lbl">Brouillons</div><div class="kpi-val">${bcs.filter(b=>b.statut==='draft').length}</div></div></div>
     <div class="card"><div class="card-hd">Bons de commande</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Référence</th><th>Date</th><th>Fournisseur</th><th>Lignes</th><th>Total HT</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun bon de commande</td></tr>'}</tbody></table></div></div>
   </div>`;
@@ -6823,8 +6825,12 @@ async function saveRec(){
   for(const r of received){if(bc.lignes[r.idx]) bc.lignes[r.idx].qteLivree=(bc.lignes[r.idx].qteLivree||0)+r.qty;await addRec(S.MVTS,{type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,ts:Date.now()});}
   const allDone=bc.lignes.every(l=>l.qteLivree>=l.qte);await updRec(S.BCS,recBCId,{...bc,statut:allDone?'done':'partial'});
   // ── CONNEXION BC→RECS : archiver la réception pour traçabilité ──
-  await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:received.map(r=>({produitId:r.produitId,qteRecue:r.qty,prixUnit:r.prixUnit,unite:r.unite})),operatorId:currentUser?.id||1,ts:Date.now()});
+  const newRecId = await addRec(S.RECS,{bcId:recBCId,fournId:bc.fournId,date,depotId,bl:bl||'',lignes:received.map(r=>({produitId:r.produitId,qteRecue:r.qty,prixUnit:r.prixUnit,unite:r.unite})),operatorId:currentUser?.id||1,ts:Date.now()});
   closeOverlay('mRec');toast('✓ Réception enregistrée — stock mis à jour + bon de réception archivé');await renderBCs(document.getElementById('contentArea'));
+  // Proposer l'aperçu / impression immédiate du bon de réception (livraison de la commande)
+  if(newRecId>0 && confirm('Réception enregistrée. Voulez-vous ouvrir l\'aperçu du bon de réception à imprimer ?')){
+    printBR(newRecId);
+  }
 }
 window.saveRec=saveRec;
 
@@ -11279,6 +11285,259 @@ window.printBL = async function(id){
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
 };
+
+// ── Bon de commande fournisseur : aperçu + impression, entête entreprise + QR sécurité ──
+function buildAndPrintBC(bc, f, cfg){
+  var statL={draft:'Brouillon',sent:'Envoyé',partial:'Partiellement reçu',done:'Réceptionné'};
+  var statC={draft:'#6b7280',sent:'#1565c0',partial:'#b45309',done:'#166534'};
+  var lignes = bc.lignes && bc.lignes.length ? bc.lignes : [];
+  var totalHT = bc.totalHT || lignes.reduce((a,l)=>a+(l.qte||0)*(l.prixUnit||0),0);
+  var rows = lignes.map(l=>{
+    var lt = (l.qte||0)*(l.prixUnit||0);
+    return `<tr><td><strong>${esc(l.designation||'--')}</strong></td>`
+      + `<td style="text-align:right">${l.qte||0}</td>`
+      + `<td>${esc(l.unite||'u')}</td>`
+      + `<td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td>`
+      + `<td style="text-align:right;font-weight:700">${Math.round(lt).toLocaleString('fr-FR')} ${cfg.devise||'F'}</td></tr>`;
+  }).join('');
+  var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
+    ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
+
+  var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  <title>Bon de commande ${esc(bc.ref||'')}</title>
+  <\x73cript src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\x2fscript>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}
+    .doc{max-width:210mm;margin:0 auto;padding:12mm}
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #2d6a4f;padding-bottom:14px;margin-bottom:16px;gap:20px}
+    .doc-type{font-size:22px;font-weight:800;color:#2d6a4f;letter-spacing:1px;text-align:right}
+    .doc-meta{text-align:right;font-size:11px;color:#444;line-height:1.7;margin-top:4px}
+    .badge-stat{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;color:#fff;background:${statC[bc.statut]||'#6b7280'}}
+    .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
+    .party{border-radius:8px;padding:10px 13px;font-size:11px;line-height:1.7}
+    .party-em{background:#f0fdf4;border:1px solid #bbf7d0}
+    .party-cl{background:#f8f9fa;border:1px solid #e5e7eb}
+    .plbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    thead th{background:#2d6a4f;color:#fff;padding:8px 10px;font-size:10px;font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.3px}
+    tbody td{padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:11px}
+    tbody tr:nth-child(even){background:#f9fafb}
+    .totaux{float:right;width:280px;margin-top:4px}
+    .trow{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-bottom:1px solid #eee}
+    .tht{display:flex;justify-content:space-between;padding:8px 0;font-size:14px;font-weight:800;color:#2d6a4f;border-top:2px solid #2d6a4f;margin-top:4px}
+    .sign{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:60px;text-align:center;font-size:11px;clear:both}
+    .sbox{border-top:2px solid #ccc;padding-top:12px;color:#555}
+    .ftr{border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8;display:flex;justify-content:center;align-items:center;gap:16px}
+    .preview-bar{position:sticky;top:0;background:#2d6a4f;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;z-index:10}
+    .preview-bar button{background:#fff;color:#2d6a4f;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;font-family:inherit}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}button{display:none}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression — vérifiez le document ci-dessous</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+  <div class="hdr">
+    ${buildEmetteurHeader(cfg)}
+    <div style="text-align:right">
+      <div class="doc-type">BON DE COMMANDE</div>
+      <div class="doc-meta">
+        <strong>${esc(bc.ref||'—')}</strong><br>
+        Date : <strong>${bc.date||'—'}</strong><br>
+        ${bc.dateLiv?'Livraison souhaitée : <strong>'+esc(bc.dateLiv)+'</strong><br>':''}
+        <span class="badge-stat">${statL[bc.statut]||bc.statut||'—'}</span>
+      </div>
+    </div>
+  </div>
+  <div class="parties">
+    <div class="party party-em">
+      <div class="plbl">Acheteur / Émetteur</div>
+      <strong>${esc(cfg.nomExploitation||'—')}</strong><br>
+      ${cfg.adresse?esc(cfg.adresse)+'<br>':''}${cfg.ville?esc(cfg.ville)+', ':''}${esc(cfg.pays||'')}<br>
+      ${cfg.telephone?'Tél : '+esc(cfg.telephone)+'<br>':''}
+      ${cfg.email?esc(cfg.email):''}
+      ${cfg.nif||cfg.rccm?`<div style="font-size:9px;color:#6b7280;margin-top:3px">${[cfg.nif?'NIF : '+cfg.nif:'',cfg.rccm?'RCCM : '+cfg.rccm:''].filter(Boolean).join(' | ')}</div>`:''}
+    </div>
+    <div class="party party-cl">
+      <div class="plbl">Fournisseur</div>
+      <strong>${esc(f.nom||'—')}</strong><br>
+      ${f.adresse?esc(f.adresse)+'<br>':''}${f.ville?esc(f.ville)+'<br>':''}
+      ${f.contact?'Contact : '+esc(f.contact)+'<br>':''}
+      ${f.tel?'Tél : '+esc(f.tel)+'<br>':''}
+      ${f.email?esc(f.email):''}
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Désignation</th><th style="text-align:right">Qté</th><th>Unité</th><th style="text-align:right">PU</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+  </table>
+  <div class="totaux">
+    <div class="tht"><span>TOTAL COMMANDE</span><span>${Math.round(totalHT).toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
+  </div>
+  ${bc.commentaire?`<div style="clear:both;margin-top:14px;padding:8px 12px;background:#f9fafb;border-radius:6px;font-size:10px;color:#555;font-style:italic">Note : ${esc(bc.commentaire)}</div>`:''}
+  <div class="sign">
+    <div class="sbox">Signature & cachet acheteur<br><br><br><br></div>
+    <div class="sbox">Signature & cachet fournisseur<br><em style="font-size:10px;color:#888">(Bon pour accord)</em><br><br></div>
+  </div>
+  <div class="ftr">
+    <div style="flex:1;text-align:right">
+      ${banqueFtr?banqueFtr+'<br>':''}
+      ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}<br>
+      ${cfg.mentionLegale||'Ce bon de commande engage les deux parties après signature.'}
+    </div>
+    ${buildSecurityQR(cfg, 'BC', bc.ref, totalHT, bc.date)}
+  </div>
+  </div></body></html>`;
+
+  var w = window.open('','_blank','width=900,height=700');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+}
+
+window.printBC = async function(id){
+  var bcs   = await getAll(S.BCS);
+  var fourns = await getAll(S.FOURNISSEURS);
+  var bc = bcs.find(x=>x.id===id);
+  if(!bc){ toast('Bon de commande introuvable','err'); return; }
+  var f = fourns.find(x=>x.id===bc.fournId)||{};
+  var cfg = await getExploitationSettings();
+  buildAndPrintBC(bc, f, cfg);
+};
+
+// ── Bon de réception (livraison de la commande fournisseur) : aperçu + impression ──
+// Chaque réception enregistrée sur un BC (partielle ou totale) génère un bon de
+// réception imprimable — le pendant "livraison" du bon de commande.
+function buildAndPrintBR(rec, bc, f, dep, cfg){
+  var prodsMap = rec._prodsMap || {};
+  var rows = (rec.lignes||[]).map(l=>{
+    var nom = prodsMap[l.produitId]?.nom || l.designation || ('Produit #'+l.produitId);
+    return `<tr><td><strong>${esc(nom)}</strong></td>`
+      + `<td style="text-align:right;font-weight:700;font-size:13px">${l.qteRecue||0}</td>`
+      + `<td>${esc(l.unite||'u')}</td>`
+      + `<td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td>`
+      + `<td style="text-align:right;font-weight:700">${Math.round((l.qteRecue||0)*(l.prixUnit||0)).toLocaleString('fr-FR')} ${cfg.devise||'F'}</td></tr>`;
+  }).join('');
+  var totalRec = (rec.lignes||[]).reduce((a,l)=>a+(l.qteRecue||0)*(l.prixUnit||0),0);
+  var banqueFtr = cfg.nomBanque&&cfg.numeroCompte
+    ? `Domiciliation : ${cfg.nomBanque} | Compte : ${cfg.numeroCompte}${cfg.codeBic?' | BIC : '+cfg.codeBic:''}` : '';
+
+  var html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  <title>Bon de réception ${esc(bc?.ref||'')}${rec.bl?' — BL '+esc(rec.bl):''}</title>
+  <\x73cript src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\x2fscript>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}
+    .doc{max-width:210mm;margin:0 auto;padding:12mm}
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e40af;padding-bottom:14px;margin-bottom:16px;gap:20px}
+    .doc-type{font-size:22px;font-weight:800;color:#1e40af;letter-spacing:1px;text-align:right}
+    .doc-meta{text-align:right;font-size:11px;color:#444;line-height:1.7;margin-top:4px}
+    .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
+    .party{border-radius:8px;padding:10px 13px;font-size:11px;line-height:1.7}
+    .party-em{background:#eff6ff;border:1px solid #bfdbfe}
+    .party-cl{background:#f8f9fa;border:1px solid #e5e7eb}
+    .plbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:4px}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    thead th{background:#1e40af;color:#fff;padding:8px 10px;font-size:10px;font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.3px}
+    tbody td{padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:11px}
+    tbody tr:nth-child(even){background:#f9fafb}
+    .totaux{float:right;width:280px;margin-top:4px}
+    .trow{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-bottom:1px solid #eee}
+    .tht{display:flex;justify-content:space-between;padding:8px 0;font-size:14px;font-weight:800;color:#1e40af;border-top:2px solid #1e40af;margin-top:4px}
+    .sign{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:50px;text-align:center;font-size:11px;clear:both}
+    .sbox{border-top:2px solid #ccc;padding-top:12px;color:#555}
+    .ftr{border-top:2px solid #e5e7eb;margin-top:24px;padding-top:10px;font-size:9px;color:#9ca3af;text-align:center;line-height:1.8;display:flex;justify-content:center;align-items:center;gap:16px}
+    .preview-bar{position:sticky;top:0;background:#1e40af;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;z-index:10}
+    .preview-bar button{background:#fff;color:#1e40af;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;font-family:inherit}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}button{display:none}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression — vérifiez le document ci-dessous</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+  <div class="hdr">
+    ${buildEmetteurHeader(cfg)}
+    <div style="text-align:right">
+      <div class="doc-type">BON DE RÉCEPTION</div>
+      <div class="doc-meta">
+        <strong>${esc(bc?.ref||'—')}</strong>${rec.bl?' — BL fournisseur '+esc(rec.bl):''}<br>
+        Date de réception : <strong>${rec.date||'—'}</strong><br>
+        ${dep?.nom?'Dépôt : <strong>'+esc(dep.nom)+'</strong><br>':''}
+      </div>
+    </div>
+  </div>
+  <div class="parties">
+    <div class="party party-em">
+      <div class="plbl">Réceptionnaire</div>
+      <strong>${esc(cfg.nomExploitation||'—')}</strong><br>
+      ${cfg.adresse?esc(cfg.adresse)+'<br>':''}${cfg.ville||''}<br>
+      ${cfg.telephone?'Tél : '+esc(cfg.telephone):''}
+    </div>
+    <div class="party party-cl">
+      <div class="plbl">Fournisseur</div>
+      <strong>${esc(f?.nom||'—')}</strong><br>
+      ${f?.adresse?esc(f.adresse)+'<br>':''}${f?.ville?esc(f.ville)+'<br>':''}
+      ${f?.tel?'Tél : '+esc(f.tel):''}
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Désignation produit</th><th style="text-align:right">Qté reçue</th><th>Unité</th><th style="text-align:right">PU</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+  </table>
+  <div class="totaux">
+    <div class="tht"><span>TOTAL RÉCEPTIONNÉ</span><span>${Math.round(totalRec).toLocaleString('fr-FR')} ${cfg.devise||'F'}</span></div>
+  </div>
+  <div class="sign">
+    <div class="sbox">Signature & cachet livreur/fournisseur<br><br><br><br></div>
+    <div class="sbox">Signature & cachet réceptionnaire<br><em style="font-size:10px;color:#888">(Marchandise conforme)</em><br><br></div>
+  </div>
+  <div class="ftr">
+    <div style="flex:1;text-align:right">
+      ${banqueFtr?banqueFtr+'<br>':''}
+      ${cfg.nomExploitation||'AviNest Pro'} — Édité le ${new Date().toLocaleDateString('fr-FR')}
+    </div>
+    ${buildSecurityQR(cfg, 'BR', (bc?.ref||'')+(rec.bl?('/'+rec.bl):''), totalRec, rec.date)}
+  </div>
+  </div></body></html>`;
+
+  var w = window.open('','_blank','width=900,height=700');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+}
+
+window.printBR = async function(recId){
+  var [recs, bcs, fourns, deps, prods] = await Promise.all([
+    getAll(S.RECS), getAll(S.BCS), getAll(S.FOURNISSEURS), getAll(S.DEPOTS), getAll(S.PRODUITS)
+  ]);
+  var rec = recs.find(x=>x.id===recId);
+  if(!rec){ toast('Bon de réception introuvable','err'); return; }
+  var bc  = bcs.find(x=>x.id===rec.bcId);
+  var f   = fourns.find(x=>x.id===rec.fournId) || {};
+  var dep = deps.find(x=>x.id===rec.depotId) || {};
+  rec._prodsMap = Object.fromEntries(prods.map(p=>[p.id,p]));
+  var cfg = await getExploitationSettings();
+  buildAndPrintBR(rec, bc, f, dep, cfg);
+};
+
+// ── Historique des réceptions (bons de réception) — liste + impression ──
+async function renderReceptions(ca){
+  var [recs, bcs, fourns, deps] = await Promise.all([
+    getAll(S.RECS), getAll(S.BCS), getAll(S.FOURNISSEURS), getAll(S.DEPOTS)
+  ]);
+  var rows = recs.slice().sort((a,b)=>(b.ts||0)-(a.ts||0)).map(r=>{
+    var bc = bcs.find(x=>x.id===r.bcId);
+    var f  = fourns.find(x=>x.id===r.fournId);
+    var d  = deps.find(x=>x.id===r.depotId);
+    var nbLignes = r.lignes?.length||0;
+    var totalRec = (r.lignes||[]).reduce((a,l)=>a+(l.qteRecue||0)*(l.prixUnit||0),0);
+    return `<tr><td><strong>${esc(bc?.ref||'—')}</strong>${r.bl?'<div style="font-size:10px;color:var(--text3)">BL '+esc(r.bl)+'</div>':''}</td>`
+      + `<td style="color:var(--text3)">${r.date||'—'}</td>`
+      + `<td>${esc(f?.nom||'—')}</td>`
+      + `<td>${esc(d?.nom||'—')}</td>`
+      + `<td>${nbLignes} ligne(s)</td>`
+      + `<td style="font-weight:700">${Math.round(totalRec).toLocaleString()} F</td>`
+      + `<td><button class="btn btn-sm btn-gh" onclick="printBR(${r.id})" title="Aperçu / Imprimer le bon de réception"><i class="fas fa-print"></i></button></td></tr>`;
+  }).join('');
+  ca.innerHTML = `<div class="page-header"><div class="page-header-title"><i class="fas fa-truck-ramp-box" style="color:var(--g2)"></i> Réceptions (bons de livraison fournisseur)</div>`
+    + `<button class="btn btn-sm btn-gh" onclick="goTo('bcs')"><i class="fas fa-arrow-left"></i> Bons de commande</button></div>`
+    + `<div class="stock-page"><div class="card"><div class="card-hd">Toutes les réceptions (${recs.length})</div>`
+    + `<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>BC</th><th>Date</th><th>Fournisseur</th><th>Dépôt</th><th>Lignes</th><th>Total</th><th>Actions</th></tr></thead>`
+    + `<tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucune réception enregistrée</td></tr>'}</tbody></table></div></div></div>`;
+}
+window.renderReceptions = renderReceptions;
 
 
 window.renderCreances = async function(ca) {
