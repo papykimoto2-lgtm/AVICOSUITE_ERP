@@ -1086,7 +1086,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <div class="mob-bottom-nav-items">
     <button class="mob-bnav-item active" id="mbn-dash"      onclick="mobGo('dash')"      aria-label="Tableau de bord"><i class="fas fa-tachometer-alt"></i>Tableau</button>
     <button class="mob-bnav-item"        id="mbn-lots"      onclick="mobGo('lots')"      aria-label="Élevage"><i class="fas fa-egg"></i>Élevage</button>
-    <button class="mob-bnav-item"        id="mbn-stocks"    onclick="mobGo('stocks')"    aria-label="Stocks"><i class="fas fa-boxes-stacked"></i>Stocks</button>
+    <button class="mob-bnav-item"        id="mbn-stock"     onclick="mobGo('stock')"     aria-label="Stock"><i class="fas fa-boxes-stacked"></i>Stock</button>
     <button class="mob-bnav-item"        id="mbn-simubande" onclick="mobGo('simubande')" aria-label="Simulation"><i class="fas fa-calculator"></i>Simu</button>
     <button class="mob-bnav-item"        id="mbn-more"      onclick="mobToggleNav()"     aria-label="Plus"><i class="fas fa-bars"></i>Menu</button>
   </div>
@@ -1171,9 +1171,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
   <!-- 6. STOCK — flux intermédiaire (matières, aliments, produits finis) -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑥ Stock</div>
-  <div class="nav-item nav-item-biz" id="nav-depots"  onclick="goTo('depots')"><i class="fas fa-warehouse"></i> Dépôts</div>
-  <div class="nav-item nav-item-biz" id="nav-stocks"  onclick="goTo('stocks')"><i class="fas fa-boxes-stacked"></i> État des stocks</div>
-  <div class="nav-item nav-item-biz" id="nav-mvts"    onclick="goTo('mvts')"><i class="fas fa-right-left"></i> Mouvements</div>
+  <div class="nav-item nav-item-biz" id="nav-stock"   onclick="goTo('stock')"><i class="fas fa-boxes-stacked"></i> Stock</div>
 
   <!-- 7. CONDITIONNEMENT — rupture dirty→clean (abattage/emballage) : jamais de retour amont après ce point -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑦ Conditionnement</div>
@@ -2964,13 +2962,13 @@ const ROLE_PERMS = {
   admin:      { label:'Administrateur', icon:'fa-crown',       color:'#c1121f', bg:'#ffebee',
     pages:'all' },
   manager:    { label:'Manager',        icon:'fa-user-tie',    color:'#1565c0', bg:'#e3f2fd',
-    pages:['dash','lots','finance','stocks','depots','mvts','clients','commandes','creances',
+    pages:['dash','lots','finance','stock','clients','commandes','creances',
            'simubande','fab','gmao','rapports','reappro','prods','fourns','bcs','receptions','cond',
            'staff','settings','reprocouvoir'] },
   operateur:  { label:'Opérateur',      icon:'fa-hard-hat',    color:'#2d6a4f', bg:'#d8f3dc',
-    pages:['lots','stocks','depots','mvts','fab','cond','gmao','prods','rapports','reprocouvoir','receptions'] },
+    pages:['lots','stock','fab','cond','gmao','prods','rapports','reprocouvoir','receptions'] },
   commercial: { label:'Commercial',     icon:'fa-briefcase',   color:'#b45309', bg:'#fff3e0',
-    pages:['dash','clients','commandes','creances','rapports','cond','stocks'] },
+    pages:['dash','clients','commandes','creances','rapports','cond','stock'] },
   veterinaire:{ label:'Vétérinaire',    icon:'fa-stethoscope', color:'#6a1b9a', bg:'#f3e5f5',
     pages:['lots','fab','gmao','rapports','prods','reprocouvoir'] }
 };
@@ -2979,7 +2977,7 @@ const ROLE_PERMS = {
 const ROLE_MODULE_PAGES = [
   {id:'dash',label:'Tableau de bord'}, {id:'lots',label:'Lots & Élevage'},
   {id:'reprocouvoir',label:'Repro. & Couvoir'},
-  {id:'stocks',label:'Stocks'}, {id:'depots',label:'Dépôts'}, {id:'mvts',label:'Mouvements'},
+  {id:'stock',label:'Stock (Dépôts, État, Mouvements)'},
   {id:'prods',label:'Produits & Matières'}, {id:'fourns',label:'Fournisseurs'}, {id:'bcs',label:'Bons de commande'},
   {id:'receptions',label:'Réceptions'},
   {id:'cond',label:'Conditionnement'},
@@ -3945,7 +3943,7 @@ window.saveUser = async function(id){
 window.buildUserAccessGrid = function(role){
   const rp = ROLE_PERMS[role]||{pages:[]};
   const pages = [
-    ['dash','📊 Dashboard'],['lots','🐔 Élevage'],['stocks','📦 Stocks'],
+    ['dash','📊 Dashboard'],['lots','🐔 Élevage'],['stock','📦 Stock'],
     ['finance','💰 Finance'],['clients','👤 Clients'],['fab','🌾 Fabrication'],
     ['gmao','🔧 GMAO'],['rapports','📋 Rapports'],['settings','⚙️ Paramétrage'],
     ['reprocouvoir','🥚 Repro'],['reappro','🤖 Réappro'],
@@ -4330,9 +4328,7 @@ async function render(){
   const ca=document.getElementById('contentArea');
   if(curPage==='lots') await renderLotsPage(ca);
   else if(curPage==='dash') await renderDash(ca);
-  else if(curPage==='depots') await renderDepots(ca);
-  else if(curPage==='stocks') await renderStocks(ca);
-  else if(curPage==='mvts') await renderMvts(ca,mvtPage);
+  else if(curPage==='stock') await renderStockModule(ca);
   else if(curPage==='fourns') await renderFourns(ca);
   else if(curPage==='appro') await renderApprovisionnement(ca);
   else if(curPage==='bcs') await renderBCs(ca);
@@ -6049,8 +6045,8 @@ async function renderLotRenta(lot,kpi,el){
     </div>
     <div class="card"><div class="card-hd">🔗 Lien vers les stocks</div><div class="card-bd">
       <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Les mouvements de stock liés à ce lot sont tracés automatiquement dans le module Stocks.</p>
-      <button class="btn btn-p btn-sm" onclick="goTo('stocks')"><i class="fas fa-boxes-stacked"></i> Voir l'état des stocks</button>
-      <button class="btn btn-gh btn-sm" onclick="goTo('mvts')"><i class="fas fa-right-left"></i> Voir les mouvements</button>
+      <button class="btn btn-p btn-sm" onclick="goStockSub('stocks')"><i class="fas fa-boxes-stacked"></i> Voir l'état des stocks</button>
+      <button class="btn btn-gh btn-sm" onclick="goStockSub('mvts')"><i class="fas fa-right-left"></i> Voir les mouvements</button>
     </div></div>
   `;
 }
@@ -6251,9 +6247,9 @@ async function renderDash(ca){
       ${nbActions>0?`<div class="card" style="margin-bottom:16px;border:1.5px solid #fcd34d">
         <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Actions prioritaires (${nbActions})</span></div>
         <div class="card-bd" style="display:flex;flex-direction:column;gap:8px">
-          ${crit.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-box-open" style="color:var(--red)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${crit.length} article${crit.length>1?'s':''}</strong> sous le seuil critique</div><button class="btn btn-sm btn-p" onclick="goTo('stocks')">Voir</button></div>`:''}
+          ${crit.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-box-open" style="color:var(--red)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${crit.length} article${crit.length>1?'s':''}</strong> sous le seuil critique</div><button class="btn btn-sm btn-p" onclick="goStockSub('stocks')">Voir</button></div>`:''}
           ${bcEnRetard.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--amber-bg);border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-truck" style="color:var(--amber-d)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${bcEnRetard.length} commande${bcEnRetard.length>1?'s':''}</strong> en retard de livraison fournisseur</div><button class="btn btn-sm btn-p" onclick="goTo('bcs')">Relancer</button></div>`:''}
-          ${depSatures.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-warehouse" style="color:var(--red)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${depSatures.length} dépôt${depSatures.length>1?'s':''}</strong> proche(s) de saturation (&gt;85%)</div><button class="btn btn-sm btn-p" onclick="goTo('depots')">Voir</button></div>`:''}
+          ${depSatures.length?`<div style="display:flex;align-items:center;gap:10px;background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas fa-warehouse" style="color:var(--red)"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${depSatures.length} dépôt${depSatures.length>1?'s':''}</strong> proche(s) de saturation (&gt;85%)</div><button class="btn btn-sm btn-p" onclick="goStockSub('depots')">Voir</button></div>`:''}
         </div>
       </div>`:''}
       ${crit.length?`<div style="margin-bottom:16px"><div style="font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><i class="fas fa-exclamation-triangle" style="color:var(--red)"></i> Détail alertes stock critique (${crit.length})</div>${crit.map(p=>{const q=stockTot[p.id]||0;const pct=p.seuil>0?Math.min(100,q/p.seuil*100):0;return `<div style="background:${q<=0?'var(--red-bg)':'var(--amber-bg)'};border:1px solid ${q<=0?'#fca5a5':'#fcd34d'};border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px"><i class="fas fa-exclamation-circle" style="color:${q<=0?'var(--red)':'var(--amber-d)'}"></i><div style="flex:1"><strong>${p.nom}</strong> — Stock: <strong>${q.toFixed(1)} ${p.unite}</strong> / Seuil: ${p.seuil}<div class="prog" style="width:120px;margin-top:3px"><div class="prog-fill" style="width:${pct}%;background:${q<=0?'var(--red)':'var(--amber)'}"></div></div></div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree')">📥 Saisir entrée</button></div>`;}).join('')}</div>`:''}
@@ -6269,7 +6265,7 @@ async function renderDash(ca){
         </div></div>
         <div class="card" style="margin-bottom:0"><div class="card-hd">💰 Top articles en valeur</div><div class="card-bd">${topArticles.length?topArticles.map(a=>`<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px"><strong>${esc(a.nom)}</strong></span><span style="color:var(--text3)">${Math.round(a.val/1000)}K</span></div><div class="prog"><div class="prog-fill" style="width:${Math.max(4,a.val/maxArtVal*100)}%;background:var(--g2)"></div></div></div>`).join(''):'<div style="text-align:center;color:var(--text3);padding:14px">Aucune donnée</div>'}</div></div>
       </div>
-      <div class="card"><div class="card-hd"><span>📋 Derniers mouvements</span><button class="btn btn-sm btn-gh" onclick="goTo('mvts')">Tout voir →</button></div><div class="card-bd tbl-wrap">${buildMvtTable(mvts.slice().sort((a,b)=>b.ts-a.ts).slice(0,8),prods,deps)}</div></div>
+      <div class="card"><div class="card-hd"><span>📋 Derniers mouvements</span><button class="btn btn-sm btn-gh" onclick="goStockSub('mvts')">Tout voir →</button></div><div class="card-bd tbl-wrap">${buildMvtTable(mvts.slice().sort((a,b)=>b.ts-a.ts).slice(0,8),prods,deps)}</div></div>
     </div>
   `;
   const cats={aliment:0,medicament:0,oeuf:0,viande:0,materiel:0,intrant:0};
@@ -6291,6 +6287,45 @@ function buildMvtTable(mvts,prods,deps){
 }
 
 // ══ DÉPÔTS ══
+// ══ STOCK — module unifié à onglets (Dépôts / État des stocks / Mouvements) ══
+function stCA(){ return document.getElementById('stockTabContent') || document.getElementById('contentArea'); }
+let stockTab='stocks';
+async function renderStockModule(ca){
+  if(!canAccessPage('stock')){ ca.innerHTML='<div class="page-header"><div class="page-header-title">Stock</div></div><div class="stock-page"><div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Accès non autorisé.</div></div></div>'; return; }
+  const allTabs=[
+    {id:'depots', icon:'fa-warehouse',      label:'Dépôts'},
+    {id:'stocks', icon:'fa-boxes-stacked',  label:'État des stocks'},
+    {id:'mvts',   icon:'fa-right-left',     label:'Mouvements'},
+  ];
+  if(!allTabs.some(t=>t.id===stockTab)) stockTab=allTabs[0].id;
+  const tabNav=allTabs.map(t=>`<button class="tab-btn ${stockTab===t.id?'on':''}" onclick="switchStockTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
+  ca.innerHTML=`
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-boxes-stacked" style="color:var(--g2)"></i> Stock</div></div>
+    <div class="tab-nav" id="stockTabNav">${tabNav}</div>
+    <div id="stockTabContent" class="stock-page"></div>
+  `;
+  await renderStockTab();
+}
+window.renderStockModule=renderStockModule;
+window.switchStockTab=async function(t){
+  stockTab=t;
+  document.querySelectorAll('#stockTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchStockTab('${t}')`));
+  await renderStockTab();
+};
+async function renderStockTab(){
+  const el=stCA();if(!el) return;
+  if(stockTab==='depots') await renderDepots(el);
+  else if(stockTab==='stocks') await renderStocks(el);
+  else if(stockTab==='mvts') await renderMvts(el,mvtPage);
+}
+// Sous-navigation depuis n'importe où (KPI, alertes, dashboard) : bascule l'onglet si le
+// module Stock est déjà ouvert, sinon navigue puis ouvre directement le bon onglet.
+function goStockSub(id){
+  if(document.getElementById('stockTabContent')) switchStockTab(id);
+  else{ stockTab=id; goTo('stock'); }
+}
+window.goStockSub=goStockSub;
+
 async function renderDepots(ca){
   const[deps,prods]=await Promise.all([getAll(S.DEPOTS),getAll(S.PRODUITS)]);
   const bal=await getBalance();const stockTot=await getStockTotal();
@@ -6797,7 +6832,7 @@ async function renderStocks(ca){
       <div class="kpi kpi-g"><div class="kpi-lbl">📥 Entrées (30j)</div><div class="kpi-val">${Math.round(valEntrees30/1000)}K</div><div class="kpi-sub">FCFA</div></div>
       <div class="kpi kpi-r"><div class="kpi-lbl">📤 Sorties (30j)</div><div class="kpi-val">${Math.round(valSorties30/1000)}K</div><div class="kpi-sub">FCFA</div></div>
       <div class="kpi kpi-g"><div class="kpi-lbl">🔄 Rotation stock</div><div class="kpi-val">${valeurTotale>0?(valSorties30/valeurTotale).toFixed(2):'0'}</div><div class="kpi-sub">Sorties 30j / valeur stock</div></div>
-      <div class="kpi kpi-g"><div class="kpi-lbl">📋 Mouvements (30j)</div><div class="kpi-val">${mvts30.length}</div><div class="kpi-sub"><a href="#" onclick="goTo('mvts');return false" style="color:var(--g2)">Voir le journal →</a></div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">📋 Mouvements (30j)</div><div class="kpi-val">${mvts30.length}</div><div class="kpi-sub"><a href="#" onclick="goStockSub('mvts');return false" style="color:var(--g2)">Voir le journal →</a></div></div>
     </div>
     ${topAlertes.length?`<div class="card" style="border:1.5px solid #fcd34d">
       <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Articles à surveiller (${critiques.length+faibles.length})</span></div>
@@ -8942,7 +8977,7 @@ window.runDbDiagnostic = async function(){
     if(negatifs.length){
       const noms = negatifs.map(([id])=>produits.find(p=>String(p.id)===String(id))?.nom||id).join(', ');
       issues.push({level:'error',store:S.MVTS,
-        message:negatifs.length+' produit(s) en stock négatif : '+noms,action:'stocks'});
+        message:negatifs.length+' produit(s) en stock négatif : '+noms,action:'stock'});
     }
   }catch(e){ issues.push({level:'warn',store:S.MVTS,
     message:'Impossible de vérifier les stocks : '+e.message}); }
@@ -18092,7 +18127,7 @@ window.mobGo = function(page){
   mobCloseAll();
   goTo(page);
   // Mettre à jour l'item actif dans la bottom nav
-  ['dash','lots','stocks','simubande','more'].forEach(id=>{
+  ['dash','lots','stock','simubande','more'].forEach(id=>{
     const el = document.getElementById('mbn-'+id);
     if(el) el.classList.toggle('active', id===page);
   });
@@ -18102,7 +18137,7 @@ window.mobGo = function(page){
 function mobUpdateTitle(page){
   const titles = {
     dash:'📊 Tableau de bord', lots:'🐔 Lots & Élevage',
-    stocks:'📦 État des stocks', simubande:'📊 Simulation bande',
+    stock:'📦 Stock', simubande:'📊 Simulation bande',
     finance:'💰 Finance', fab:'🌾 Fabrication aliments',
     clients:'👤 Clients', commandes:'🛒 Commandes',
     fourns:'🚛 Fournisseurs', bcs:'📋 Bons de commande',
@@ -18154,7 +18189,7 @@ window.goTo = function(page){
       : _miniLogoSVG + `<span style="font-weight:800;font-size:15px">AviNest</span><span style="font-size:8px;font-weight:800;background:linear-gradient(135deg,#f0b429,#e08c10);color:#3d2600;padding:1px 5px;border-radius:4px;margin-left:4px">PRO</span>`;
   }
   // Bottom nav actif
-  ['dash','lots','stocks','simubande'].forEach(id=>{
+  ['dash','lots','stock','simubande'].forEach(id=>{
     const el = document.getElementById('mbn-'+id);
     if(el) el.classList.toggle('active', page===id);
   });
