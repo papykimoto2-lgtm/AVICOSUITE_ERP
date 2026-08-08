@@ -7491,7 +7491,13 @@ async function saveBC(statut){
 }
 window.saveBC=saveBC;
 window.markSent=async(id)=>{const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===id);if(bc){await updRec(S.BCS,id,{...bc,statut:'sent'});toast('BC envoyé');await renderBCs(apCA());}};
-window.delBC=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.BCS,id);toast('BC supprimé');await renderBCs(apCA());}};
+window.delBC=async(id)=>{
+  const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===id);
+  if(!bc){toast('Bon de commande introuvable','err');return;}
+  if(bc.paiements&&bc.paiements.length){toast('⛔ Des règlements sont enregistrés sur ce BC — suppression interdite (historique comptable fournisseur)','err');return;}
+  if(bc.statut==='done'||bc.statut==='partial'){toast('⛔ BC réceptionné (totalement ou partiellement) — suppression interdite. Les réceptions et mouvements de stock associés doivent être annulés depuis le module Réceptions.','err');return;}
+  if(confirm('Supprimer ce bon de commande ?')){await delRec(S.BCS,id);toast('BC supprimé');await renderBCs(apCA());}
+};
 
 async function openRecModal(bcId){
   recBCId=bcId;recEditId=null;const[bcs,deps]=await Promise.all([getAll(S.BCS),getAll(S.DEPOTS)]);const bc=bcs.find(x=>x.id===bcId);if(!bc) return;
@@ -9829,7 +9835,7 @@ async function renderFinCharges(el,fin){
       +'<td>'+esc(c.libelle||'')+'</td><td>'+(c.qte||'—')+'</td><td>'+esc(c.unite||'—')+'</td>'
       +'<td>'+(c.unitCost?fcfa(c.unitCost):'—')+'</td>'
       +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+'</td>'
-      +'<td><button class="btn-del" onclick="deleteCharge('+c.id+')">✕</button></td></tr>';
+      +'<td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button></td></tr>';
   }).join('');
   var lo=lots.map(function(l){return '<option value="'+l.id+'">'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
   var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'">'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
@@ -9840,7 +9846,7 @@ async function renderFinCharges(el,fin){
       +'<div style="font-size:14px;font-weight:700;margin-top:3px">'+fcfa(e[1])+'</div>'
       +'<div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+'</div></div>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
     +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
     +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
@@ -9851,6 +9857,57 @@ window.filtrerCharges=function(){
   document.querySelectorAll('#tbodyCharges tr').forEach(function(tr){tr.style.display=(!lf||tr.dataset.lot===lf)&&(!cf||tr.dataset.cat===cf)?'':'none';});
 };
 window.deleteCharge=async function(id){if(!confirm('Supprimer ?')) return;await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));};
+
+// ── État des dépenses imprimable — respecte les filtres lot/catégorie actifs à l'écran ──
+window.printChargesEtat=async function(preview){
+  const[charges,lots]=await Promise.all([getAll(S.CHARGES),getAll(S.FLOCKS)]);
+  const lf=document.getElementById('filtreChargeLot')?.value||'';
+  const cf=document.getElementById('filtreChargeCat')?.value||'';
+  const lm={};lots.forEach(l=>lm[l.id]=l.nom||'Lot '+l.id);
+  const filtered=charges.filter(c=>(!lf||String(c.flockId||'')===lf)&&(!cf||c.categorie===cf)).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const cfg=await getExploitationSettings();
+  const total=filtered.reduce((a,c)=>a+(c.montant||0),0);
+  const parCat={};filtered.forEach(c=>{const k=c.categorie||'autre';parCat[k]=(parCat[k]||0)+(c.montant||0);});
+  const rows=filtered.map(c=>`<tr><td>${c.date||'—'}</td><td>${c.flockId?esc(lm[c.flockId]||'—'):'Global'}</td><td>${esc(CAT_LABELS[c.categorie]||c.categorie||'—')}</td><td>${esc(c.libelle||'')}</td><td style="text-align:right">${c.qte||''} ${esc(c.unite||'')}</td><td style="text-align:right">${c.unitCost?Math.round(c.unitCost).toLocaleString('fr-FR'):''}</td><td style="text-align:right;font-weight:700">${Math.round(c.montant||0).toLocaleString('fr-FR')}</td></tr>`).join('');
+  const catRows=Object.entries(parCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${esc(CAT_LABELS[k]||k)}</td><td style="text-align:right">${Math.round(v).toLocaleString('fr-FR')}</td><td style="text-align:right">${total>0?(v/total*100).toFixed(1):0}%</td></tr>`).join('');
+  const filtreLbl=[lf?'Lot : '+esc(lm[parseInt(lf)]||lf):'',cf?'Catégorie : '+(CAT_LABELS[cf]||cf):''].filter(Boolean).join(' · ')||'Aucun filtre — toutes les charges';
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>État des dépenses</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:950px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    .filtres{background:#f3f4f6;border-radius:6px;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#555}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    th,td{padding:5px 6px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;font-size:10px}
+    tfoot td{font-weight:800;background:#f9fafb}
+    .kpis{display:flex;gap:14px;margin-bottom:12px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">ÉTAT DES DÉPENSES</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="filtres">🔎 ${filtreLbl}</div>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${filtered.length}</div>Charges</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${Math.round(total).toLocaleString('fr-FR')}</div>Total (FCFA)</div>
+    </div>
+    <div style="font-weight:700;font-size:12px;margin-bottom:4px">📊 Répartition par catégorie</div>
+    <table><thead><tr><th>Catégorie</th><th style="text-align:right">Montant</th><th style="text-align:right">% du total</th></tr></thead><tbody>${catRows||'<tr><td colspan="3" style="text-align:center;color:#999">—</td></tr>'}</tbody></table>
+    <div style="font-weight:700;font-size:12px;margin-bottom:4px">📋 Détail chronologique</div>
+    <table><thead><tr><th>Date</th><th>Lot</th><th>Catégorie</th><th>Libellé</th><th style="text-align:right">Qté</th><th style="text-align:right">P.U.</th><th style="text-align:right">Montant</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucune charge pour ces filtres</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="6">TOTAL</td><td style="text-align:right">${Math.round(total).toLocaleString('fr-FR')}</td></tr></tfoot></table>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=1000,height=750');
+  if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
+  w.document.write(html);w.document.close();
+};
 
 // ── 5. TRESORERIE ──
 function renderFinTreso(el,fin){
@@ -9900,21 +9957,34 @@ function renderFinBudget(el,fin){
 }
 
 // ── MODALS ──
-async function openChargeManuelle(fid){
+async function openChargeManuelle(fid,editId){
   var lots=await getAll(S.FLOCKS);
   var sel=document.getElementById('chargeLot');
-  sel.innerHTML='<option value="">— Global —</option>'+lots.map(function(l){return '<option value="'+l.id+'"'+(l.id===fid?' selected':'')+'>'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
-  ['chargeId','chargeLib','chargeQte','chargeUnite','chargePU','chargeMontant'].forEach(function(id){document.getElementById(id).value='';});
-  document.getElementById('chargeDate').value=new Date().toISOString().slice(0,10);
+  var c=null;
+  if(editId){ const charges=await getAll(S.CHARGES); c=charges.find(x=>x.id===editId); if(!c){toast('Charge introuvable','err');return;} }
+  sel.innerHTML='<option value="">— Global —</option>'+lots.map(function(l){return '<option value="'+l.id+'"'+(l.id===(c?c.flockId:fid)?' selected':'')+'>'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
+  document.getElementById('chargeModalTitle').textContent = editId ? '📉 Modifier la charge' : '📉 Saisir une charge';
+  document.getElementById('chargeId').value = editId || '';
+  document.getElementById('chargeDate').value = c ? c.date : new Date().toISOString().slice(0,10);
+  document.getElementById('chargeCat').value = c ? (c.categorie||'autre') : 'poussin';
+  document.getElementById('chargeLib').value = c ? (c.libelle||'') : '';
+  document.getElementById('chargeQte').value = c ? (c.qte||'') : '';
+  document.getElementById('chargeUnite').value = c ? (c.unite||'') : '';
+  document.getElementById('chargePU').value = c ? (c.unitCost||'') : '';
+  document.getElementById('chargeMontant').value = c ? (c.montant||'') : '';
   openOverlay('ovChargeManuelle');
 }
 window.openChargeManuelle=openChargeManuelle;
+window.editCharge=(id)=>openChargeManuelle(null,id);
 window.calcChargeMontant=function(){var q=parseFloat(document.getElementById('chargeQte').value)||0,pu=parseFloat(document.getElementById('chargePU').value)||0;if(q>0&&pu>0) document.getElementById('chargeMontant').value=Math.round(q*pu);};
 window.saveChargeManuelle=async function(){
+  var editId=parseInt(document.getElementById('chargeId').value)||null;
   var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0;
   if(!date||!montant||!lib){toast('Date, libelle et montant requis','err');return;}
-  await addRec(S.CHARGES,{flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,operatorId:currentUser?.id||1,ts:Date.now()});
-  closeOverlay('ovChargeManuelle');toast('Charge: '+fcfa(montant));
+  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,operatorId:currentUser?.id||1,ts:Date.now()};
+  if(editId) await updRec(S.CHARGES,editId,data);
+  else await addRec(S.CHARGES,data);
+  closeOverlay('ovChargeManuelle');toast(editId?'Charge modifiée : '+fcfa(montant):'Charge: '+fcfa(montant));
   await renderFinance(document.getElementById('contentArea'));
 };
 async function openTresoModal(){
@@ -9958,7 +10028,7 @@ window.exportFinanceCSV=function(fin){
 <!-- ══ MODAL CHARGE MANUELLE ══ -->
 <div class="overlay" id="ovChargeManuelle">
   <div class="modal modal-lg">
-    <h3>📉 Saisir une charge</h3>
+    <h3 id="chargeModalTitle">📉 Saisir une charge</h3>
     <input type="hidden" id="chargeId">
     <div class="form-grid">
       <div class="fg">
@@ -12481,8 +12551,9 @@ window.renderCreances = async function(ca) {
       var retard = s.dateEcheance ? joursRetard(s.dateEcheance) : 0;
       var aCls = agingClass(retard);
       var echLabel = retard<=0 ? (s.dateEcheance ? 'Ech. '+s.dateEcheance : 'Non facturee') : ('+'+retard+'j');
+      var lastRel = (s.relances&&s.relances.length) ? s.relances[s.relances.length-1] : null;
       return '<tr>'
-        + '<td><strong>'+esc(s.numFacture||s.ref||'--')+'</strong><div style="font-size:10px;color:#999">emise '+(s.dateFacture||s.date||'--')+'</div></td>'
+        + '<td><strong>'+esc(s.numFacture||s.ref||'--')+'</strong><div style="font-size:10px;color:#999">emise '+(s.dateFacture||s.date||'--')+'</div>'+(lastRel?'<div style="font-size:9px;color:#5b21b6">Relance '+(lastRel.canal==='whatsapp'?'WA':'email')+' le '+lastRel.date+'</div>':'')+'</td>'
         + '<td><strong>'+esc(c.nom||'--')+'</strong><div style="font-size:10px;color:#999">'+esc(c.ville||'')+'</div></td>'
         + '<td style="font-weight:700">'+total.toLocaleString('fr-FR')+' F</td>'
         + '<td style="color:#2563eb">'+paye.toLocaleString('fr-FR')+' F</td>'
@@ -12491,6 +12562,8 @@ window.renderCreances = async function(ca) {
         + '<td><span class="badge '+aCls+'" style="padding:3px 8px;border-radius:20px;font-size:10px">'+(retard>0?'&#9888; ':'')+echLabel+'</span></td>'
         + '<td style="white-space:nowrap">'
         + '<button class="btn btn-sm btn-p" onclick="openEncaisserModal('+s.id+')" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> '
+        + (c.tel?'<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="relancerClient('+s.id+',\'whatsapp\')" title="Relancer par WhatsApp"><i class="fab fa-whatsapp"></i></button> ':'')
+        + (c.email?'<button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="relancerClient('+s.id+',\'email\')" title="Relancer par Email"><i class="fas fa-envelope"></i></button> ':'')
         + (s.statut==='invoiced'
             ? '<button class="btn btn-sm btn-gh" onclick="printFacture('+s.id+')" title="Facture"><i class="fas fa-print"></i></button> '
             : '<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente('+s.id+')" title="Facturer"><i class="fas fa-file-invoice"></i></button> ')
@@ -12551,8 +12624,8 @@ async function getBalanceAgeeLignes(type){
     return sales.filter(s=>s.statut==='invoiced'||s.statut==='delivered').map(s=>{
       const c=clients.find(x=>x.id===s.clientId)||{};
       const reste=getResteAPayer(s);const j=s.dateEcheance?joursRetard(s.dateEcheance):0;
-      return{ref:s.numFacture||s.ref||'—',tiersNom:c.nom||'—',tiersVille:c.ville||'',date:s.dateFacture||s.date||'—',
-        total:s.totalHT||0,paye:getMontantPaye(s),reste,joursAge:j,aCls:agingClass(j)};
+      return{saleId:s.id,ref:s.numFacture||s.ref||'—',tiersNom:c.nom||'—',tiersVille:c.ville||'',date:s.dateFacture||s.date||'—',
+        total:s.totalHT||0,paye:getMontantPaye(s),reste,joursAge:j,aCls:agingClass(j),tel:c.tel||'',email:c.email||''};
     }).filter(l=>l.reste>0);
   }
   const[bcs,fourns]=await Promise.all([getAll(S.BCS),getAll(S.FOURNISSEURS)]);
@@ -12574,7 +12647,8 @@ async function renderBalanceAgeeUnifiee(el,type){
     <td style="font-weight:700">${l.total.toLocaleString('fr-FR')} F</td>
     <td style="color:#2563eb">${l.paye.toLocaleString('fr-FR')} F</td>
     <td style="font-weight:700;color:var(--red)">${l.reste.toLocaleString('fr-FR')} F</td>
-    <td><span class="badge ${l.aCls}" style="padding:3px 8px;border-radius:20px;font-size:10px">${l.joursAge>0?l.joursAge+' j':'Non échu'}</span></td></tr>`).join('');
+    <td><span class="badge ${l.aCls}" style="padding:3px 8px;border-radius:20px;font-size:10px">${l.joursAge>0?l.joursAge+' j':'Non échu'}</span></td>
+    ${type==='client'?`<td style="white-space:nowrap">${l.tel?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="relancerClient(${l.saleId},'whatsapp')" title="Relancer WhatsApp"><i class="fab fa-whatsapp"></i></button> `:''}${l.email?`<button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="relancerClient(${l.saleId},'email')" title="Relancer Email"><i class="fas fa-envelope"></i></button>`:''}</td>`:''}</tr>`).join('');
   el.innerHTML=`<div class="page-header" style="padding:0 0 10px"><div></div><div style="display:flex;gap:6px">
     <button class="btn btn-sm btn-gh" onclick="printBalanceAgee('${type}',true)"><i class="fas fa-eye"></i> Aperçu</button>
     <button class="btn btn-sm btn-gh" onclick="printBalanceAgee('${type}')"><i class="fas fa-print"></i> Imprimer</button></div></div>
@@ -12590,7 +12664,7 @@ async function renderBalanceAgeeUnifiee(el,type){
       <div style="text-align:center;padding:12px;border-radius:8px" class="aging-90"><div style="font-size:10px;font-weight:700;text-transform:uppercase">+60 j</div><div style="font-size:16px;font-weight:700;margin-top:4px">${b90.toLocaleString('fr-FR')} F</div></div>
     </div></div>
   <div class="card"><div class="card-hd">Détail — ${type==='client'?'Comptes clients (411)':'Comptes fournisseurs (401)'}</div><div class="card-bd tbl-wrap"><table class="tbl">
-    <thead><tr><th>${type==='client'?'Facture':'Bon de commande'}</th><th>${type==='client'?'Client':'Fournisseur'}</th><th>Total</th><th>Réglé</th><th>Reste dû</th><th>Ancienneté</th></tr></thead>
+    <thead><tr><th>${type==='client'?'Facture':'Bon de commande'}</th><th>${type==='client'?'Client':'Fournisseur'}</th><th>Total</th><th>Réglé</th><th>Reste dû</th><th>Ancienneté</th>${type==='client'?'<th>Relance</th>':''}</tr></thead>
     <tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Aucun solde ouvert</td></tr>'}</tbody></table></div></div>`;
 }
 window.printBalanceAgee=async function(type,preview){
@@ -15406,6 +15480,35 @@ function envoyerEmail(texte, email, sujet){
   const url = `mailto:${email}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
   window.location.href = url;
 }
+
+// ── Relance client (impayé) — message adapté au retard, traçabilité par facture ──
+function buildRelanceTexte(sale, client, cfg, canal){
+  const reste = getResteAPayer(sale);
+  const j = sale.dateEcheance ? joursRetard(sale.dateEcheance) : 0;
+  const entreprise = cfg.nomExploitation || 'AviNest Pro';
+  const ref = sale.numFacture || sale.ref || '—';
+  const nl = canal==='whatsapp' ? '\n' : '\n';
+  let ton;
+  if(j<=0) ton = `Nous vous rappelons que votre facture *${ref}* arrive à échéance${sale.dateEcheance?' le '+sale.dateEcheance:''}.`;
+  else if(j<=30) ton = `Nous constatons que votre facture *${ref}* est échue depuis ${j} jour(s).`;
+  else if(j<=60) ton = `Votre facture *${ref}* accuse un retard de paiement de ${j} jours. Merci de bien vouloir régulariser rapidement.`;
+  else ton = `Votre facture *${ref}* est en retard de paiement de ${j} jours. Nous vous prions de procéder au règlement dans les meilleurs délais afin d'éviter toute suspension de livraison.`;
+  return `Bonjour ${client.nom||''},${nl}${nl}${ton}${nl}${nl}Montant restant dû : *${reste.toLocaleString('fr-FR')} FCFA*${nl}${nl}Merci de votre compréhension.${nl}${entreprise}`;
+}
+window.relancerClient=async function(saleId,canal){
+  const[sales,clients,cfg]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getExploitationSettings()]);
+  const s=sales.find(x=>x.id===saleId); if(!s){toast('Facture introuvable','err');return;}
+  const c=clients.find(x=>x.id===s.clientId); if(!c){toast('Client introuvable','err');return;}
+  if(canal==='whatsapp' && !c.tel){toast('⛔ Aucun numéro WhatsApp pour ce client','err');return;}
+  if(canal==='email' && !c.email){toast('⛔ Aucun email pour ce client','err');return;}
+  const texte=buildRelanceTexte(s,c,cfg,canal);
+  if(canal==='whatsapp') envoyerWhatsApp(texte,c.tel);
+  else envoyerEmail(texte,c.email,'Rappel — Facture '+(s.numFacture||s.ref||'')+' — '+(cfg.nomExploitation||'AviNest Pro'));
+  const relances=(s.relances||[]).slice();
+  relances.push({date:new Date().toISOString().slice(0,10),canal,auteur:currentUser?.nom||'Système',ts:Date.now()});
+  await updRec(S.SALES,saleId,Object.assign({},s,{relances}));
+  toast('Relance '+(canal==='whatsapp'?'WhatsApp':'Email')+' envoyée');
+};
 
 // ── Génération + envoi d'un rapport périodique (boutons WA/Email de l'onglet "Rapports & Envoi") ──
 window.envoyerRapport = async function(type, canal){
