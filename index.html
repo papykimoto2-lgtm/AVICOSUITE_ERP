@@ -16243,8 +16243,8 @@ async function collectRapportData(type, customMin=null, customMax=null){
   // Détail production œufs par lot
   const oeufsByLot = flocks.filter(f=>f.type==='layer').map(f=>({
     nom:f.nom,
-    ageJours: getAge(f.startDate),
-    ageSemaines: Math.floor(getAge(f.startDate)/7),
+    ageJours: f.startDate ? getAge(f.startDate) : null,
+    ageSemaines: f.startDate ? Math.floor(getAge(f.startDate)/7) : null,
     oeufs: eggProd.filter(e=>e.flockId===f.id&&inPeriod(e.date)).reduce((a,e)=>a+(e.eggCount||0),0),
     morts: mortalite.filter(m=>m.flockId===f.id&&inPeriod(m.date)).reduce((a,m)=>a+(m.nbMorts||0),0),
   }));
