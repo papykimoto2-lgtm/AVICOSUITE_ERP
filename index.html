@@ -3112,7 +3112,7 @@ var PAIE_CI = {
 // Prix aliment de repli (FCFA/kg) — utilisé par Finance & Rentabilité pour estimer le coût
 // aliment d'un lot UNIQUEMENT si aucune charge "aliment" n'a été saisie manuellement pour
 // ce lot. Configurable (Paramétrage > Finance) au lieu d'être figé dans le code.
-var FINANCE_PARAMS = { prixAlimentDefaut: 185 };
+var FINANCE_PARAMS = { prixAlimentDefaut: 185, seuilAlerteDerive: 15 };
 async function loadFinanceParamsOverrides(){
   try{
     const s = await getAll(S.SETTINGS_APP);
@@ -3122,12 +3122,16 @@ async function loadFinanceParamsOverrides(){
 }
 window.saveFinanceParams=async function(){
   const val=parseFloat(document.getElementById('fp_prixAlimentDefaut')?.value);
+  const seuil=parseFloat(document.getElementById('fp_seuilAlerteDerive')?.value);
   if(!val || val<=0){ toast('Prix invalide','err'); return; }
+  if(!seuil || seuil<=0){ toast('Seuil invalide','err'); return; }
   FINANCE_PARAMS.prixAlimentDefaut=val;
+  FINANCE_PARAMS.seuilAlerteDerive=seuil;
   const s=await getAll(S.SETTINGS_APP);const existing=s.find(r=>r.key==='finance_params');
-  if(existing) await updRec(S.SETTINGS_APP,existing.id,{key:'finance_params',params:{prixAlimentDefaut:val}});
-  else await addRec(S.SETTINGS_APP,{key:'finance_params',params:{prixAlimentDefaut:val}});
-  toast('✅ Paramètre enregistré');
+  const params={prixAlimentDefaut:val,seuilAlerteDerive:seuil};
+  if(existing) await updRec(S.SETTINGS_APP,existing.id,{key:'finance_params',params});
+  else await addRec(S.SETTINGS_APP,{key:'finance_params',params});
+  toast('✅ Paramètres enregistrés');
 };
 
 async function loadPaieParamsOverrides(){
@@ -3803,6 +3807,7 @@ function renderSettingsFinance(isAdmin){
     <p style="font-size:11px;color:var(--text3);margin-bottom:12px">Valeurs de repli utilisées uniquement quand aucune charge n'a été saisie manuellement pour un lot.</p>
     <div class="form-grid">
       <div class="fg"><label>Prix aliment de repli (FCFA/kg)</label><input id="fp_prixAlimentDefaut" type="number" min="1" value="${FINANCE_PARAMS.prixAlimentDefaut}" ${ro}></div>
+      <div class="fg"><label>Seuil d'alerte de dérive budgétaire (%)</label><input id="fp_seuilAlerteDerive" type="number" min="1" step="1" value="${FINANCE_PARAMS.seuilAlerteDerive}" ${ro}></div>
     </div>
     <p style="font-size:10px;color:var(--text3);margin-top:6px">Utilisé pour estimer le coût aliment d'un lot si aucune charge de catégorie "Aliment" n'existe pour ce lot dans le module Charges. Si tu saisis les charges aliment manuellement (recommandé), ce paramètre n'a aucun effet.</p>
     ${isAdmin?'<button class="btn btn-p" style="margin-top:14px" onclick="saveFinanceParams()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3);margin-top:10px">Réservé Admin/Manager.</p>'}`;
@@ -11367,8 +11372,8 @@ async function renderFinance(ca){
   var fin=await computeFinanceGlobale();
   var roi=fin.totalCharges>0?(fin.margeGlobale/fin.totalCharges*100):0;
   var txCh=fin.totalRecettes>0?(fin.totalCharges/fin.totalRecettes*100):0;
-  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','tiers'].map(function(t){
-    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',tiers:'👥 Comptes Tiers'};
+  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','tiers','controle'].map(function(t){
+    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',tiers:'👥 Comptes Tiers',controle:'📈 Contrôle de gestion'};
     return '<button class="tab-btn '+(finTab===t?'on':'')+'" data-tab="'+t+'" onclick="switchFinTab(\''+t+'\')">'+labs[t]+'</button>';
   }).join('');
 
@@ -11414,16 +11419,41 @@ async function renderFinTab(fin){
   else if(finTab==='tresorerie') renderFinTreso(el,fin);
   else if(finTab==='budget') renderFinBudget(el,fin);
   else if(finTab==='tiers') await renderFinTiers(el);
+  else if(finTab==='controle') await renderFinControle(el,fin);
 }
 
 // ── 1. SYNTHESE ──
+// ── Alertes de dérive budgétaire — écart Réel/Budget au-delà du seuil configuré ──
+function getAlertesDeriveBudget(fin){
+  const alertes=[];
+  fin.finLots.forEach(f=>{
+    const lb=fin.budgets.filter(b=>b.flockId===f.lot.id);
+    lb.forEach(b=>{
+      if(b.categorie!=='total' && b.categorie!=='recette') return; // se concentre sur les agrégats clés
+      if(!b.montantBudget) return;
+      const reel = b.categorie==='total' ? f.totalCharges : f.recettes;
+      const ecartPct = (reel-b.montantBudget)/b.montantBudget*100;
+      const mauvaisSens = b.categorie==='total' ? ecartPct>0 : ecartPct<0; // charges qui montent = mauvais, recettes qui baissent = mauvais
+      if(mauvaisSens && Math.abs(ecartPct)>=FINANCE_PARAMS.seuilAlerteDerive){
+        alertes.push({lot:f.lot, categorie:b.categorie, budget:b.montantBudget, reel, ecartPct});
+      }
+    });
+  });
+  return alertes.sort((a,b)=>Math.abs(b.ecartPct)-Math.abs(a.ecartPct));
+}
+
 function renderFinSynthese(el,fin){
+  var alertesDerive = getAlertesDeriveBudget(fin);
+  var bannerAlertes = alertesDerive.length ? '<div class="card" style="margin-bottom:14px;border:1.5px solid var(--red)"><div class="card-hd" style="background:linear-gradient(135deg,#fef2f2,#fff);color:var(--red)">⚠️ '+alertesDerive.length+' dérive(s) budgétaire(s) détectée(s) (seuil '+FINANCE_PARAMS.seuilAlerteDerive+'%)</div><div class="card-bd">'
+    +alertesDerive.slice(0,5).map(function(a){return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span><strong>'+esc(a.lot.nom||'')+'</strong> — '+(a.categorie==='total'?'Charges':'Recettes')+' : '+fcfa(a.reel)+' vs budget '+fcfa(a.budget)+'</span><span class="badge b-r">'+(a.ecartPct>=0?'+':'')+a.ecartPct.toFixed(1)+'%</span></div>';}).join('')
+    +(alertesDerive.length>5?'<div style="font-size:11px;color:var(--text3);margin-top:6px">+ '+(alertesDerive.length-5)+' autre(s) — voir onglet Budget vs Réel</div>':'')
+    +'</div></div>' : '';
   var cat=Object.entries(fin.chargesGlobCat).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
   var catBars=cat.map(function(e){return '<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span>'+(CAT_ICONS[e[0]]||'📦')+' '+(CAT_LABELS[e[0]]||e[0])+'</span><span style="font-weight:700">'+pctFin(e[1],fin.totalCharges)+'</span></div><div class="prog"><div class="prog-fill" style="width:'+pctFin(e[1],fin.totalCharges)+';background:'+(CAT_COLORS[e[0]]||'#888')+'"></div></div></div>';}).join('');
   var recap=fin.finLots.map(function(f){return '<tr><td><strong>'+esc(f.lot.nom||'')+'</strong></td><td><span class="badge '+(f.lot.type==='layer'?'b-a':'b-r')+'">'+(f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</span></td><td>'+f.vivants.toLocaleString()+'</td><td style="color:#059669;font-weight:600">'+fcfa(f.recettes)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(f.totalCharges)+'</td><td style="font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</td><td><span class="badge '+(f.margePct>=0?'b-g':'b-r')+'">'+f.margePct.toFixed(1)+'%</span></td><td>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</td></tr>';}).join('');
   var top3=cat.slice(0,3).map(function(e){return '<div class="card" style="margin-bottom:0"><div class="card-bd" style="display:flex;align-items:center;gap:12px"><div style="width:40px;height:40px;border-radius:10px;background:'+(CAT_COLORS[e[0]]||'#888')+'22;display:flex;align-items:center;justify-content:center;font-size:20px">'+(CAT_ICONS[e[0]]||'📦')+'</div><div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase">'+(CAT_LABELS[e[0]]||e[0])+'</div><div style="font-size:16px;font-weight:700">'+fcfa(e[1])+'</div><div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+' charges</div></div></div></div>';}).join('');
 
-  el.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
+  el.innerHTML=bannerAlertes+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
     +'<div class="card" style="margin-bottom:0"><div class="card-hd">📊 Repartition des charges</div><div class="card-bd" style="display:flex;gap:14px;align-items:center"><div style="position:relative;width:150px;height:150px;flex-shrink:0"><canvas id="finChartCharges"></canvas></div><div style="flex:1">'+catBars+'</div></div></div>'
     +'<div class="card" style="margin-bottom:0"><div class="card-hd">📈 Recettes vs Charges</div><div class="card-bd" style="position:relative;height:175px"><canvas id="finChartLots"></canvas></div></div>'
     +'</div>'
@@ -11617,6 +11647,156 @@ function renderFinTreso(el,fin){
 window.deleteTreso=async function(id){if(!confirm('Supprimer ?')) return;await delRec(S.TRESORERIE,id);toast('Mouvement supprime');await renderFinance(document.getElementById('contentArea'));};
 
 // ── 6. BUDGET ──
+// ── CONTRÔLE DE GESTION — tendances consolidées multi-lots dans le temps ──
+let finControleGroupe='mois', finControleLot='';
+// ── Réestimation en cours de cycle — pour les lots liés à une simulation, compare le
+// rythme réel de consommation du budget à l'avancement réel du cycle, et extrapole
+// (règle de trois simple) le coût probable en fin de cycle. Ne remplace pas le budget
+// initial (S.BUDGET reste la référence) — c'est une projection indicative.
+function calculerReestimations(fin){
+  const DUREE_CYCLE_JOURS = {broiler:42, layer:420}; // 6 sem. / 60 sem.
+  const resultats=[];
+  fin.finLots.forEach(f=>{
+    const lb=fin.budgets.filter(b=>b.flockId===f.lot.id && b.source==='simulation');
+    const bTotal=lb.find(b=>b.categorie==='total');
+    if(!bTotal || !f.lot.startDate) return;
+    const ageJours = getAge(f.lot.startDate);
+    const dureeCycle = DUREE_CYCLE_JOURS[f.lot.type] || DUREE_CYCLE_JOURS.broiler;
+    const avancementCycle = Math.min(1, ageJours/dureeCycle);
+    if(avancementCycle<=0.03 || avancementCycle>=1 || f.vivants<=0) return; // trop tôt, cycle terminé, ou lot déjà vidé (réformé/vendu) — projection non pertinente
+    const projection = avancementCycle>0 ? f.totalCharges/avancementCycle : f.totalCharges;
+    const ecartVsBudget = projection - bTotal.montantBudget;
+    const ecartPct = bTotal.montantBudget>0 ? (ecartVsBudget/bTotal.montantBudget*100) : 0;
+    resultats.push({lot:f.lot, avancementCycle, chargesADate:f.totalCharges, budgetInitial:bTotal.montantBudget, projection, ecartVsBudget, ecartPct});
+  });
+  return resultats.sort((a,b)=>Math.abs(b.ecartPct)-Math.abs(a.ecartPct));
+}
+
+async function renderFinControle(el,fin){
+  const[sales,charges,flocks]=await Promise.all([getAll(S.SALES),getAll(S.CHARGES),getAll(S.FLOCKS)]);
+  const lotFilter = finControleLot ? parseInt(finControleLot) : null;
+  const salesF = lotFilter ? sales.filter(s=>s.flockId===lotFilter) : sales;
+  const chargesF = lotFilter ? charges.filter(c=>c.flockId===lotFilter) : charges;
+
+  // ── Regroupement par mois (ou semaine) sur tout l'historique ──
+  const buckets = {};
+  const keyOf = d => finControleGroupe==='semaine' ? isoWeekLabel(d) : d.slice(0,7);
+  salesF.forEach(s=>{ if(!s.date) return; const k=keyOf(s.date); if(!buckets[k]) buckets[k]={recettes:0,charges:0}; buckets[k].recettes+=(s.totalHT||s.total||0); });
+  chargesF.forEach(c=>{ if(!c.date) return; const k=keyOf(c.date); if(!buckets[k]) buckets[k]={recettes:0,charges:0}; buckets[k].charges+=(c.montant||0); });
+  const keys = Object.keys(buckets).sort();
+  const data = keys.map(k=>{
+    const b=buckets[k]; const marge=b.recettes-b.charges;
+    return {periode:k, recettes:b.recettes, charges:b.charges, marge, margePct: b.charges>0?(marge/b.charges*100):0};
+  });
+
+  // ── KPI de tendance ──
+  const dernierePeriode = data[data.length-1];
+  const avantDerniere = data[data.length-2];
+  const evolMarge = (dernierePeriode && avantDerniere && avantDerniere.marge!==0)
+    ? ((dernierePeriode.marge-avantDerniere.marge)/Math.abs(avantDerniere.marge)*100) : null;
+  const meilleure = data.length ? data.reduce((a,b)=>b.marge>a.marge?b:a) : null;
+  const pire = data.length ? data.reduce((a,b)=>b.marge<a.marge?b:a) : null;
+  const margeMoyenne = data.length ? data.reduce((a,d)=>a+d.marge,0)/data.length : 0;
+
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:14px"><div class="card-bd" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+      <div class="tab-nav" style="margin:0">
+        <button class="tab-btn ${finControleGroupe==='mois'?'on':''}" onclick="switchFinControleGroupe('mois')">Par mois</button>
+        <button class="tab-btn ${finControleGroupe==='semaine'?'on':''}" onclick="switchFinControleGroupe('semaine')">Par semaine</button>
+      </div>
+      <div class="fg" style="margin:0;min-width:180px"><label style="font-size:11px">Filtrer par lot</label><select id="finControleLotSel" onchange="switchFinControleLot(this.value)"><option value="">Tous les lots (consolidé)</option>${flocks.map(l=>`<option value="${l.id}" ${String(l.id)===finControleLot?'selected':''}>${esc(l.nom)}</option>`).join('')}</select></div>
+    </div></div>
+
+    <div class="g4" style="margin-bottom:14px">
+      <div class="kpi ${evolMarge===null?'':evolMarge>=0?'kpi-g':'kpi-r'}"><div class="kpi-lbl">Évolution marge</div><div class="kpi-val" style="font-size:15px">${evolMarge===null?'—':(evolMarge>=0?'+':'')+evolMarge.toFixed(1)+'%'}</div><div class="kpi-sub">vs période précédente</div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">Meilleure période</div><div class="kpi-val" style="font-size:14px">${meilleure?meilleure.periode:'—'}</div><div class="kpi-sub">${meilleure?fcfa(meilleure.marge):''}</div></div>
+      <div class="kpi ${pire&&pire.marge<0?'kpi-r':''}"><div class="kpi-lbl">Période la plus faible</div><div class="kpi-val" style="font-size:14px">${pire?pire.periode:'—'}</div><div class="kpi-sub">${pire?fcfa(pire.marge):''}</div></div>
+      <div class="kpi"><div class="kpi-lbl">Marge moyenne/période</div><div class="kpi-val" style="font-size:15px">${fcfa(margeMoyenne)}</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px"><div class="card-hd">📈 Évolution Recettes / Charges / Marge</div><div class="card-bd" style="height:280px;position:relative"><canvas id="finControleChart"></canvas></div></div>
+
+    <div class="card"><div class="card-hd">Détail par période</div><div class="card-bd tbl-wrap"><table class="tbl">
+      <thead><tr><th>Période</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th><th style="text-align:right">Taux marge</th><th style="text-align:right">Évolution</th></tr></thead>
+      <tbody>${data.slice().reverse().map((d,i,arr)=>{
+        const prev=arr[i+1]; const evol=(prev&&prev.marge!==0)?((d.marge-prev.marge)/Math.abs(prev.marge)*100):null;
+        return `<tr><td><strong>${d.periode}</strong></td><td style="text-align:right">${fcfa(d.recettes)}</td><td style="text-align:right">${fcfa(d.charges)}</td><td style="text-align:right;font-weight:700;color:${colorMarge(d.marge)}">${d.marge>=0?'+':''}${fcfa(d.marge)}</td><td style="text-align:right">${d.margePct.toFixed(1)}%</td><td style="text-align:right;color:${evol===null?'inherit':evol>=0?'#059669':'var(--red)'}">${evol===null?'—':(evol>=0?'+':'')+evol.toFixed(1)+'%'}</td></tr>`;
+      }).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Aucune donnée sur cette sélection</td></tr>'}</tbody>
+    </table></div></div>
+
+    <div class="card" style="margin-top:14px"><div class="card-hd">🏆 Comparatif de rentabilité entre lots</div><div class="card-bd" style="height:220px;position:relative"><canvas id="finBenchmarkChart"></canvas></div></div>
+    <div class="card" style="margin-top:14px"><div class="card-hd">Classement par taux de marge</div><div class="card-bd tbl-wrap"><table class="tbl">
+      <thead><tr><th>Rang</th><th>Lot</th><th>Type</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th><th style="text-align:right">Taux marge</th><th style="text-align:right">Coût/tête</th><th style="text-align:right">vs moyenne</th></tr></thead>
+      <tbody>${(()=>{
+        const lots=fin.finLots.slice().sort((a,b)=>b.margePct-a.margePct);
+        const moyenne=lots.length?lots.reduce((a,f)=>a+f.margePct,0)/lots.length:0;
+        return lots.map((f,i)=>{
+          const ecart=f.margePct-moyenne;
+          const medaille=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1);
+          return `<tr${i===0?' style="background:#f0fdf4"':i===lots.length-1&&lots.length>1?' style="background:#fef2f2"':''}><td style="font-weight:700">${medaille}</td><td><strong>${esc(f.lot.nom||'')}</strong></td><td>${f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair'}</td><td style="text-align:right">${fcfa(f.recettes)}</td><td style="text-align:right">${fcfa(f.totalCharges)}</td><td style="text-align:right;font-weight:700;color:${colorMarge(f.marge)}">${f.marge>=0?'+':''}${fcfa(f.marge)}</td><td style="text-align:right"><span class="badge ${f.margePct>=0?'b-g':'b-r'}">${f.margePct.toFixed(1)}%</span></td><td style="text-align:right">${f.vivants>0?fcfa(f.coutParSujet):'—'}</td><td style="text-align:right;color:${ecart>=0?'#059669':'var(--red)'}">${ecart>=0?'+':''}${ecart.toFixed(1)} pts</td></tr>`;
+        }).join('') || '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Aucun lot</td></tr>';
+      })()}</tbody>
+    </table></div></div>
+
+    <div class="card" style="margin-top:14px"><div class="card-hd">🔮 Réestimation en cours de cycle (vs simulation initiale)</div><div class="card-bd">
+      ${(()=>{
+        const reest = calculerReestimations(fin);
+        if(!reest.length) return '<p style="text-align:center;color:var(--text3);padding:16px;font-size:12px">Aucun lot actif issu d\'une simulation à réestimer (lot trop récent, cycle terminé, ou aucun budget simulation lié — Simulation Déploiement de Bande → choisir un lot → Enregistrer comme budget).</p>';
+        return reest.map(r=>{
+          const alerte = Math.abs(r.ecartPct)>=FINANCE_PARAMS.seuilAlerteDerive;
+          return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+              <div style="font-size:12px"><strong>${esc(r.lot.nom||'')}</strong> — ${(r.avancementCycle*100).toFixed(0)}% du cycle écoulé</div>
+              ${alerte?`<span class="badge b-r">⚠ Projection ${r.ecartPct>=0?'+':''}${r.ecartPct.toFixed(1)}% vs budget</span>`:`<span class="badge b-g">Conforme au budget</span>`}
+            </div>
+            <div class="prog" style="margin:6px 0"><div class="prog-fill" style="width:${(r.avancementCycle*100).toFixed(0)}%;background:var(--g3)"></div></div>
+            <div style="display:flex;gap:14px;font-size:11px;color:var(--text3);flex-wrap:wrap">
+              <span>Charges à date : <strong style="color:var(--text2)">${fcfa(r.chargesADate)}</strong></span>
+              <span>Budget initial : <strong style="color:var(--text2)">${fcfa(r.budgetInitial)}</strong></span>
+              <span>Projection fin de cycle : <strong style="color:${r.ecartVsBudget>0?'var(--red)':'#059669'}">${fcfa(r.projection)}</strong></span>
+            </div>
+          </div>`;
+        }).join('');
+      })()}
+    </div></div>`;
+
+  const ctx=document.getElementById('finControleChart');
+  if(ctx && data.length){
+    if(window._finControleChartInst){ try{window._finControleChartInst.destroy();}catch(e){} }
+    window._finControleChartInst = new Chart(ctx,{
+      type:'line',
+      data:{ labels:data.map(d=>d.periode), datasets:[
+        {label:'Recettes',data:data.map(d=>d.recettes),borderColor:'#059669',backgroundColor:'#05966922',fill:true,tension:.3},
+        {label:'Charges',data:data.map(d=>d.charges),borderColor:'#c1121f',backgroundColor:'#c1121f22',fill:true,tension:.3},
+        {label:'Marge',data:data.map(d=>d.marge),borderColor:'#1565c0',backgroundColor:'#1565c022',fill:true,tension:.3,borderWidth:2.5}
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'top',labels:{boxWidth:12,font:{size:10}}}, tooltip:{callbacks:{label:c=>c.dataset.label+' : '+Math.round(c.parsed.y).toLocaleString('fr-FR')+' F'}} },
+        scales:{ y:{ ticks:{callback:v=>(v/1000).toFixed(0)+'K',font:{size:10}} }, x:{ ticks:{font:{size:10}} } } }
+    });
+  }
+
+  const ctxB=document.getElementById('finBenchmarkChart');
+  if(ctxB && fin.finLots.length){
+    if(window._finBenchmarkChartInst){ try{window._finBenchmarkChartInst.destroy();}catch(e){} }
+    const lotsTries=fin.finLots.slice().sort((a,b)=>b.margePct-a.margePct);
+    window._finBenchmarkChartInst = new Chart(ctxB,{
+      type:'bar',
+      data:{ labels:lotsTries.map(f=>f.lot.nom||'Lot'), datasets:[{
+        label:'Taux de marge (%)', data:lotsTries.map(f=>+f.margePct.toFixed(1)),
+        backgroundColor:lotsTries.map(f=>f.margePct>=0?'#059669aa':'#c1121faa'),
+        borderColor:lotsTries.map(f=>f.margePct>=0?'#059669':'#c1121f'), borderWidth:2
+      }]},
+      options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
+        plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>c.parsed.x+'% de marge'}} },
+        scales:{ x:{ ticks:{callback:v=>v+'%',font:{size:10}} }, y:{ ticks:{font:{size:10}} } } }
+    });
+  }
+}
+window.renderFinControle=renderFinControle;
+window.switchFinControleGroupe=function(g){ finControleGroupe=g; renderFinControle(document.getElementById('finTabContent'),window._fin); };
+window.switchFinControleLot=function(v){ finControleLot=v; renderFinControle(document.getElementById('finTabContent'),window._fin); };
+
 function renderFinBudget(el,fin){
   if(!fin.budgets.length){el.innerHTML='<div style="text-align:center;padding:60px;background:#fff;border-radius:12px;border:1px dashed var(--border)"><div style="font-size:36px;margin-bottom:12px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucun budget defini</div><div style="font-size:12px;color:var(--text3);margin-bottom:16px">Definissez vos objectifs par lot</div><button class="btn btn-p" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Creer un budget</button></div>';return;}
   var cards=fin.finLots.map(function(f){
@@ -11626,7 +11806,9 @@ function renderFinBudget(el,fin){
       var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
       var ec=r-b.montantBudget,pc=b.montantBudget>0?Math.min(200,r/b.montantBudget*100):0;
       var fav=b.categorie==='recette'?r>=b.montantBudget:r<=b.montantBudget;
-      return '<tr><td>'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+'</td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+'</td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>';
+      var ecartPct=b.montantBudget>0?(ec/b.montantBudget*100):0;
+      var enDerive=!fav && Math.abs(ecartPct)>=FINANCE_PARAMS.seuilAlerteDerive;
+      return '<tr'+(enDerive?' style="background:#fef2f2"':'')+'><td>'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+(enDerive?' <span class="badge b-r" style="font-size:9px">⚠ dérive</span>':'')+'</td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+'</td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>';
     }).join('');
     var issuSimu = lb.some(function(b){return b.source==='simulation';});
     return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>'+(f.lot.type==='layer'?'🥚':'🍗')+' '+esc(f.lot.nom||'Lot')+'</span>'+(issuSimu?'<span class="badge b-bl" style="font-size:9px" title="Budget issu du module Simulation Déploiement de Bande"><i class="fas fa-calculator"></i> Simulation</span>':'')+'</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Categorie</th><th>Budget</th><th>Reel</th><th>Ecart</th><th>% Consomme</th><th></th></tr></thead><tbody>'+brows+'</tbody></table></div></div>';
