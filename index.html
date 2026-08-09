@@ -9224,14 +9224,19 @@ async function saveCond(){
   if(!date || bruts <= 0){ toast('Date et nombre d’oeufs requis', 'err'); return; }
 
   var nets = Math.max(0, bruts - casses);
-  var plateaux = Math.floor(nets / 30);
-  if(plateaux === 0){ toast('Pas assez d’oeufs pour un plateau (min. 30)', 'err'); return; }
   if(sommeCal > nets){ toast('Erreur: total calibres ('+sommeCal+') superieur aux oeufs nets ('+nets+')','err'); return; }
 
-  // ── Report du reste de la collecte précédente du même lot ──
-  // Un déficit (ex: 9 plateaux, pas assez pour un carton complet) ne reste plus bloqué :
-  // il se combine avec les plateaux de cette session pour former de nouveaux cartons.
+  // ── Report du reste de la collecte précédente du même lot (2 niveaux) ──
+  // Niveau 1 — œufs : un lot qui ne pond que 15 œufs un jour ne forme aucun plateau seul
+  // (min. 30) ; ces œufs ne sont plus perdus/bloqués, ils se cumulent avec la collecte
+  // suivante jusqu'à former un plateau complet.
+  // Niveau 2 — plateaux : un déficit de plateaux (ex: 9, pas assez pour un carton) se
+  // combine avec les plateaux de la session suivante pour former de nouveaux cartons.
   var reste = await getResteEnAttente(flockId, editId);
+  var cumNets = nets + reste.oeufsGlobal;
+  var plateaux = Math.floor(cumNets / 30);
+  var oeufsResteApres = cumNets % 30;
+
   var pltCumule = plateaux + reste.global;
   var cartons = Math.floor(pltCumule / 12);
   var pltRestantsApres = pltCumule % 12;
@@ -9240,11 +9245,19 @@ async function saveCond(){
   // Si calibres partiellement remplis, completer par Moyen
   if(sommeCal > 0 && sommeCal < nets){ cMoyen += (nets - sommeCal); }
 
-  // Calculer plateaux par calibre
-  var pltPetit    = Math.floor(cPetit/30);
-  var pltMoyen    = Math.floor(cMoyen/30);
-  var pltGros     = Math.floor(cGros/30);
-  var pltTresGros = Math.floor(cTresGros/30);
+  // Calculer plateaux par calibre — report du reste en œufs par calibre également
+  var cPetitCumule    = cPetit    + reste.oeufsPetit;
+  var cMoyenCumule    = cMoyen    + reste.oeufsMoyen;
+  var cGrosCumule     = cGros     + reste.oeufsGros;
+  var cTresGrosCumule = cTresGros + reste.oeufsTresGros;
+  var pltPetit    = Math.floor(cPetitCumule/30);
+  var pltMoyen    = Math.floor(cMoyenCumule/30);
+  var pltGros     = Math.floor(cGrosCumule/30);
+  var pltTresGros = Math.floor(cTresGrosCumule/30);
+  var oeufsResteApres_petit    = cPetitCumule    % 30;
+  var oeufsResteApres_moyen    = cMoyenCumule    % 30;
+  var oeufsResteApres_gros     = cGrosCumule     % 30;
+  var oeufsResteApres_tresGros = cTresGrosCumule % 30;
   // Report du reste précédent, par calibre — un carton ne mélange jamais deux calibres.
   var pltPetitCumule    = pltPetit    + reste.petit;
   var pltMoyenCumule    = pltMoyen    + reste.moyen;
@@ -9294,13 +9307,15 @@ async function saveCond(){
   await addRec(S.COND, {
     flockId:flockId, date:date, oeufs_bruts: bruts, oeufs_casses: casses,
     oeufs_nets: nets, plateaux:plateaux, cartons:cartons, plt_restants: pltRestants,
-    plt_restants_apres: pltRestantsApres,
+    plt_restants_apres: pltRestantsApres, oeufsResteApres: oeufsResteApres,
     depotSrcId:depotSrcId, depotDestId:depotDestId, operatorId: opId, notes:notes, ref:ref, ts:ts, bomId:bomId,
     cal_petit:cPetit, cal_moyen:cMoyen, cal_gros:cGros, cal_tres_gros:cTresGros,
     plt_petit:pltPetit, plt_moyen:pltMoyen, plt_gros:pltGros, plt_tres_gros:pltTresGros,
     car_petit:carPetit, car_moyen:carMoyen, car_gros:carGros, car_tres_gros:carTresGros,
     pltReste_petit:pltResteApres_petit, pltReste_moyen:pltResteApres_moyen,
-    pltReste_gros:pltResteApres_gros, pltReste_tresGros:pltResteApres_tresGros
+    pltReste_gros:pltResteApres_gros, pltReste_tresGros:pltResteApres_tresGros,
+    oeufsReste_petit:oeufsResteApres_petit, oeufsReste_moyen:oeufsResteApres_moyen,
+    oeufsReste_gros:oeufsResteApres_gros, oeufsReste_tresGros:oeufsResteApres_tresGros
   });
 
   // Mouvements de stock automatiques
@@ -9444,18 +9459,26 @@ window.saveCond = saveCond;
 // un carton) restait bloqué indéfiniment au lieu d'être complété par l'excédent de la
 // collecte suivante du même lot.
 async function getResteEnAttente(flockId, excludeId){
-  if(!flockId) return {global:0, petit:0, moyen:0, gros:0, tresGros:0};
+  if(!flockId) return {global:0, petit:0, moyen:0, gros:0, tresGros:0, oeufsGlobal:0, oeufsPetit:0, oeufsMoyen:0, oeufsGros:0, oeufsTresGros:0};
   const sessions = (await getAll(S.COND))
     .filter(s=>s.flockId===flockId && s.id!==excludeId)
     .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.ts||0)-(a.ts||0)));
   const last = sessions[0];
-  if(!last) return {global:0, petit:0, moyen:0, gros:0, tresGros:0};
+  if(!last) return {global:0, petit:0, moyen:0, gros:0, tresGros:0, oeufsGlobal:0, oeufsPetit:0, oeufsMoyen:0, oeufsGros:0, oeufsTresGros:0};
   return {
     global:  last.plt_restants_apres  ?? last.plt_restants  ?? 0,
     petit:   last.pltReste_petit      ?? 0,
     moyen:   last.pltReste_moyen      ?? 0,
     gros:    last.pltReste_gros       ?? 0,
     tresGros:last.pltReste_tresGros   ?? 0,
+    // Reste en œufs (avant même de former 1 plateau, cad < 30 œufs) — reporté séparément
+    // du reste en plateaux (avant de former 1 carton, < 12 plateaux). Les deux niveaux
+    // de report se cumulent d'une session à l'autre du même lot.
+    oeufsGlobal:  last.oeufsResteApres    ?? 0,
+    oeufsPetit:   last.oeufsReste_petit   ?? 0,
+    oeufsMoyen:   last.oeufsReste_moyen   ?? 0,
+    oeufsGros:    last.oeufsReste_gros    ?? 0,
+    oeufsTresGros:last.oeufsReste_tresGros?? 0,
   };
 }
 window.getResteEnAttente = getResteEnAttente;
@@ -9470,67 +9493,105 @@ async function recalculerCascadeCond(flockId){
   if(!flockId) return;
   const prods = await getAll(S.PRODUITS);
   const pCar         = findCondProduit(prods,'carton');
+  const pPlt         = findCondProduit(prods,'plateau');
   const pCarPetit    = prods.find(p=>p.ref==='CAL-CAR-P');
   const pCarMoyen    = prods.find(p=>p.ref==='CAL-CAR-M');
   const pCarGros     = prods.find(p=>p.ref==='CAL-CAR-G');
   const pCarTresGros = prods.find(p=>p.ref==='CAL-CAR-TG');
+  const pPltPetit    = prods.find(p=>p.ref==='CAL-PLT-P');
+  const pPltMoyen    = prods.find(p=>p.ref==='CAL-PLT-M');
+  const pPltGros     = prods.find(p=>p.ref==='CAL-PLT-G');
+  const pPltTresGros = prods.find(p=>p.ref==='CAL-PLT-TG');
 
   const sessions = (await getAll(S.COND))
     .filter(s=>s.flockId===flockId)
     .sort((a,b)=>(a.date||'').localeCompare(b.date||'')||((a.ts||0)-(b.ts||0)));
 
-  let resteGlobal=0, restePetit=0, resteMoyen=0, resteGros=0, resteTresGros=0;
+  // Niveau 1 (œufs→plateau) et niveau 2 (plateau→carton) — chaînes indépendantes.
+  let oResteGlobal=0, oRestePetit=0, oResteMoyen=0, oResteGros=0, oResteTresGros=0;
+  let pResteGlobal=0, pRestePetit=0, pResteMoyen=0, pResteGros=0, pResteTresGros=0;
   let nbCorrigees=0;
 
   for(const s of sessions){
     const isCalibre = (s.cal_petit||0)+(s.cal_moyen||0)+(s.cal_gros||0)+(s.cal_tres_gros||0) > 0;
-    let newCartons, newResteGlobal=resteGlobal;
-    let newCarPetit=s.car_petit||0, newCarMoyen=s.car_moyen||0, newCarGros=s.car_gros||0, newCarTresGros=s.car_tres_gros||0;
-    let newRestePetit=restePetit, newResteMoyen=resteMoyen, newResteGros=resteGros, newResteTresGros=resteTresGros;
+    let newPlateaux, newOResteGlobal=oResteGlobal;
+    let newPltPetit=s.plt_petit||0, newPltMoyen=s.plt_moyen||0, newPltGros=s.plt_gros||0, newPltTresGros=s.plt_tres_gros||0;
+    let newORestePetit=oRestePetit, newOResteMoyen=oResteMoyen, newOResteGros=oResteGros, newOResteTresGros=oResteTresGros;
 
+    // ── Niveau 1 : œufs → plateaux ──
     if(isCalibre){
-      const cumP  = (s.plt_petit||0)     + restePetit;
-      const cumM  = (s.plt_moyen||0)     + resteMoyen;
-      const cumG  = (s.plt_gros||0)      + resteGros;
-      const cumTG = (s.plt_tres_gros||0) + resteTresGros;
-      newCarPetit=Math.floor(cumP/12);     newRestePetit=cumP%12;
-      newCarMoyen=Math.floor(cumM/12);     newResteMoyen=cumM%12;
-      newCarGros=Math.floor(cumG/12);      newResteGros=cumG%12;
-      newCarTresGros=Math.floor(cumTG/12); newResteTresGros=cumTG%12;
-      newCartons = newCarPetit+newCarMoyen+newCarGros+newCarTresGros;
+      const cumP  = (s.cal_petit||0)     + oRestePetit;
+      const cumM  = (s.cal_moyen||0)     + oResteMoyen;
+      const cumG  = (s.cal_gros||0)      + oResteGros;
+      const cumTG = (s.cal_tres_gros||0) + oResteTresGros;
+      newPltPetit=Math.floor(cumP/30);     newORestePetit=cumP%30;
+      newPltMoyen=Math.floor(cumM/30);     newOResteMoyen=cumM%30;
+      newPltGros=Math.floor(cumG/30);      newOResteGros=cumG%30;
+      newPltTresGros=Math.floor(cumTG/30); newOResteTresGros=cumTG%30;
+      newPlateaux = newPltPetit+newPltMoyen+newPltGros+newPltTresGros;
     } else {
-      const cum = (s.plateaux||0) + resteGlobal;
-      newCartons = Math.floor(cum/12);
-      newResteGlobal = cum%12;
+      const cum = (s.oeufs_nets||0) + oResteGlobal;
+      newPlateaux = Math.floor(cum/30);
+      newOResteGlobal = cum%30;
     }
 
-    const ancienCartons = isCalibre ? ((s.car_petit||0)+(s.car_moyen||0)+(s.car_gros||0)+(s.car_tres_gros||0)) : (s.cartons||0);
-    const changed = ancienCartons !== (isCalibre ? newCartons : newCartons);
+    // ── Niveau 2 : plateaux → cartons (à partir des plateaux recalculés ci-dessus) ──
+    let newCartons, newPResteGlobal=pResteGlobal;
+    let newCarPetit=s.car_petit||0, newCarMoyen=s.car_moyen||0, newCarGros=s.car_gros||0, newCarTresGros=s.car_tres_gros||0;
+    let newPRestePetit=pRestePetit, newPResteMoyen=pResteMoyen, newPResteGros=pResteGros, newPResteTresGros=pResteTresGros;
+    if(isCalibre){
+      const cumP  = newPltPetit    + pRestePetit;
+      const cumM  = newPltMoyen    + pResteMoyen;
+      const cumG  = newPltGros     + pResteGros;
+      const cumTG = newPltTresGros + pResteTresGros;
+      newCarPetit=Math.floor(cumP/12);     newPRestePetit=cumP%12;
+      newCarMoyen=Math.floor(cumM/12);     newPResteMoyen=cumM%12;
+      newCarGros=Math.floor(cumG/12);      newPResteGros=cumG%12;
+      newCarTresGros=Math.floor(cumTG/12); newPResteTresGros=cumTG%12;
+      newCartons = newCarPetit+newCarMoyen+newCarGros+newCarTresGros;
+    } else {
+      const cum = newPlateaux + pResteGlobal;
+      newCartons = Math.floor(cum/12);
+      newPResteGlobal = cum%12;
+    }
+
+    const ancienPlateaux = isCalibre ? ((s.plt_petit||0)+(s.plt_moyen||0)+(s.plt_gros||0)+(s.plt_tres_gros||0)) : (s.plateaux||0);
+    const ancienCartons  = isCalibre ? ((s.car_petit||0)+(s.car_moyen||0)+(s.car_gros||0)+(s.car_tres_gros||0)) : (s.cartons||0);
+    const changed = ancienPlateaux !== newPlateaux || ancienCartons !== newCartons;
 
     if(changed){
       nbCorrigees++;
-      // 1. Retirer les anciens mouvements "entrée cartons" de cette session
-      const mvts = (await getAll(S.MVTS)).filter(m=>m.ref===s.ref && m.type==='entree' && /carton/i.test(m.motif||'') && !/vide/i.test(m.motif||''));
+      // 1. Retirer les anciens mouvements "entrée plateaux" ET "entrée cartons" de cette session
+      const mvts = (await getAll(S.MVTS)).filter(m=>m.ref===s.ref && m.type==='entree' && /(plateau|carton)/i.test(m.motif||'') && !/vide/i.test(m.motif||''));
       for(const m of mvts) await delRec(S.MVTS, m.id);
-      // 2. Recréer au bon montant
+      // 2. Recréer plateaux au bon montant
       if(isCalibre){
+        if(newPltPetit>0 && pPltPetit)    await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltPetit.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newPltPetit,unite:'plateau',prixUnit:CALIBRE_TARIFS.petit.prixPlateau,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (plateaux Petit) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newPltMoyen>0 && pPltMoyen)    await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltMoyen.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newPltMoyen,unite:'plateau',prixUnit:CALIBRE_TARIFS.moyen.prixPlateau,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (plateaux Moyen) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newPltGros>0 && pPltGros)      await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltGros.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newPltGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.gros.prixPlateau,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (plateaux Gros) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newPltTresGros>0 && pPltTresGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pPltTresGros.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newPltTresGros,unite:'plateau',prixUnit:CALIBRE_TARIFS.tresGros.prixPlateau,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (plateaux Tres Gros) [reste reporté]',date:s.date,ts:Date.now()});
         if(newCarPetit>0 && pCarPetit)    await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarPetit.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarPetit,unite:'carton',prixUnit:CALIBRE_TARIFS.petit.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Petit) [reste reporté]',date:s.date,ts:Date.now()});
         if(newCarMoyen>0 && pCarMoyen)    await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarMoyen.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarMoyen,unite:'carton',prixUnit:CALIBRE_TARIFS.moyen.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Moyen) [reste reporté]',date:s.date,ts:Date.now()});
         if(newCarGros>0 && pCarGros)      await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarGros.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarGros,unite:'carton',prixUnit:CALIBRE_TARIFS.gros.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Gros) [reste reporté]',date:s.date,ts:Date.now()});
         if(newCarTresGros>0 && pCarTresGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarTresGros.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarTresGros,unite:'carton',prixUnit:CALIBRE_TARIFS.tresGros.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Tres Gros) [reste reporté]',date:s.date,ts:Date.now()});
-      } else if(newCartons>0 && pCar){
-        await regMvt({cadre:'conditionnement',type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (entree cartons) [reste reporté]',date:s.date,ts:Date.now()});
+      } else {
+        if(newPlateaux>0 && pPlt) await regMvt({cadre:'conditionnement',type:'entree',produitId:pPlt.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newPlateaux,unite:'plateau',prixUnit:pPlt.prix||0,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (entree plateaux) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newCartons>0 && pCar)  await regMvt({cadre:'conditionnement',type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (entree cartons) [reste reporté]',date:s.date,ts:Date.now()});
       }
-      // 3. Mettre à jour la session
+      // 3. Mettre à jour la session (2 niveaux de reste)
       await updRec(S.COND, s.id, Object.assign({}, s, {
-        cartons: isCalibre ? newCartons : newCartons,
-        plt_restants_apres: isCalibre ? (s.plt_restants_apres||0) : newResteGlobal,
+        plateaux:newPlateaux, cartons:newCartons,
+        oeufsResteApres: isCalibre ? (s.oeufsResteApres||0) : newOResteGlobal,
+        oeufsReste_petit:newORestePetit, oeufsReste_moyen:newOResteMoyen, oeufsReste_gros:newOResteGros, oeufsReste_tresGros:newOResteTresGros,
+        plt_petit:newPltPetit, plt_moyen:newPltMoyen, plt_gros:newPltGros, plt_tres_gros:newPltTresGros,
+        plt_restants_apres: isCalibre ? (s.plt_restants_apres||0) : newPResteGlobal,
         car_petit:newCarPetit, car_moyen:newCarMoyen, car_gros:newCarGros, car_tres_gros:newCarTresGros,
-        pltReste_petit:newRestePetit, pltReste_moyen:newResteMoyen, pltReste_gros:newResteGros, pltReste_tresGros:newResteTresGros
+        pltReste_petit:newPRestePetit, pltReste_moyen:newPResteMoyen, pltReste_gros:newPResteGros, pltReste_tresGros:newPResteTresGros
       }));
     }
 
-    resteGlobal=newResteGlobal; restePetit=newRestePetit; resteMoyen=newResteMoyen; resteGros=newResteGros; resteTresGros=newResteTresGros;
+    oResteGlobal=newOResteGlobal; oRestePetit=newORestePetit; oResteMoyen=newOResteMoyen; oResteGros=newOResteGros; oResteTresGros=newOResteTresGros;
+    pResteGlobal=newPResteGlobal; pRestePetit=newPRestePetit; pResteMoyen=newPResteMoyen; pResteGros=newPResteGros; pResteTresGros=newPResteTresGros;
   }
   if(nbCorrigees>0) toast(`🔄 Cascade : ${nbCorrigees} session(s) suivante(s) recalculée(s) suite à la modification`);
 }
@@ -9542,10 +9603,14 @@ window.afficherResteCondLot = async function(){
   if(!box) return;
   if(!flockId){ box.style.display='none'; return; }
   const r = await getResteEnAttente(flockId, parseInt(document.getElementById('condEditId')?.value)||null);
-  const total = r.global + r.petit + r.moyen + r.gros + r.tresGros;
-  if(total<=0){ box.style.display='none'; return; }
+  const totalPlt = r.global + r.petit + r.moyen + r.gros + r.tresGros;
+  const totalOeufs = r.oeufsGlobal + r.oeufsPetit + r.oeufsMoyen + r.oeufsGros + r.oeufsTresGros;
+  if(totalPlt<=0 && totalOeufs<=0){ box.style.display='none'; return; }
   box.style.display='block';
-  box.innerHTML = `⏳ <strong>${total} plateau(x)</strong> en attente de la collecte précédente de ce lot — seront complétés automatiquement en carton avec cette session si l'appoint suffit.`;
+  const parts=[];
+  if(totalOeufs>0) parts.push(`<strong>${totalOeufs} œuf(s)</strong> en attente (pas encore un plateau complet)`);
+  if(totalPlt>0) parts.push(`<strong>${totalPlt} plateau(x)</strong> en attente (pas encore un carton complet)`);
+  box.innerHTML = `⏳ ${parts.join(' · ')} de la collecte précédente de ce lot — complétés automatiquement avec cette session.`;
 };
 
 async function reverseCondSession(s){
