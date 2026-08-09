@@ -16732,6 +16732,7 @@ window.sauvegarderCfgRapport = function(){
     whatsapp: val('cfgWhatsapp') ?? cfg.whatsapp,
     email:    val('cfgEmail')    ?? cfg.email,
     nom:      val('cfgNom')      ?? cfg.nom,
+    messagerieActif: chk('cfgMessagerieActif'),
     autoActif:   chk('cfgAutoActif'),
     autoJour:    chk('cfgAutoJour'),    heureJour:    val('cfgHeureJour')    || cfg.heureJour    || '18:00',
     autoSemaine: chk('cfgAutoSemaine'), heureSemaine: val('cfgHeureSemaine') || cfg.heureSemaine || '07:00',
@@ -16794,7 +16795,15 @@ function startRapportAuto(){
       const texte = genRapportTexte(data, 'whatsapp');
       const titres = {jour:'Rapport journalier', semaine:'Rapport hebdomadaire', mois:'Rapport mensuel'};
       if(cfg.whatsapp) envoyerWhatsApp(texte, cfg.whatsapp);
-      else if(cfg.email) envoyerEmail(texte, cfg.email, titres[typeToSend]+' — Sanix AviNest');
+      if(cfg.email) envoyerEmail(texte, cfg.email, titres[typeToSend]+' — Sanix AviNest');
+      // Messagerie interne : canal indépendant, pas exclusif avec WhatsApp/Email — c'était
+      // le bug (envoi auto ne touchait jamais la messagerie interne, "else if" l'excluait).
+      if(cfg.messagerieActif!==false){
+        try{
+          const convId = await msgGetOrCreateRapportConversation();
+          await envoyerMessageInterne(convId, texte);
+        }catch(e){ console.warn('Envoi messagerie interne échoué :', e.message); }
+      }
       toast('📤 Rapport '+titres[typeToSend]+' envoyé !');
     }
   }, 60000); // check chaque minute
@@ -16968,6 +16977,10 @@ async function renderRapports(ca){
           <div class="fg"><label><i class="fas fa-envelope" style="color:var(--blue)"></i> Email</label><input id="cfgEmail" type="email" placeholder="directeur@…" value="${cfg.email||''}"></div>
           <div class="fg"><label>Nom exploitation</label><input id="cfgNom" type="text" placeholder="Mon élevage" value="${cfg.nom||'Sanix AviNest'}"></div>
         </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:600;margin-bottom:12px">
+          <input type="checkbox" id="cfgMessagerieActif" ${cfg.messagerieActif!==false?'checked':''} style="width:16px;height:16px">
+          <i class="fas fa-comments" style="color:var(--g2)"></i> Envoyer aussi dans la Messagerie interne (admin &amp; manager)
+        </label>
         <button class="btn btn-p" onclick="sauvegarderCfgRapport()"><i class="fas fa-save"></i> Enregistrer</button>
       </div>
     </div>
