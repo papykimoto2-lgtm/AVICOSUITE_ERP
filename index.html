@@ -1195,9 +1195,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
   <!-- 8. DISTRIBUTION — sortie vers le client -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑧ Distribution</div>
-  <div class="nav-item nav-item-biz" id="nav-clients"   onclick="goTo('clients')"><i class="fas fa-user-tie"></i> Clients</div>
-  <div class="nav-item nav-item-biz" id="nav-commandes" onclick="goTo('commandes')"><i class="fas fa-shopping-cart"></i> Commandes</div>
-  <div class="nav-item nav-item-biz" id="nav-creances"  onclick="goTo('creances')"><i class="fas fa-hourglass-half"></i> Créances</div>
+  <div class="nav-item nav-item-biz" id="nav-distribution" onclick="goTo('distribution')"><i class="fas fa-truck-fast"></i> Distribution</div>
 
   <!-- 9. FINANCE — résultat économique du cycle complet -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑨ Finance</div>
@@ -3127,6 +3125,7 @@ function canAccessPage(page){
   if(!rp) return false;
   if(rp.pages==='all') return true;
   if(page==='appro') return ['bcs','receptions','reappro','prods'].some(p=>rp.pages.includes(p));
+  if(page==='distribution') return ['clients','commandes','creances'].some(p=>rp.pages.includes(p));
   return rp.pages.includes(page);
 }
 
@@ -4403,6 +4402,7 @@ async function render(){
   else if(curPage==='prods') await renderProds(ca);
   else if(curPage==='staff') await renderStaff(ca);
   else if(curPage==='cond') await renderCond(ca);
+  else if(curPage==='distribution') await renderDistributionModule(ca);
   else if(curPage==='clients') await renderClients(ca);
   else if(curPage==='commandes') await renderCommandes(ca);
   else if(curPage==='creances')  await renderCreances(ca);
@@ -7881,6 +7881,41 @@ const PAIE_LABEL={comptant:'Comptant',credit7:'Crédit 7j',credit15:'Crédit 15j
 const SALE_STATUT_LABEL={pending:'En attente',confirmed:'Confirmée',delivered:'Livrée',invoiced:'Facturée',paid:'Soldée',cancelled:'Annulée'};
 const SALE_STATUT_CSS={pending:'b-a',confirmed:'b-bl',delivered:'b-g',invoiced:'b-inv',paid:'b-g',cancelled:'b-r'};
 const PAIE_MODE_LABEL={especes:'Espèces',wave:'Wave',orange_money:'Orange Money',mtn:'MTN Money',virement:'Virement',credit:'Crédit'};
+
+// ══ DISTRIBUTION — module unifié à onglets (Clients / Commandes / Créances) ══
+function distCA(){ return document.getElementById('distTabContent') || document.getElementById('contentArea'); }
+let distTab='clients';
+async function renderDistributionModule(ca){
+  if(!canAccessPage('distribution')){ ca.innerHTML='<div class="page-header"><div class="page-header-title">Distribution</div></div><div class="stock-page"><div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Accès non autorisé.</div></div></div>'; return; }
+  const allTabs=[
+    {id:'clients',   icon:'fa-user-tie',        label:'Clients'},
+    {id:'commandes', icon:'fa-shopping-cart',   label:'Commandes'},
+    {id:'creances',  icon:'fa-hourglass-half',  label:'Créances'},
+  ];
+  if(!allTabs.some(t=>t.id===distTab)) distTab=allTabs[0].id;
+  const tabNav=allTabs.map(t=>`<button class="tab-btn ${distTab===t.id?'on':''}" onclick="switchDistTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
+  ca.innerHTML=`
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-truck-fast" style="color:var(--g2)"></i> Distribution</div></div>
+    <div class="tab-nav" id="distTabNav">${tabNav}</div>
+    <div id="distTabContent" class="stock-page"></div>
+  `;
+  await renderDistTab();
+}
+window.renderDistributionModule=renderDistributionModule;
+window.switchDistTab=async function(t){
+  distTab=t;
+  document.querySelectorAll('#distTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchDistTab('${t}')`));
+  await renderDistTab();
+};
+async function renderDistTab(){
+  const el=distCA();if(!el) return;
+  if(distTab==='clients') await renderClients(el);
+  else if(distTab==='commandes') await renderCommandes(el);
+  else if(distTab==='creances') await renderCreances(el);
+}
+// Sous-navigation depuis n'importe où (KPI, dashboard, relances…)
+function goDistSub(id){ if(document.getElementById('distTabContent')) switchDistTab(id); else{ distTab=id; goTo('distribution'); } }
+window.goDistSub=goDistSub;
 
 async function renderClients(ca){
   const[clients,sales]=await Promise.all([getAll(S.CLIENTS),getAll(S.SALES)]);
