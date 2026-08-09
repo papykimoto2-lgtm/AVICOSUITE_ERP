@@ -20720,6 +20720,8 @@ window.simuPrefillFromLot = async function(){
   const sel = document.getElementById('simuLotCible');
   const flockId = parseInt(sel?.value)||null;
   if(!flockId) return;
+  simuLotCibleId = flockId; // fixé AVANT le re-rendu, sinon simuInitLotCible() reconstruit
+  // le select sans savoir quelle option marquer "selected" — la sélection se perdait silencieusement.
   const lots = await getAll(S.FLOCKS);
   const lot = lots.find(l=>l.id===flockId);
   if(!lot) return;
