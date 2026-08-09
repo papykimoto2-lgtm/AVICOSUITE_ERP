@@ -3109,6 +3109,27 @@ var PAIE_CI = {
     {jusqua: Infinity,   taux: 45}
   ]
 };
+// Prix aliment de repli (FCFA/kg) — utilisé par Finance & Rentabilité pour estimer le coût
+// aliment d'un lot UNIQUEMENT si aucune charge "aliment" n'a été saisie manuellement pour
+// ce lot. Configurable (Paramétrage > Finance) au lieu d'être figé dans le code.
+var FINANCE_PARAMS = { prixAlimentDefaut: 185 };
+async function loadFinanceParamsOverrides(){
+  try{
+    const s = await getAll(S.SETTINGS_APP);
+    const rec = s.find(r=>r.key==='finance_params');
+    if(rec && rec.params) Object.assign(FINANCE_PARAMS, rec.params);
+  }catch(e){ console.warn('Paramètres Finance : défauts utilisés —', e.message); }
+}
+window.saveFinanceParams=async function(){
+  const val=parseFloat(document.getElementById('fp_prixAlimentDefaut')?.value);
+  if(!val || val<=0){ toast('Prix invalide','err'); return; }
+  FINANCE_PARAMS.prixAlimentDefaut=val;
+  const s=await getAll(S.SETTINGS_APP);const existing=s.find(r=>r.key==='finance_params');
+  if(existing) await updRec(S.SETTINGS_APP,existing.id,{key:'finance_params',params:{prixAlimentDefaut:val}});
+  else await addRec(S.SETTINGS_APP,{key:'finance_params',params:{prixAlimentDefaut:val}});
+  toast('✅ Paramètre enregistré');
+};
+
 async function loadPaieParamsOverrides(){
   try{
     const s = await getAll(S.SETTINGS_APP);
@@ -3499,6 +3520,7 @@ async function renderSettings(ca){
     ['fne','fa-stamp','FNE (DGI)'],
     ['tarifs','fa-tags','Tarifs Cond.'],
     ['paie','fa-money-check-dollar','Paie (CNPS/ITS/CMU)'],
+    ['finance','fa-chart-line','Finance'],
     ['data','fa-database','Données'],
     ['diagnostic','fa-stethoscope','Diagnostic'],
   ];
@@ -3532,6 +3554,7 @@ async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='fne')          return renderSettingsFNE(cfg, isAdmin);
   if(tab==='tarifs')       return renderSettingsTarifs(isAdmin);
   if(tab==='paie')         return renderSettingsPaie(isAdmin);
+  if(tab==='finance')      return renderSettingsFinance(isAdmin);
   if(tab==='data')         return renderSettingsData(isSuperAdmin);
   if(tab==='diagnostic')   return '<div id="diagContainer"><div style="padding:30px;text-align:center"><button class="btn btn-p" onclick="runDbDiagnostic()"><i class="fas fa-stethoscope"></i> Lancer le diagnostic</button></div></div>';
   return '';
@@ -3772,6 +3795,17 @@ function renderSettingsTarifs(isAdmin){
     <p style="font-size:11px;color:var(--text3);margin-bottom:12px">Base de valorisation du module Conditionnement (rapport périodique, KPI valeur). Modifier ici sans toucher au code.</p>
     <div class="form-grid">${rows}</div>
     ${isAdmin?'<button class="btn btn-p" style="margin-top:10px" onclick="saveCalibreTarifs()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3)">Réservé Admin/Manager.</p>'}`;
+}
+
+function renderSettingsFinance(isAdmin){
+  const ro = isAdmin ? '' : 'disabled';
+  return `<div class="settings-section-title">📈 Paramètres Finance & Rentabilité</div>
+    <p style="font-size:11px;color:var(--text3);margin-bottom:12px">Valeurs de repli utilisées uniquement quand aucune charge n'a été saisie manuellement pour un lot.</p>
+    <div class="form-grid">
+      <div class="fg"><label>Prix aliment de repli (FCFA/kg)</label><input id="fp_prixAlimentDefaut" type="number" min="1" value="${FINANCE_PARAMS.prixAlimentDefaut}" ${ro}></div>
+    </div>
+    <p style="font-size:10px;color:var(--text3);margin-top:6px">Utilisé pour estimer le coût aliment d'un lot si aucune charge de catégorie "Aliment" n'existe pour ce lot dans le module Charges. Si tu saisis les charges aliment manuellement (recommandé), ce paramètre n'a aucun effet.</p>
+    ${isAdmin?'<button class="btn btn-p" style="margin-top:14px" onclick="saveFinanceParams()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3);margin-top:10px">Réservé Admin/Manager.</p>'}`;
 }
 
 function renderSettingsPaie(isAdmin){
@@ -4758,9 +4792,9 @@ async function computeKPIs(lot){
   const vaccAVenir=tasks.filter(t=>!t.realizedDate&&new Date(t.plannedDate)>=today);
 
   const coutPinit=(lot.costPerChick||0)*lot.initialStock;
-  const coutAliment=totalFeedKg*185;
+  const coutAliment=totalFeedKg*FINANCE_PARAMS.prixAlimentDefaut;
   const totalCharges=coutPinit+coutAliment;
-  const totalRecettesSales=sales.reduce((a,s)=>a+(s.total||0),0);
+  const totalRecettesSales=sales.reduce((a,s)=>a+(s.totalHT||s.total||0),0);
   const totalRecettesReforme=reformes.reduce((a,r)=>a+(r.recetteTotale||0),0);
   const totalRecettesVivant=ventesVivantes.reduce((a,v)=>a+(v.recetteTotale||0),0);
   const totalRecettes=totalRecettesSales+totalRecettesReforme+totalRecettesVivant;
@@ -11229,6 +11263,7 @@ async function initAppAfterLogin(){
     await loadRoleOverrides();
     await loadCalibreTarifsOverrides();
     await loadPaieParamsOverrides();
+    await loadFinanceParamsOverrides();
     await initDemo(); // idempotent (flags seed_*) — sans effet si l'org a déjà des données
     document.getElementById('lotsPanel').classList.remove('hidden');
     await renderLotSidebar();
@@ -11277,8 +11312,8 @@ async function computeFinanceGlobale(){
     var lr=reformesAll.filter(function(r){return r.flockId===lot.id;});
     var lv=ventesAll.filter(function(v){return v.flockId===lot.id;});
     var lsl=slaughtersAll.filter(function(s){return s.flockId===lot.id && !s.viaReforme;});
-    var recettes=ls.reduce(function(a,s){return a+(s.total||0);},0);
-    var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*185;
+    var recettes=ls.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
+    var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*FINANCE_PARAMS.prixAlimentDefaut;
     var cPBase=(lot.costPerChick||0)*lot.initialStock;
     var byCat={};
     lc.forEach(function(c){byCat[c.categorie]=(byCat[c.categorie]||0)+(c.montant||0);});
@@ -11408,7 +11443,7 @@ function renderFinSynthese(el,fin){
 function renderFinLots(el,fin){
   if(!fin.finLots.length){el.innerHTML='<div style="text-align:center;padding:60px;color:var(--text3)"><i class="fas fa-egg" style="font-size:40px;opacity:.3;display:block;margin-bottom:12px"></i>Aucun lot</div>';return;}
   el.innerHTML=fin.finLots.map(function(f){
-    var catR=Object.entries(f.chargesByCat).sort(function(a,b){return b[1]-a[1];}).map(function(e){return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="width:20px;text-align:center">'+(CAT_ICONS[e[0]]||'📦')+'</span><span style="flex:1;font-size:11px">'+(CAT_LABELS[e[0]]||e[0])+'</span><span style="font-size:11px;font-weight:600">'+fcfa(e[1])+'</span><div class="prog" style="width:60px"><div class="prog-fill" style="width:'+pctFin(e[1],f.totalCharges)+';background:'+(CAT_COLORS[e[0]]||'#888')+'"></div></div></div>';}).join('');
+    var catR=Object.entries(f.chargesByCat).filter(function(e){return ['poussin','aliment'].indexOf(e[0])<0;}).sort(function(a,b){return b[1]-a[1];}).map(function(e){return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="width:20px;text-align:center">'+(CAT_ICONS[e[0]]||'📦')+'</span><span style="flex:1;font-size:11px">'+(CAT_LABELS[e[0]]||e[0])+'</span><span style="font-size:11px;font-weight:600">'+fcfa(e[1])+'</span><div class="prog" style="width:60px"><div class="prog-fill" style="width:'+pctFin(e[1],f.totalCharges)+';background:'+(CAT_COLORS[e[0]]||'#888')+'"></div></div></div>';}).join('');
     var roi=f.totalCharges>0?(f.marge/f.totalCharges*100).toFixed(1)+'%':'—';
     var budR=f.budgetTotal>0?'<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-top:1px solid var(--border);margin-top:3px"><span>Ecart budget</span><strong style="color:'+((f.ecartCharges||0)<=0?'#059669':'var(--red)')+'">'+((f.ecartCharges||0)>=0?'+':'')+fcfa(f.ecartCharges||0)+'</strong></div>':'';
     return '<div class="card" style="margin-bottom:14px">'
@@ -11420,8 +11455,8 @@ function renderFinLots(el,fin){
       +'<div style="text-align:center;padding:8px;background:'+(f.marge>=0?'var(--g4)':'var(--red-bg)')+';border-radius:8px"><div style="font-size:10px;color:var(--text3);font-weight:700">MARGE</div><div style="font-size:15px;font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</div><div style="font-size:10px;color:var(--text3)">'+f.margePct.toFixed(1)+'%</div></div>'
       +'</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
       +'<div><div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;text-transform:uppercase">Detail charges</div>'
-      +'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="width:20px;text-align:center">🐣</span><span style="flex:1;font-size:11px">Poussins ('+f.lot.initialStock+')</span><span style="font-size:11px;font-weight:600">'+fcfa(f.cPoussins)+'</span></div>'
-      +'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="width:20px;text-align:center">🌾</span><span style="flex:1;font-size:11px">Aliment (auto)</span><span style="font-size:11px;font-weight:600">'+fcfa(f.cAliment)+'</span></div>'
+      +'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="width:20px;text-align:center">🐣</span><span style="flex:1;font-size:11px">Poussins '+(f.chargesByCat.poussin?'(saisi)':'(estimé, '+f.lot.initialStock+' sujets)')+'</span><span style="font-size:11px;font-weight:600">'+fcfa(f.cPoussins)+'</span></div>'
+      +'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="width:20px;text-align:center">🌾</span><span style="flex:1;font-size:11px">Aliment '+(f.chargesByCat.aliment?'(saisi)':'(estimé, '+FINANCE_PARAMS.prixAlimentDefaut+' F/kg)')+'</span><span style="font-size:11px;font-weight:600">'+fcfa(f.cAliment)+'</span></div>'
       +catR
       +'<div style="display:flex;justify-content:space-between;padding:7px 0;font-weight:700;font-size:12px;border-top:2px solid var(--border)"><span>TOTAL</span><span style="color:var(--red)">'+fcfa(f.totalCharges)+'</span></div></div>'
       +'<div><div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;text-transform:uppercase">Indicateurs</div>'
@@ -11429,7 +11464,6 @@ function renderFinLots(el,fin){
       +'<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)"><span>Cout / tete vivante</span><strong>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)"><span>Taux de marge</span><strong style="color:'+colorMarge(f.marge)+'">'+f.margePct.toFixed(1)+'%</strong></div>'
       +'<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)"><span>ROI lot</span><strong style="color:'+colorMarge(f.marge)+'">'+roi+'</strong></div>'
-      +(f.vivants>0?'<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0"><span>Seuil/tete</span><strong>'+fcfa(f.coutParSujet)+'</strong></div>':'')
       +budR+'</div>'
       +'<button class="btn btn-sm btn-p" style="margin-top:8px;width:100%" onclick="openChargeManuelle('+f.lot.id+')"><i class="fas fa-plus"></i> Ajouter charge</button>'
       +'</div></div></div></div>';
@@ -16833,7 +16867,7 @@ async function collectRapportData(type, customMin=null, customMax=null){
 
   // Ventes
   const salesP = sales.filter(s=>inPeriod(s.date));
-  const caTotal = salesP.reduce((a,s)=>a+(s.total||0),0);
+  const caTotal = salesP.reduce((a,s)=>a+(s.totalHT||s.total||0),0);
   const nbVentes = salesP.length;
 
   // Commandes par statut (sur la période de création) + livraisons (sur la période de livraison)
