@@ -9356,8 +9356,141 @@ async function populateCondBomSelect(selectedId){
 }
 
 
+// ── Histogramme cartons PF par période (jour/semaine/mois) — respecte les filtres actifs ──
+let condChartGrp='jour', condChartInst=null;
+function isoWeekLabel(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  const target = new Date(d.valueOf());
+  const dayNr = (d.getDay()+6)%7;
+  target.setDate(target.getDate()-dayNr+3);
+  const firstThursday = new Date(target.getFullYear(),0,4);
+  const diff = target - firstThursday;
+  const week = 1 + Math.round(diff/(7*86400000));
+  return target.getFullYear()+'-S'+String(week).padStart(2,'0');
+}
+async function renderCondCartonsChart(){
+  const canvas = document.getElementById('condCartonsChart');
+  if(!canvas) return;
+  const dateMin = document.getElementById('condDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('condDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('condLotFilter')?.value || '';
+  const {bat, lig} = getCondBatLigneFilters();
+  const [sessions, flocks] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS)]);
+  let filtered = sessions.filter(s=>s.date>=dateMin && s.date<=dateMax);
+  if(lotId) filtered = filtered.filter(s=>String(s.flockId)===String(lotId));
+  if(bat||lig){
+    filtered = filtered.filter(s=>{
+      const f = flocks.find(x=>x.id===s.flockId);
+      if(!f) return false;
+      if(bat && String(f.buildingId)!==String(bat)) return false;
+      if(lig && String(f.lineId)!==String(lig)) return false;
+      return true;
+    });
+  }
+  const buckets = {};
+  filtered.forEach(s=>{
+    let key;
+    if(condChartGrp==='jour') key = s.date;
+    else if(condChartGrp==='semaine') key = isoWeekLabel(s.date);
+    else key = s.date.slice(0,7);
+    buckets[key] = (buckets[key]||0) + (s.cartons||0);
+  });
+  const keys = Object.keys(buckets).sort();
+  const labels = keys.map(k=> condChartGrp==='jour' ? k.slice(5) : k);
+  const data = keys.map(k=>buckets[k]);
+
+  if(condChartInst){ condChartInst.destroy(); condChartInst=null; }
+  condChartInst = new Chart(canvas, {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'Cartons produits', data, backgroundColor:'rgba(45,106,79,.65)', borderColor:'#2d6a4f', borderWidth:1, borderRadius:4 }] },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>c.parsed.y+' carton(s)'}} },
+      scales:{ y:{ beginAtZero:true, ticks:{precision:0}, grid:{color:'rgba(0,0,0,.05)'} }, x:{ grid:{display:false} } }
+    }
+  });
+  if(!keys.length){
+    const ctx = canvas.getContext('2d');
+    ctx.save(); ctx.fillStyle='#8a998f'; ctx.font='13px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('Aucun carton produit sur cette période/filtre', canvas.width/2, canvas.height/2);
+    ctx.restore();
+  }
+}
+window.switchCondChartGrp = function(g){
+  condChartGrp = g;
+  document.querySelectorAll('#condChartGrpNav .tab-btn').forEach(b=>b.classList.toggle('on', b.textContent.trim().toLowerCase()===g));
+  renderCondCartonsChart();
+  renderCondRendementChart();
+};
+window.renderCondCartonsChart = renderCondCartonsChart;
+
+// ── Courbe de rendement périodique — % œufs nets / œufs bruts par période, pondéré
+// (somme des nets / somme des bruts par bucket, pas la moyenne des % par session —
+// évite qu'une petite session à 100% écrase une grosse session à 90%).
+let condRdtChartInst = null;
+async function renderCondRendementChart(){
+  const canvas = document.getElementById('condRendementChart');
+  if(!canvas) return;
+  const dateMin = document.getElementById('condDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('condDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('condLotFilter')?.value || '';
+  const {bat, lig} = getCondBatLigneFilters();
+  const [sessions, flocks] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS)]);
+  let filtered = sessions.filter(s=>s.date>=dateMin && s.date<=dateMax);
+  if(lotId) filtered = filtered.filter(s=>String(s.flockId)===String(lotId));
+  if(bat||lig){
+    filtered = filtered.filter(s=>{
+      const f = flocks.find(x=>x.id===s.flockId);
+      if(!f) return false;
+      if(bat && String(f.buildingId)!==String(bat)) return false;
+      if(lig && String(f.lineId)!==String(lig)) return false;
+      return true;
+    });
+  }
+  const buckets = {};
+  filtered.forEach(s=>{
+    let key;
+    if(condChartGrp==='jour') key = s.date;
+    else if(condChartGrp==='semaine') key = isoWeekLabel(s.date);
+    else key = s.date.slice(0,7);
+    if(!buckets[key]) buckets[key] = {bruts:0, nets:0};
+    buckets[key].bruts += (s.oeufs_bruts||0);
+    buckets[key].nets  += (s.oeufs_nets||0);
+  });
+  const keys = Object.keys(buckets).sort();
+  const labels = keys.map(k=> condChartGrp==='jour' ? k.slice(5) : k);
+  const data = keys.map(k=>{ const b=buckets[k]; return b.bruts>0 ? +(b.nets/b.bruts*100).toFixed(1) : 0; });
+
+  const totBruts = filtered.reduce((a,s)=>a+(s.oeufs_bruts||0),0);
+  const totNets  = filtered.reduce((a,s)=>a+(s.oeufs_nets||0),0);
+  const rdtGlobal = totBruts>0 ? (totNets/totBruts*100).toFixed(1) : 0;
+  const lbl = document.getElementById('condRdtMoyLabel');
+  if(lbl) lbl.textContent = 'moyenne période : '+rdtGlobal+'%';
+
+  if(condRdtChartInst){ condRdtChartInst.destroy(); condRdtChartInst=null; }
+  condRdtChartInst = new Chart(canvas, {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Rendement %', data, borderColor:'#2d6a4f', backgroundColor:'rgba(45,106,79,.1)', fill:true, tension:.3, pointRadius:3, pointBackgroundColor:'#2d6a4f' },
+      { label:'Objectif 95%', data:keys.map(()=>95), borderColor:'#c1121f', borderDash:[6,4], borderWidth:1.5, pointRadius:0, fill:false }
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:true, labels:{boxWidth:12, font:{size:10}}}, tooltip:{callbacks:{label:c=>c.dataset.label+' : '+c.parsed.y+'%'}} },
+      scales:{ y:{ min:0, max:100, ticks:{callback:v=>v+'%'}, grid:{color:'rgba(0,0,0,.05)'} }, x:{ grid:{display:false} } }
+    }
+  });
+  if(!keys.length){
+    const ctx = canvas.getContext('2d');
+    ctx.save(); ctx.fillStyle='#8a998f'; ctx.font='13px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('Aucune donnée sur cette période/filtre', canvas.width/2, canvas.height/2);
+    ctx.restore();
+  }
+}
+window.renderCondRendementChart = renderCondRendementChart;
+
 async function renderCond(ca){
-  const [sessions, lots, prods] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS)]);
+  const [sessions, lots, prods, buildings, lines] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS), getAll(S.BUILDINGS), getAll(S.LINES)]);
   const stockTot = await getStockTotal();
 
   const pBruts = findCondProduit(prods,'bruts');
@@ -9399,17 +9532,54 @@ async function renderCond(ca){
   ca.innerHTML = `
     <div class="page-header">
       <div class="page-header-title"><i class="fas fa-box-open" style="color:var(--g2)"></i> Conditionnement des œufs</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="condLotFilter" class="btn btn-gh" style="padding:6px 10px;font-size:12px">
-          <option value="">Tous les lots</option>${lotSelect}
-        </select>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-gh btn-sm" onclick="openCondBomListModal()"><i class="fas fa-puzzle-piece"></i> Nomenclatures (BOM)</button>
-        <button class="btn btn-gh btn-sm" onclick="previewEtat('prodcond')"><i class="fas fa-eye"></i> Aperçu rapport</button>
-        <button class="btn btn-gh btn-sm" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
         <button class="btn btn-p btn-sm" onclick="openCondModal()"><i class="fas fa-plus"></i> Nouvelle session</button>
       </div>
     </div>
     <div class="stock-page">
+      <!-- ÉTAT PÉRIODIQUE — filtres date / bâtiment / ligne / lot -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd">📅 État périodique — Production vs Conditionnement</div>
+        <div class="card-bd" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
+          <div class="fg" style="margin:0"><label style="font-size:11px">Du</label><input type="date" id="condDateMin" value="${new Date().toISOString().slice(0,7)+'-01'}"></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Au</label><input type="date" id="condDateMax" value="${new Date().toISOString().slice(0,10)}"></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Bâtiment</label><select id="condBatFilter"><option value="">Tous</option>${buildings.map(b=>`<option value="${b.id}">${esc(b.nom)}</option>`).join('')}</select></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Ligne</label><select id="condLigneFilter"><option value="">Toutes</option>${lines.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('')}</select></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Lot</label><select id="condLotFilter"><option value="">Tous les lots</option>${lotSelect}</select></div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-gh btn-sm" onclick="afficherEtatInline('prodcond')"><i class="fas fa-eye"></i> Aperçu</button>
+            <button class="btn btn-p btn-sm" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
+          </div>
+        </div>
+      </div>
+      <div id="etatInlineResult"></div>
+
+      <!-- HISTOGRAMME PF CARTONS PAR PÉRIODE -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span>📊 Cartons produits par période</span>
+          <div class="tab-nav" id="condChartGrpNav" style="margin:0">
+            <button class="tab-btn on" onclick="switchCondChartGrp('jour')">Jour</button>
+            <button class="tab-btn" onclick="switchCondChartGrp('semaine')">Semaine</button>
+            <button class="tab-btn" onclick="switchCondChartGrp('mois')">Mois</button>
+          </div>
+        </div>
+        <div class="card-bd" style="height:280px;position:relative">
+          <canvas id="condCartonsChart"></canvas>
+        </div>
+      </div>
+
+      <!-- COURBE DE RENDEMENT PÉRIODIQUE -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span>📈 Rendement de conditionnement — <span id="condRdtMoyLabel" style="font-weight:400;color:var(--text3);font-size:12px"></span></span>
+          <span style="font-size:11px;color:var(--text3)">Œufs nets / Œufs bruts — période liée au toggle ci-dessus</span>
+        </div>
+        <div class="card-bd" style="height:260px;position:relative">
+          <canvas id="condRendementChart"></canvas>
+        </div>
+      </div>
       <!-- STOCKS EN TEMPS RÉEL -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
         <div class="kpi kpi-a"><div class="kpi-lbl">Œufs bruts</div><div class="kpi-val" style="color:${qBruts<(pBruts?.seuil||300)?'var(--red)':'inherit'}">${qBruts}</div><div class="kpi-sub">en attente de cond.</div></div>
@@ -9449,6 +9619,12 @@ async function renderCond(ca){
       </div>
     </div>
   `;
+  renderCondCartonsChart();
+  renderCondRendementChart();
+  ['condDateMin','condDateMax','condBatFilter','condLigneFilter','condLotFilter'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('change', ()=>{ renderCondCartonsChart(); renderCondRendementChart(); });
+  });
 }
 
 
@@ -15591,7 +15767,7 @@ function valeurCondSession(c){
   return (c.plateaux||0)*CALIBRE_TARIFS.moyen.prixPlateau;
 }
 // ── Collecte : Production vs Conditionnement, groupée par Bâtiment > Ligne ──
-async function collectProdCondData(dateMin, dateMax, lotId=''){
+async function collectProdCondData(dateMin, dateMax, lotId='', batimentId='', ligneId=''){
   const [flocks, eggProd, mortalite, feeds, waters, cond, buildings, lines] = await Promise.all([
     getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.MORTALITE),
     getAll(S.FEEDING), getAll(S.WATER), getAll(S.COND), getAll(S.BUILDINGS), getAll(S.LINES)
@@ -15599,6 +15775,8 @@ async function collectProdCondData(dateMin, dateMax, lotId=''){
   const inPeriod = d => d && d >= dateMin && d <= dateMax;
   let lots = flocks.filter(f=>f.type==='layer');
   if(lotId) lots = lots.filter(f=>String(f.id)===String(lotId));
+  if(batimentId) lots = lots.filter(f=>String(f.buildingId)===String(batimentId));
+  if(ligneId) lots = lots.filter(f=>String(f.lineId)===String(ligneId));
 
   const batLots = lots.map(f=>{
     const oeufs   = eggProd.filter(e=>e.flockId===f.id&&inPeriod(e.date)).reduce((a,e)=>a+(e.eggCount||0),0);
@@ -16749,6 +16927,13 @@ window.refreshCondGlobalDashboard = async function(){
 // ── Fonctions preview et impression d'états ──
 window.previewEtat = function(type){ printEtatPeriodique(type, true); };
 
+// Filtres bâtiment/ligne — lus depuis la page Conditionnement (condBatFilter/condLigneFilter)
+// si présents, sinon depuis la page Rapports (rapBatFilter/rapLigneFilter) si elle les a.
+function getCondBatLigneFilters(){
+  const bat = document.getElementById('condBatFilter')?.value || document.getElementById('rapBatFilter')?.value || '';
+  const lig = document.getElementById('condLigneFilter')?.value || document.getElementById('rapLigneFilter')?.value || '';
+  return {bat, lig};
+}
 async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
   const data = await collectRapportData('custom', dateMin, dateMax);
   if(lotId){
@@ -16767,15 +16952,18 @@ async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
   if(type==='commercial') return buildCorpsCommercial(data, cfg);
   if(type==='gmao') return buildCorpsGMAO(data, cfg);
   if(type==='bilan') return buildCorpsBilan(data, cfg);
-  if(type==='prodcond') return buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId), cfg);
+  if(type==='prodcond'){
+    const {bat, lig} = getCondBatLigneFilters();
+    return buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId, bat, lig), cfg);
+  }
   if(type==='appro') return buildCorpsApprovisionnement(await collectApprovisionnementData(dateMin, dateMax), cfg);
   return '';
 }
 
 window.printEtatPeriodique = async function(type, preview=false){
-  const dateMin = document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
-  const dateMax = document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
-  const lotId   = document.getElementById('rapLotFilter')?.value || '';
+  const dateMin = document.getElementById('condDateMin')?.value || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('condDateMax')?.value || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('condLotFilter')?.value || document.getElementById('rapLotFilter')?.value || '';
   const cfg     = await getExploitationSettings();
   const entreprise = buildEnteteEtat(cfg, type, dateMin, dateMax);
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
@@ -16793,9 +16981,9 @@ window.afficherEtatInline = async function(type){
   if(!zone) return;
   zone.innerHTML = '<div class="card"><div class="card-bd" style="text-align:center;padding:20px;color:var(--text3)"><i class="fas fa-spinner fa-spin"></i> Chargement…</div></div>';
   zone.scrollIntoView({behavior:'smooth',block:'nearest'});
-  const dateMin = document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
-  const dateMax = document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
-  const lotId   = document.getElementById('rapLotFilter')?.value || '';
+  const dateMin = document.getElementById('condDateMin')?.value || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('condDateMax')?.value || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('condLotFilter')?.value || document.getElementById('rapLotFilter')?.value || '';
   const cfg     = await getExploitationSettings();
   const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
