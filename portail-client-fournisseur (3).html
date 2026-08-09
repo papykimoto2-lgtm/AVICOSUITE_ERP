@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Mon espace — AviNest Pro</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+:root{
+  --g1:#1a5c2a; --g2:#2d6a4f; --g3:#95d5b2;
+  --bg:#f6f8f6; --card:#ffffff; --border:#e3ebe4;
+  --text:#1b2620; --text2:#4c5c52; --text3:#8a998f;
+  --red:#c1121f; --amber:#b45309;
+  --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;padding-bottom:40px}
+
+/* ── Écran d'accès ── */
+#gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(160deg,#0f3d1f,#1a5c2a 55%,#2d6a4f)}
+.gate-card{background:#fff;border-radius:20px;padding:32px 26px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25);text-align:center}
+.gate-card .icon{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--g1),var(--g2));display:flex;align-items:center;justify-content:center;margin:0 auto 16px;color:#fff;font-size:22px}
+.gate-card h1{font-size:18px;margin-bottom:6px}
+.gate-card p{font-size:13px;color:var(--text3);margin-bottom:20px}
+.gate-card .err{background:#fef2f2;color:var(--red);border-radius:10px;padding:10px 12px;font-size:12px;margin-top:14px;display:none}
+.spinner{width:34px;height:34px;border:3px solid var(--g3);border-top-color:var(--g1);border-radius:50%;margin:20px auto;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── App ── */
+#app{display:none;max-width:720px;margin:0 auto}
+header.top{background:linear-gradient(135deg,var(--g1),var(--g2));color:#fff;padding:22px 18px 44px;border-radius:0 0 24px 24px;position:relative}
+header.top .eyebrow{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;opacity:.75;font-weight:700}
+header.top h1{font-size:20px;margin-top:4px;font-weight:800}
+header.top .sub{font-size:12px;opacity:.85;margin-top:2px}
+.solde-card{background:var(--card);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.08);padding:18px 20px;margin:-34px 16px 0;position:relative}
+.solde-card .lbl{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+.solde-card .val{font-size:28px;font-weight:800;margin-top:4px}
+.solde-card .val.due{color:var(--red)}
+.solde-card .val.ok{color:var(--g1)}
+.solde-card .note{font-size:11px;color:var(--text3);margin-top:6px}
+
+main{padding:20px 16px}
+.section-title{font-size:12px;font-weight:800;color:var(--g1);text-transform:uppercase;letter-spacing:.5px;margin:22px 0 10px;display:flex;align-items:center;gap:6px}
+.section-title:first-child{margin-top:0}
+
+.doc-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.doc-card .ref{font-weight:700;font-size:13px}
+.doc-card .meta{font-size:11px;color:var(--text3);margin-top:2px}
+.doc-card .right{text-align:right;flex-shrink:0}
+.doc-card .amt{font-weight:800;font-size:14px}
+.doc-card .amt.due{color:var(--red)}
+.badge{display:inline-block;font-size:9px;font-weight:800;padding:3px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.3px;margin-top:4px}
+.b-wait{background:#fef3c7;color:#92400e}
+.b-ok{background:#dcfce7;color:#166534}
+.b-part{background:#dbeafe;color:#1e40af}
+.b-late{background:#fee2e2;color:#991b1b}
+
+.empty{text-align:center;padding:40px 20px;color:var(--text3);font-size:13px}
+.empty i{font-size:28px;display:block;margin-bottom:10px;opacity:.4}
+
+footer.foot{text-align:center;padding:24px 16px 10px;font-size:10px;color:var(--text3)}
+footer.foot strong{color:var(--text2)}
+
+@media(max-width:420px){
+  .solde-card .val{font-size:24px}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ ÉCRAN D'ACCÈS ═══ -->
+<div id="gate">
+  <div class="gate-card">
+    <div class="icon"><i class="fas fa-lock"></i></div>
+    <h1 id="gateTitle">Vérification de l'accès…</h1>
+    <p id="gateSub">Merci de patienter.</p>
+    <div class="spinner" id="gateSpinner"></div>
+    <div class="err" id="gateErr"></div>
+  </div>
+</div>
+
+<!-- ═══ APPLICATION ═══ -->
+<div id="app">
+  <header class="top">
+    <div class="eyebrow" id="hType">Espace client</div>
+    <h1 id="hNom">—</h1>
+    <div class="sub" id="hSociete">AviNest Pro</div>
+  </header>
+
+  <div class="solde-card">
+    <div class="lbl" id="soldeLbl">Solde</div>
+    <div class="val" id="soldeVal">—</div>
+    <div class="note" id="soldeNote"></div>
+  </div>
+
+  <main id="mainContent"></main>
+
+  <footer class="foot">
+    Espace en lecture seule — pour toute question, contactez <strong id="ftContact">votre interlocuteur AviNest Pro</strong>.
+  </footer>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  PORTAIL CLIENT / FOURNISSEUR — lecture seule, XHR-only
+//  Authentification par code d'accès, validée côté serveur
+//  (Edge Function portal-access — jamais de requête directe
+//  sur les tables de données : le code seul ne donne accès
+//  qu'aux données DU tiers concerné, jamais aux autres).
+// ════════════════════════════════════════════════════════
+const params = new URLSearchParams(location.search);
+const P_TYPE = params.get('type');   // 'client' | 'fournisseur'
+const P_ID   = params.get('id');
+const P_CODE = params.get('code');
+const P_ORG  = params.get('org');
+const P_URL  = params.get('url');
+const P_KEY  = params.get('key');
+
+function fmtF(n){ return Math.round(n||0).toLocaleString('fr-FR')+' FCFA'; }
+function fmtD(d){ if(!d) return '—'; try{ return new Date(d).toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'}); }catch{ return d; } }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function showGateError(msg){
+  document.getElementById('gateSpinner').style.display='none';
+  document.getElementById('gateTitle').textContent = 'Accès refusé';
+  document.getElementById('gateSub').textContent = 'Ce lien n\'est plus valide.';
+  const e = document.getElementById('gateErr');
+  e.textContent = msg;
+  e.style.display = 'block';
+}
+
+function xhrPost(url, headers, body){
+  return new Promise((resolve, reject)=>{
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    Object.entries(headers).forEach(([k,v])=>xhr.setRequestHeader(k,v));
+    xhr.onload = ()=>{
+      try{ resolve({status:xhr.status, body: JSON.parse(xhr.responseText||'{}')}); }
+      catch(e){ resolve({status:xhr.status, body:{}}); }
+    };
+    xhr.onerror = ()=>reject(new Error('Erreur réseau'));
+    xhr.send(JSON.stringify(body));
+  });
+}
+
+async function boot(){
+  if(!P_TYPE || !P_ID || !P_CODE || !P_URL || !P_KEY || !P_ORG){
+    showGateError('Lien incomplet — demandez un nouveau lien à AviNest Pro.');
+    return;
+  }
+  if(P_TYPE !== 'client' && P_TYPE !== 'fournisseur'){
+    showGateError('Type d\'accès invalide.');
+    return;
+  }
+  const fnUrl = P_URL.replace('.supabase.co', '.functions.supabase.co') + '/Portal-access';
+  let res;
+  try{
+    res = await xhrPost(fnUrl, {'Content-Type':'application/json','apikey':P_KEY,'Authorization':'Bearer '+P_KEY}, {
+      type: P_TYPE, id: parseInt(P_ID,10), code: P_CODE, org: P_ORG
+    });
+  }catch(e){
+    showGateError('Impossible de joindre le serveur. Vérifiez votre connexion.');
+    return;
+  }
+  if(res.status !== 200 || res.body.error){
+    showGateError(res.body.error || 'Code d\'accès invalide ou expiré.');
+    return;
+  }
+  render(res.body);
+}
+
+function render(data){
+  document.getElementById('gate').style.display='none';
+  document.getElementById('app').style.display='block';
+
+  document.getElementById('hType').textContent = P_TYPE==='client' ? 'Espace client' : 'Espace fournisseur';
+  document.getElementById('hNom').textContent = data.tiers.nom || '—';
+  document.getElementById('hSociete').textContent = data.entreprise?.nomExploitation || 'AviNest Pro';
+  document.getElementById('ftContact').textContent = data.entreprise?.nomExploitation || 'AviNest Pro';
+
+  const soldeVal = document.getElementById('soldeVal');
+  const soldeLbl = document.getElementById('soldeLbl');
+  const soldeNote = document.getElementById('soldeNote');
+  if(P_TYPE==='client'){
+    soldeLbl.textContent = 'Solde restant dû';
+    soldeVal.textContent = fmtF(data.solde);
+    soldeVal.className = 'val ' + (data.solde>0 ? 'due' : 'ok');
+    soldeNote.textContent = data.solde>0 ? 'Merci de régulariser à votre convenance.' : 'Votre compte est à jour.';
+  }else{
+    soldeLbl.textContent = 'Montant qui vous est dû';
+    soldeVal.textContent = fmtF(data.solde);
+    soldeVal.className = 'val ' + (data.solde>0 ? 'due' : 'ok');
+    soldeNote.textContent = data.solde>0 ? 'En attente de règlement de notre part.' : 'Aucun montant en attente.';
+  }
+
+  const main = document.getElementById('mainContent');
+  const docs = data.documents || [];
+
+  if(P_TYPE==='client'){
+    main.innerHTML = `
+      <div class="section-title"><i class="fas fa-file-invoice"></i> Mes commandes & factures</div>
+      ${docs.length ? docs.map(d=>{
+        const statutBadge = {pending:['b-wait','En attente'],confirmed:['b-part','Confirmée'],delivered:['b-part','Livrée'],invoiced:['b-wait','Facturée'],paid:['b-ok','Payée']}[d.statut]||['b-wait',d.statut];
+        return `<div class="doc-card">
+          <div>
+            <div class="ref">${esc(d.ref||d.numFacture||'—')}</div>
+            <div class="meta">${fmtD(d.date)}${d.dateLiv?' · Livrée le '+fmtD(d.dateLiv):''}</div>
+            <span class="badge ${statutBadge[0]}">${statutBadge[1]}</span>
+          </div>
+          <div class="right">
+            <div class="amt ${d.reste>0?'due':''}">${fmtF(d.total)}</div>
+            ${d.reste>0?`<div class="meta" style="color:var(--red)">Reste ${fmtF(d.reste)}</div>`:''}
+          </div>
+        </div>`;
+      }).join('') : `<div class="empty"><i class="fas fa-inbox"></i>Aucune commande pour le moment.</div>`}
+    `;
+  }else{
+    main.innerHTML = `
+      <div class="section-title"><i class="fas fa-truck"></i> Bons de commande reçus</div>
+      ${docs.length ? docs.map(d=>{
+        const statutBadge = {draft:['b-wait','Brouillon'],sent:['b-part','Envoyé'],partial:['b-part','Partiel'],done:['b-ok','Réceptionné']}[d.statut]||['b-wait',d.statut];
+        return `<div class="doc-card">
+          <div>
+            <div class="ref">${esc(d.ref||'—')}</div>
+            <div class="meta">${fmtD(d.date)}</div>
+            <span class="badge ${statutBadge[0]}">${statutBadge[1]}</span>
+          </div>
+          <div class="right">
+            <div class="amt ${d.reste>0?'due':''}">${fmtF(d.total)}</div>
+            ${d.reste>0?`<div class="meta" style="color:var(--red)">Reste dû ${fmtF(d.reste)}</div>`:''}
+          </div>
+        </div>`;
+      }).join('') : `<div class="empty"><i class="fas fa-inbox"></i>Aucun bon de commande pour le moment.</div>`}
+    `;
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
