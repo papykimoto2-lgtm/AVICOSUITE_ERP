@@ -6329,6 +6329,7 @@ async function renderStockModule(ca){
     {id:'stocks', icon:'fa-boxes-stacked',  label:'État des stocks'},
     {id:'mvts',   icon:'fa-right-left',     label:'Mouvements'},
     {id:'inv',    icon:'fa-clipboard-check',label:'Inventaires'},
+    {id:'livr',   icon:'fa-truck',          label:'Livraisons'},
   ];
   if(!allTabs.some(t=>t.id===stockTab)) stockTab=allTabs[0].id;
   const tabNav=allTabs.map(t=>`<button class="tab-btn ${stockTab===t.id?'on':''}" onclick="switchStockTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
@@ -6351,6 +6352,7 @@ async function renderStockTab(){
   else if(stockTab==='stocks') await renderStocks(el);
   else if(stockTab==='mvts') await renderMvts(el,mvtPage);
   else if(stockTab==='inv') await renderInventaires(el);
+  else if(stockTab==='livr') await renderLivraisonsStock(el);
 }
 // Sous-navigation depuis n'importe où (KPI, alertes, dashboard) : bascule l'onglet si le
 // module Stock est déjà ouvert, sinon navigue puis ouvre directement le bon onglet.
@@ -7204,6 +7206,49 @@ async function invNumero(date){
   const n=invs.filter(i=>i.ref&&i.ref.startsWith('INV-'+d)).length+1;
   return `INV-${d}-${String(n).padStart(3,'0')}`;
 }
+// ══ LIVRAISONS — espace du gestionnaire de stock : traiter les commandes du commercial ══
+async function renderLivraisonsStock(el){
+  const[sales,clients,prods,deps]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS),getAll(S.DEPOTS)]);
+  const aTraiter=sales.filter(s=>s.statut==='pending'||s.statut==='confirmed').sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const recentes=sales.filter(s=>s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid').sort((a,b)=>(b.dateLiv||b.date||'').localeCompare(a.dateLiv||a.date||'')).slice(0,10);
+  const statutLbl={pending:'En attente',confirmed:'Confirmée — prête à préparer'};
+  const statutCls={pending:'b-a',confirmed:'b-bl'};
+  const cards=aTraiter.map(s=>{
+    const c=clients.find(x=>x.id===s.clientId);
+    const lignesHtml=(s.lignes||[]).map(l=>{
+      const p=prods.find(x=>x.id===l.produitId);
+      const dep=p?deps.find(d=>d.id===p.depotAffecteId):null;
+      return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px dashed var(--border)"><span>${esc(l.designation||'')}</span><span style="color:var(--text3)">${l.qte} ${esc(l.unite||'')}${dep?' · '+esc(dep.nom):(p?' · <span style=\"color:var(--red)\">⚠ aucun dépôt affecté</span>':'')}</span></div>`;
+    }).join('');
+    return `<div class="card" style="margin-bottom:12px"><div class="card-hd"><span><strong>${esc(s.ref||'—')}</strong> — ${esc(c?c.nom:'—')}</span><span class="badge ${statutCls[s.statut]}">${statutLbl[s.statut]}</span></div>
+      <div class="card-bd">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Commande du ${s.date||'—'} ${s.dateLiv?'· Livraison prévue '+s.dateLiv:''}</div>
+        ${lignesHtml||'<div style="color:var(--text3);font-size:11px">Aucune ligne</div>'}
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="confirmerCommandeStock(${s.id})"><i class="fas fa-check"></i> Confirmer</button>`:''}
+          ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerCommandeStock(${s.id})"><i class="fas fa-truck"></i> Préparer &amp; Livrer</button>`:''}
+        </div>
+      </div></div>`;
+  }).join('');
+  const recRows=recentes.map(s=>{
+    const c=clients.find(x=>x.id===s.clientId);
+    return `<tr><td>${s.dateLiv||s.date||'—'}</td><td><strong>${esc(s.ref||'—')}</strong></td><td>${esc(c?c.nom:'—')}</td><td>${(s.lignes||[]).length} ligne(s)</td><td><button class="btn btn-xs btn-gh" onclick="printBL(${s.id})" title="Réimprimer BL"><i class="fas fa-file-alt"></i></button></td></tr>`;
+  }).join('');
+  el.innerHTML=`<div class="page-header" style="padding:0 0 10px"><div style="font-weight:700;font-size:13px">📦 Commandes à traiter (${aTraiter.length})</div></div>
+    ${cards||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucune commande en attente de traitement.</div></div>'}
+    <div style="font-weight:700;font-size:13px;margin:18px 0 8px">✅ Dernières livraisons</div>
+    <div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Réf.</th><th>Client</th><th>Lignes</th><th></th></tr></thead>
+    <tbody>${recRows||'<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucune livraison récente</td></tr>'}</tbody></table></div></div>`;
+}
+window.confirmerCommandeStock=async function(id){
+  await changeSaleStatut(id,'confirmed');
+};
+window.livrerCommandeStock=async function(id){
+  if(!confirm('Confirmer la préparation et la livraison de cette commande ?\nLe stock sera décrémenté et le bon de livraison généré.')) return;
+  await livrerVente(id);
+  printBL(id);
+};
+
 async function renderInventaires(ca){
   const[invs,deps]=await Promise.all([getAll(S.INVENTAIRES),getAll(S.DEPOTS)]);
   const sorted=invs.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
@@ -8199,34 +8244,13 @@ async function saveSale() {
   if (id) await updRec(S.SALES, parseInt(id), data);
   else    await addRec(S.SALES, data);
 
-  // ── Stock : sortie des produits finis vendus, déclenchée par le statut "Livrée" ──
-  // Jusqu'ici aucune commande, quel que soit son statut, ne générait de mouvement de stock —
-  // "Livrée" restait un simple libellé et le stock de produits finis vendus ne baissait jamais.
-  // Réconciliation simple et idempotente : on supprime les mouvements déjà liés à cette vente
-  // (ancienne et nouvelle référence), puis on les recrée si le statut final est "Livrée".
-  var refsASupprimer = ancienne && ancienne.ref && ancienne.ref !== ref ? [ancienne.ref, ref] : [ref];
-  var mvtsExistants = (await getAll(S.MVTS)).filter(function(m){
-    return refsASupprimer.indexOf(m.ref) !== -1 && m.motif && m.motif.indexOf('Vente commande') === 0;
-  });
-  for (var mi=0; mi<mvtsExistants.length; mi++) await delRec(S.MVTS, mvtsExistants[mi].id);
-
-  var sansDepot = [];
-  if (statut === 'delivered') {
-    for (var li=0; li<lignes.length; li++) {
-      var l = lignes[li];
-      var p = prods.find(function(x){ return x.id===l.produitId; });
-      var depotId = p ? p.depotAffecteId : null;
-      if (depotId) {
-        await regMvt({cadre:'vente',
-          type:'sortie', produitId:l.produitId, depotSrcId:depotId, depotDestId:null,
-          quantite:l.qte, unite:l.unite, prixUnit:l.prixUnit, fournId:null,
-          ref:ref, motif:'Vente commande '+ref, date:dateLiv||date, ts:Date.now()
-        });
-      } else {
-        sansDepot.push(l.designation);
-      }
-    }
+  // ── Stock : sortie des produits finis vendus, synchronisée via syncMvtsLivraisonVente ──
+  // Gère aussi le cas où la référence a changé en édition (nettoie l'ancienne trace).
+  if (ancienne && ancienne.ref && ancienne.ref !== ref) {
+    var oldMvts=(await getAll(S.MVTS)).filter(function(m){return m.ref===ancienne.ref&&m.motif&&m.motif.indexOf('Vente commande')===0;});
+    for (var mi=0; mi<oldMvts.length; mi++) await delRec(S.MVTS, oldMvts[mi].id);
   }
+  var sansDepot = await syncMvtsLivraisonVente(data, prods);
 
   closeOverlay('mSale');
   if (sansDepot.length) toast('Commande enregistrée — stock NON décrémenté pour : '+sansDepot.join(', ')+' (aucun dépôt d\'affectation défini)', 'err');
@@ -8235,13 +8259,19 @@ async function saveSale() {
 }
 window.saveSale = saveSale;
 
+const _saleActionsInFlight = new Set();
 window.changeSaleStatut=async function(id,newStatut){
-  const sales=await getAll(S.SALES);const s=sales.find(x=>x.id===id);
-  if(!s) return;
-  const labels={confirmed:'Confirmée',delivered:'Livrée ✓',paid:'Payée — encaissement enregistré ✓'};
-  await updRec(S.SALES,id,{...s,statut:newStatut,ts:Date.now()});
-  toast(labels[newStatut]||'Statut mis à jour');
-  await renderCommandes(document.getElementById('contentArea'));
+  const lockKey='status:'+id;
+  if(_saleActionsInFlight.has(lockKey)){ toast('Action déjà en cours…','err'); return; }
+  _saleActionsInFlight.add(lockKey);
+  try{
+    const sales=await getAll(S.SALES);const s=sales.find(x=>x.id===id);
+    if(!s) return;
+    const labels={confirmed:'Confirmée',delivered:'Livrée ✓',paid:'Payée — encaissement enregistré ✓'};
+    await updRec(S.SALES,id,{...s,statut:newStatut,ts:Date.now()});
+    toast(labels[newStatut]||'Statut mis à jour');
+    await render();
+  } finally { _saleActionsInFlight.delete(lockKey); }
 };
 
 window.delSale=async(id)=>{
@@ -11503,15 +11533,44 @@ window.savePayerBC=async function(){
   await renderFinTiers(document.getElementById('finTabContent')||document.getElementById('contentArea'));
 };
 
+// ── Mouvements de stock liés à la livraison d'une vente — factorisé, idempotent.
+// Utilisé par saveSale (édition) ET livrerVente (bouton "Livrer" du flux normal).
+// Sans cette synchronisation, le stock vendu n'est jamais décrémenté (bug historique corrigé).
+async function syncMvtsLivraisonVente(sale, prods){
+  prods = prods || await getAll(S.PRODUITS);
+  const mvtsExistants=(await getAll(S.MVTS)).filter(m=>m.ref===sale.ref&&m.motif&&m.motif.indexOf('Vente commande')===0);
+  for(const m of mvtsExistants) await delRec(S.MVTS,m.id);
+  const sansDepot=[];
+  if(sale.statut==='delivered'||sale.statut==='invoiced'||sale.statut==='paid'){
+    for(const l of (sale.lignes||[])){
+      const p=prods.find(x=>x.id===l.produitId);
+      const depotId=p?p.depotAffecteId:null;
+      if(depotId){
+        await regMvt({cadre:'vente',type:'sortie',produitId:l.produitId,depotSrcId:depotId,depotDestId:null,
+          quantite:l.qte,unite:l.unite,prixUnit:l.prixUnit,fournId:null,ref:sale.ref,motif:'Vente commande '+sale.ref,date:sale.dateLiv||sale.date,ts:Date.now()});
+      } else sansDepot.push(l.designation);
+    }
+  }
+  return sansDepot;
+}
+
 window.livrerVente = async function(id) {
-  var sales = await getAll(S.SALES);
-  var s = sales.find(function(x){return x.id===id;});
-  if (!s) return;
-  var numBL = s.numBL || await genNumBL();
-  var dateLiv = new Date().toISOString().slice(0,10);
-  await updRec(S.SALES, id, Object.assign({},s,{statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()}));
-  toast('Livraison enregistree -- ' + numBL);
-  await renderCommandes(document.getElementById('contentArea'));
+  const lockKey='livraison:'+id;
+  if(_saleActionsInFlight.has(lockKey)){ toast('Livraison déjà en cours…','err'); return; }
+  _saleActionsInFlight.add(lockKey);
+  try{
+    var sales = await getAll(S.SALES);
+    var s = sales.find(function(x){return x.id===id;});
+    if (!s) return;
+    var numBL = s.numBL || await genNumBL();
+    var dateLiv = new Date().toISOString().slice(0,10);
+    var updated = Object.assign({},s,{statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()});
+    await updRec(S.SALES, id, updated);
+    var sansDepot = await syncMvtsLivraisonVente(updated);
+    if(sansDepot.length) toast('⚠ Livraison enregistrée — stock NON décrémenté pour : '+sansDepot.join(', ')+' (aucun dépôt d\'affectation défini)','err');
+    else toast('Livraison enregistree -- ' + numBL + ' — stock mis à jour');
+    await render();
+  } finally { _saleActionsInFlight.delete(lockKey); }
 };
 
 window.facturerVente = async function(id) {
