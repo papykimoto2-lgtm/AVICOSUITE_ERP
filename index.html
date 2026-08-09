@@ -6517,14 +6517,35 @@ function goStockSub(id){
 }
 window.goStockSub=goStockSub;
 
+// ══ BASCULE VUE GRILLE / TABLEAU — Catalogue produits, Fournisseurs, Dépôts, Clients ══
+function getViewMode(mod, def){ try{ return localStorage.getItem('vm_'+mod)||def; }catch(e){ return def; } }
+function setViewMode(mod, mode){ try{ localStorage.setItem('vm_'+mod, mode); }catch(e){} }
+function viewToggleHtml(mod, mode){
+  return `<div class="tab-nav" style="margin:0;display:inline-flex">
+    <button class="tab-btn ${mode==='grid'?'on':''}" onclick="switchViewMode('${mod}','grid')" title="Vue grille"><i class="fas fa-grip"></i></button>
+    <button class="tab-btn ${mode==='table'?'on':''}" onclick="switchViewMode('${mod}','table')" title="Vue tableau"><i class="fas fa-table-list"></i></button>
+  </div>`;
+}
+window.switchViewMode = function(mod, mode){
+  setViewMode(mod, mode);
+  const renderers = {prods:renderProds, fourns:renderFourns, depots:renderDepots, clients:renderClients};
+  const containers = {prods:apCA, fourns:apCA, depots:stCA, clients:distCA};
+  const el = containers[mod] ? containers[mod]() : document.getElementById('contentArea');
+  renderers[mod](el);
+};
+
 async function renderDepots(ca){
   const[deps,prods]=await Promise.all([getAll(S.DEPOTS),getAll(S.PRODUITS)]);
   const bal=await getBalance();const stockTot=await getStockTotal();
   const typeIcon={aliment:'🌾',medicament:'💊',produit_fini:'📦',materiel:'🔧',general:'🏪'};
-  const cards=deps.map(dep=>{
+  const vm = getViewMode('depots','grid');
+  const depStats = deps.map(dep=>{
     const depItems=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===dep.id&&(bal[k]||0)>0);
     const nbProd=depItems.length;const val=depItems.reduce((a,[k,v])=>{const p=prods.find(x=>x.id===parseInt(k.split('_')[0]));return a+Math.max(0,v)*(p?.prix||0);},0);
     const depQ=depItems.reduce((a,[,v])=>a+Math.max(0,v),0);const pct=dep.capacite>0?Math.min(100,depQ/dep.capacite*100):0;
+    return {dep, nbProd, val, depQ, pct};
+  });
+  const cards=depStats.map(({dep,nbProd,val,depQ,pct})=>{
     const cl=pct>85?'var(--red)':pct>60?'var(--amber)':'var(--g3)';
     return `<div class="depot-card ${dep.id===selDepot?'sel':''}" onclick="selDep(${dep.id})">
       <div class="depot-hd"><div><div style="font-weight:700;font-size:13px">${typeIcon[dep.type]||'📦'} ${esc(dep.nom)}</div><div style="font-size:11px;color:var(--text3)">${dep.responsable||'—'} · ${dep.localisation||'—'}</div></div>
@@ -6533,6 +6554,21 @@ async function renderDepots(ca){
       <div class="depot-bd"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span>${nbProd} produit(s)</span><span style="font-weight:700;color:var(--g2)">${Math.round(val/1000)}K FCFA</span></div><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${cl}"></div></div><div style="font-size:10px;color:var(--text3);margin-top:3px">${Math.round(depQ)} / ${dep.capacite}</div></div>
     </div>`;
   }).join('');
+  const tableRows=depStats.map(({dep,nbProd,val,depQ,pct})=>{
+    const cl=pct>85?'var(--red)':pct>60?'var(--amber)':'var(--g3)';
+    return `<tr style="cursor:pointer;${dep.id===selDepot?'background:var(--g4)':''}" onclick="selDep(${dep.id})">
+      <td><strong>${typeIcon[dep.type]||'📦'} ${esc(dep.nom)}</strong></td>
+      <td style="font-size:11px;color:var(--text3)">${esc(dep.responsable||'—')}</td>
+      <td style="font-size:11px;color:var(--text3)">${esc(dep.localisation||'—')}</td>
+      <td>${nbProd}</td>
+      <td style="font-weight:700;color:var(--g2)">${Math.round(val/1000)}K F</td>
+      <td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="width:70px"><div class="prog-fill" style="width:${pct}%;background:${cl}"></div></div><span style="font-size:10px;color:var(--text3)">${Math.round(depQ)}/${dep.capacite}</span></div></td>
+      <td style="white-space:nowrap" onclick="event.stopPropagation()"><button class="btn btn-sm btn-gh" onclick="openDepotModal(${dep.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delDep(${dep.id})"><i class="fas fa-trash"></i></button></td>
+    </tr>`;
+  }).join('');
+  const listHtml = vm==='table'
+    ? `<div class="card" style="margin-bottom:16px"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Dépôt</th><th>Responsable</th><th>Localisation</th><th>Produits</th><th>Valeur</th><th>Capacité</th><th></th></tr></thead><tbody>${tableRows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun dépôt</td></tr>'}</tbody></table></div></div>`
+    : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-bottom:16px">${cards||'<div style="color:var(--text3)">Aucun dépôt</div>'}</div>`;
 
   let detail='<div style="color:var(--text3);text-align:center;padding:30px;font-size:12px"><i class="fas fa-arrow-left"></i> Sélectionnez un dépôt</div>';
   if(selDepot){
@@ -6545,9 +6581,9 @@ async function renderDepots(ca){
   }
 
   ca.innerHTML=`
-    <div class="page-header"><div class="page-header-title"><i class="fas fa-warehouse" style="color:var(--g2)"></i> Dépôts</div><button class="btn btn-p btn-sm" onclick="openDepotModal()"><i class="fas fa-plus"></i> Nouveau dépôt</button></div>
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-warehouse" style="color:var(--g2)"></i> Dépôts</div><div style="display:flex;gap:8px;align-items:center">${viewToggleHtml('depots',vm)}<button class="btn btn-p btn-sm" onclick="openDepotModal()"><i class="fas fa-plus"></i> Nouveau dépôt</button></div></div>
     <div class="stock-page">
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-bottom:16px">${cards||'<div style="color:var(--text3)">Aucun dépôt</div>'}</div>
+      ${listHtml}
       <div class="card"><div class="card-hd"><span>📦 Stock du dépôt</span><span style="font-size:11px;color:var(--text3)">${selDepot?deps.find(d=>d.id===selDepot)?.nom||'':'Sélectionnez un dépôt'}</span></div><div class="card-bd">${detail}</div></div>
     </div>`;
 }
@@ -7234,7 +7270,7 @@ window.mvtPrint=async function(id){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">${typeLbl[m.type]||m.type}</div><div class="badge-num">${esc(m.piece||'—')}</div></div></div>
     <table><tr><th>Date</th><td>${m.date||'—'}</td><th>Cadre</th><td>${esc(m.cadreLabel||m.cadre||'—')}</td></tr>
     <tr><th>Produit</th><td colspan="3">${esc(pr?pr.nom:'—')}</td></tr>
@@ -7243,6 +7279,7 @@ window.mvtPrint=async function(id){
     <tr><th>Fournisseur</th><td>${esc(f?f.nom:'—')}</td><th>Référence</th><td>${esc(m.ref||'—')}</td></tr>
     <tr><th>Motif</th><td colspan="3">${esc(m.motif||'—')}</td></tr>
     <tr><th>Enregistré par</th><td colspan="3">${esc(m.auteur||'—')}</td></tr></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,typeLbl[m.type]||m.type,m.piece,valeur,m.date)}</div>
     <div class="sig"><div>Responsable dépôt</div><div>Demandeur / Réceptionnaire</div></div>
   </div></body></html>`;
   const w=window.open('','_blank','width=900,height=700');
@@ -7321,7 +7358,7 @@ async function buildMvtJournalHtml(preview){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">JOURNAL DES MOUVEMENTS DE STOCK</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
     <div class="filtres">🔎 ${filtreLbl}</div>
     <div class="kpis">
@@ -7334,6 +7371,7 @@ async function buildMvtJournalHtml(preview){
     <div style="font-weight:700;font-size:12px;margin-bottom:4px">📋 Détail chronologique</div>
     <table><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Cadre</th><th>Produit</th><th style="text-align:right">Quantité</th><th>Dépôt</th><th>Fournisseur</th><th style="text-align:right">Valeur</th><th>Motif</th><th>Auteur</th></tr></thead>
     <tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:#999">Aucun mouvement pour ces filtres</td></tr>'}</tbody></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'JOURNAL-MVT',(mvtFilters.dateMin||'')+'_'+(mvtFilters.dateMax||''),Math.round(valEntrees-valSorties),new Date().toISOString().slice(0,10))}</div>
   </div></body></html>`;
 }
 window.mvtJournalPrint=async function(){
@@ -7560,7 +7598,7 @@ async function buildInvHtml(id){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">ÉTAT D'INVENTAIRE</div><div class="badge-num">${esc(i.ref||'—')}</div>
       <span class="statut" style="background:${i.statut==='valide'?'#d8f3dc':'#fff3e0'};color:${i.statut==='valide'?'#166534':'#b45309'}">${i.statut==='valide'?'✓ VALIDÉ':'⏳ BROUILLON'}</span></div></div>
     <table><tr><th>Date</th><td>${i.date||'—'}</td><th>Dépôt</th><td>${esc(dep?dep.nom:'—')}</td></tr>
@@ -7575,6 +7613,7 @@ async function buildInvHtml(id){
     <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
     <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${Math.round(totTheo).toLocaleString()}</td><td style="text-align:right">${Math.round(totCompte).toLocaleString()}</td><td style="text-align:right;color:${totEcart<0?'#c1121f':'#059669'}">${totEcart>0?'+':''}${Math.round(totEcart).toLocaleString()}</td></tr></tfoot>
     </table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'INVENTAIRE',i.ref,Math.round(totCompte),i.date)}</div>
     <div class="sig"><div>Responsable dépôt</div><div>Compteur</div><div>Validation direction</div></div>
   </div></body></html>`;
 }
@@ -7668,8 +7707,22 @@ async function renderFourns(ca){
   const[fourns,bcs]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.BCS)]);
   const specL={aliment:'Aliment',medicament:'Médicaments',poussin:'Poussins',materiel:'Matériel',general:'Général'};
   const specC={aliment:'b-g',medicament:'b-bl',poussin:'b-a',materiel:'b-gr',general:'b-gr'};
+  const vm = getViewMode('fourns','grid');
   const cards=fourns.map(f=>{const fBCs=bcs.filter(b=>b.fournId===f.id);const tot=fBCs.reduce((a,b)=>a+(b.totalHT||0),0);const stars='⭐'.repeat(f.note||3)+'☆'.repeat(5-(f.note||3));return `<div class="fcard"><div class="fcard-head"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:14px;margin-bottom:5px">${esc(f.nom)}</div><span class="badge ${specC[f.specialite]||'b-gr'}">${specL[f.specialite]||f.specialite}</span></div><div style="font-size:16px">${stars}</div></div></div><div class="fcard-body"><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-user" style="width:12px"></i> Contact</span><span>${f.contact||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-phone" style="width:12px"></i> Tél</span><span>${f.tel||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-location-dot" style="width:12px"></i> Ville</span><span>${f.ville||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-clock" style="width:12px"></i> Délai</span><span>${f.delai||'—'}j</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-file-invoice" style="width:12px"></i> Commandes</span><span>${fBCs.length} · ${Math.round(tot/1000)}K F</span></div>${f.notes?`<div style="margin-top:8px;font-size:11px;color:var(--text3);background:#f5f5f5;border-radius:6px;padding:7px">${esc(f.notes)}</div>`:''}<div class="fcard-actions"><button class="btn btn-sm btn-p" onclick="openBCModal(${f.id})"><i class="fas fa-file-invoice"></i> Commander</button><button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('fournisseur',${f.id})" title="Lien espace fournisseur"><i class="fas fa-link"></i></button><button class="btn btn-sm btn-gh" onclick="openFournModal(${f.id})"><i class="fas fa-edit"></i></button><button class="btn-del" onclick="delFourn(${f.id})"><i class="fas fa-trash"></i></button></div></div></div>`;}).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-truck" style="color:var(--g2)"></i> Fournisseurs</div><button class="btn btn-p btn-sm" onclick="openFournModal()"><i class="fas fa-plus"></i> Nouveau</button></div><div class="stock-page"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px">${cards||'<div style="color:var(--text3);text-align:center;padding:40px;grid-column:1/-1">Aucun fournisseur</div>'}</div></div>`;
+  const tableRows=fourns.map(f=>{const fBCs=bcs.filter(b=>b.fournId===f.id);const tot=fBCs.reduce((a,b)=>a+(b.totalHT||0),0);const stars='⭐'.repeat(f.note||3)+'☆'.repeat(5-(f.note||3));return `<tr>
+    <td><strong>${esc(f.nom)}</strong><div style="font-size:10px;color:var(--text3)">${stars}</div></td>
+    <td><span class="badge ${specC[f.specialite]||'b-gr'}">${specL[f.specialite]||f.specialite}</span></td>
+    <td style="color:var(--text3)">${esc(f.contact||'—')}</td>
+    <td style="color:var(--text3)">${f.tel||'—'}</td>
+    <td style="color:var(--text3)">${f.ville||'—'}</td>
+    <td>${f.delai||'—'}j</td>
+    <td>${fBCs.length} · ${Math.round(tot/1000)}K F</td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-p" onclick="openBCModal(${f.id})" title="Commander"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('fournisseur',${f.id})" title="Lien espace fournisseur"><i class="fas fa-link"></i></button> <button class="btn btn-sm btn-gh" onclick="openFournModal(${f.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delFourn(${f.id})"><i class="fas fa-trash"></i></button></td>
+  </tr>`;}).join('');
+  const listHtml = vm==='table'
+    ? `<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Fournisseur</th><th>Spécialité</th><th>Contact</th><th>Téléphone</th><th>Ville</th><th>Délai</th><th>Commandes</th><th></th></tr></thead><tbody>${tableRows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucun fournisseur</td></tr>'}</tbody></table></div></div>`
+    : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px">${cards||'<div style="color:var(--text3);text-align:center;padding:40px;grid-column:1/-1">Aucun fournisseur</div>'}</div>`;
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-truck" style="color:var(--g2)"></i> Fournisseurs</div><div style="display:flex;gap:8px;align-items:center">${viewToggleHtml('fourns',vm)}<button class="btn btn-p btn-sm" onclick="openFournModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div><div class="stock-page">${listHtml}</div>`;
 }
 function openFournModal(id=null){
   document.getElementById('fournId').value=id||'';document.getElementById('mFournTitle').textContent=id?'Modifier':'Nouveau fournisseur';
@@ -7935,7 +7988,8 @@ async function renderProds(ca){
     <div class="kpi ${nbAlertes>0?'kpi-r':''}"><div class="kpi-lbl">En alerte</div><div class="kpi-val">${nbAlertes}</div></div>
   </div>`;
 
-  const cards=famillesPresentes.map(fam=>{
+  const vm = getViewMode('prods','table');
+  const tables=famillesPresentes.map(fam=>{
     const items=parFamille[fam].sort((a,b)=>(a.p.nom||'').localeCompare(b.p.nom||''));
     const sousTotal=items.reduce((s,x)=>s+x.val,0);
     const rows=items.map(({p,q,val})=>{
@@ -7947,7 +8001,30 @@ async function renderProds(ca){
     return `<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>${flbl} <span style="font-size:11px;color:var(--text3);font-weight:400">(${items.length} réf.)</span></span><span style="font-weight:700;color:var(--g1)">${Math.round(sousTotal).toLocaleString('fr-FR')} F</span></div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Désignation</th><th>Stade</th><th>Dépôt</th><th>Unité</th><th>Stock</th><th>Seuil</th><th>Prix</th><th>Valorisation</th><th>Fournisseur</th><th>Statut</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }).join('');
 
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div><div class="stock-page">${kpiBar}${cards||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit. Créez-en un dans le catalogue.</div></div>'}</div>`;
+  const cardsGrid=famillesPresentes.map(fam=>{
+    const items=parFamille[fam].sort((a,b)=>(a.p.nom||'').localeCompare(b.p.nom||''));
+    const flbl=(familles[fam]||{lbl:fam}).lbl;
+    const prodCards=items.map(({p,q,val})=>{
+      const f=fourns.find(x=>x.id===p.fournId);const d=deps.find(x=>x.id===p.depotAffecteId);
+      const al=stockEnAlerte(p,q);
+      return `<div class="fcard" style="min-width:0">
+        <div class="fcard-head"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:13px;margin-bottom:4px">${esc(p.nom)}</div><span class="badge ${stadeCss[p.stade]||'b-gr'}">${stadeLbl[p.stade]||'—'}</span></div>${al?'<span class="badge b-r">⚠</span>':''}</div></div>
+        <div class="fcard-body">
+          <div class="fcard-stat"><span style="color:var(--text3)">Réf.</span><span>${p.ref||'—'}</span></div>
+          <div class="fcard-stat"><span style="color:var(--text3)">Dépôt</span><span>${d?esc(d.nom):'—'}</span></div>
+          <div class="fcard-stat"><span style="color:var(--text3)">Stock</span><span style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q.toFixed(1)} ${p.unite}</span></div>
+          <div class="fcard-stat"><span style="color:var(--text3)">Seuil</span><span>${p.seuil} ${p.unite}</span></div>
+          <div class="fcard-stat"><span style="color:var(--text3)">Prix</span><span>${p.prix?p.prix.toLocaleString()+' F':'—'}</span></div>
+          <div class="fcard-stat"><span style="color:var(--text3)">Valorisation</span><span style="font-weight:700;color:var(--g2)">${val?Math.round(val).toLocaleString('fr-FR')+' F':'—'}</span></div>
+          <div class="fcard-stat"><span style="color:var(--text3)">Fournisseur</span><span>${f?esc(f.nom):'—'}</span></div>
+          <div class="fcard-actions"><button class="btn btn-sm btn-gh" onclick="openProdModal(${p.id})"><i class="fas fa-edit"></i></button><button class="btn-del" onclick="delProd(${p.id})"><i class="fas fa-trash"></i></button></div>
+        </div></div>`;
+    }).join('');
+    return `<div style="margin-bottom:18px"><div style="font-weight:700;font-size:13px;color:var(--g1);margin-bottom:8px">${flbl} <span style="font-size:11px;color:var(--text3);font-weight:400">(${items.length} réf.)</span></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${prodCards}</div></div>`;
+  }).join('');
+
+  const bodyHtml = vm==='grid' ? (cardsGrid||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit.</div></div>') : (tables||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit. Créez-en un dans le catalogue.</div></div>');
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><div style="display:flex;gap:8px;align-items:center">${viewToggleHtml('prods',vm)}<button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div></div><div class="stock-page">${kpiBar}${bodyHtml}</div>`;
 }
 async function openProdModal(id=null){
   const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
@@ -8203,7 +8280,7 @@ async function buildBulletinHtml(id){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">BULLETIN DE PAIE</div><div style="font-size:11px;color:#888">${moisLabel}</div></div></div>
     <table><tr><th>Employé</th><td>${esc(s.nom||b.staffNom||'—')}</td><th>Matricule</th><td>${esc(s.matricule||'—')}</td></tr>
     <tr><th>Fonction</th><td>${esc(s.role||'—')}</td><th>N° CNPS</th><td>${esc(s.cnpsNum||'—')}</td></tr>
@@ -8224,6 +8301,7 @@ async function buildBulletinHtml(id){
       ${b.cmuEmployeur?`<tr><td>CMU (part employeur)</td><td>${b.cmuEmployeur.toLocaleString('fr-FR')}</td></tr>`:''}
       <tr><td><strong>Coût total employeur</strong></td><td><strong>${(b.coutEmployeur||0).toLocaleString('fr-FR')}</strong></td></tr>
     </tbody></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'BULLETIN-PAIE',(s.matricule||s.nom||'')+'-'+b.periode,Math.round(b.net||0),b.periode+'-01')}</div>
     <p style="font-size:10px;color:#888;margin-top:10px">Document généré automatiquement — à faire valider par un expert-comptable avant tout paiement effectif.</p>
   </div></body></html>`;
 }
@@ -8280,13 +8358,14 @@ window.imprimerDeclarations=async function(periode){
     @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
-  <div class="doc"><div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+  <div class="doc"><div class="hdr">${buildEmetteurHeader(cfg)}
     <div style="text-align:right"><div class="doc-type">DÉCLARATIONS SOCIALES</div><div style="font-size:11px;color:#888">${periode}</div></div></div>
     <table><thead><tr><th>Cotisation</th><th>Part salarié</th><th>Part employeur</th><th>Total</th></tr></thead><tbody>
       <tr><td>CNPS</td><td>${tot.cnpsSalarie.toLocaleString('fr-FR')}</td><td>${tot.cnpsEmployeur.toLocaleString('fr-FR')}</td><td><strong>${(tot.cnpsSalarie+tot.cnpsEmployeur).toLocaleString('fr-FR')}</strong></td></tr>
       <tr><td>ITS</td><td>${tot.its.toLocaleString('fr-FR')}</td><td>—</td><td><strong>${tot.its.toLocaleString('fr-FR')}</strong></td></tr>
       <tr><td>CMU</td><td>${tot.cmuSalarie.toLocaleString('fr-FR')}</td><td>${tot.cmuEmployeur.toLocaleString('fr-FR')}</td><td><strong>${(tot.cmuSalarie+tot.cmuEmployeur).toLocaleString('fr-FR')}</strong></td></tr>
     </tbody></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'DECLARATIONS-SOCIALES',periode,Math.round(tot.cnpsSalarie+tot.cnpsEmployeur+tot.its+tot.cmuSalarie+tot.cmuEmployeur),periode+'-01')}</div>
     <p style="font-size:10px;color:#888;margin-top:10px">Document indicatif généré automatiquement — à faire vérifier par un expert-comptable avant toute déclaration officielle CNPS/DGI.</p>
   </div></body></html>`;
   const w=window.open('','_blank','width=900,height=750');
@@ -8342,10 +8421,14 @@ async function renderClients(ca){
   const totalCA=sales.filter(s=>s.statut==='paid').reduce((a,s)=>a+(s.totalHT||0),0);
   const encours=sales.filter(s=>s.statut!=='paid'&&s.statut!=='cancelled').reduce((a,s)=>a+(s.totalHT||0),0);
   const typeFilter=Object.entries(CLIENT_TYPE_LABEL).map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
-  const rows=clients.map(c=>{
+  const vm = getViewMode('clients','table');
+  const clientStats = clients.map(c=>{
     const cSales=sales.filter(s=>s.clientId===c.id);
     const cCA=cSales.filter(s=>s.statut==='paid').reduce((a,s)=>a+(s.totalHT||0),0);
     const cEncours=cSales.filter(s=>s.statut!=='paid'&&s.statut!=='cancelled').reduce((a,s)=>a+(s.totalHT||0),0);
+    return {c, cSales, cCA, cEncours};
+  });
+  const rows=clientStats.map(({c,cSales,cCA,cEncours})=>{
     return `<tr>
       <td><strong>${esc(c.nom)}</strong><div style="font-size:10px;color:var(--text3)">${c.ville||'—'}</div></td>
       <td><span class="badge ${CLIENT_TYPE_CSS[c.type]||'b-gr'}">${CLIENT_TYPE_LABEL[c.type]||c.type||'—'}</span></td>
@@ -8363,10 +8446,32 @@ async function renderClients(ca){
       </td>
     </tr>`;
   }).join('');
+  const cards=clientStats.map(({c,cSales,cCA,cEncours})=>`<div class="fcard"><div class="fcard-head"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:14px;margin-bottom:5px">${esc(c.nom)}</div><span class="badge ${CLIENT_TYPE_CSS[c.type]||'b-gr'}">${CLIENT_TYPE_LABEL[c.type]||c.type||'—'}</span></div></div></div>
+    <div class="fcard-body">
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-user" style="width:12px"></i> Contact</span><span>${esc(c.contact||'—')}</span></div>
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-phone" style="width:12px"></i> Tél</span><span>${c.tel||'—'}</span></div>
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-location-dot" style="width:12px"></i> Ville</span><span>${c.ville||'—'}</span></div>
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-credit-card" style="width:12px"></i> Paiement</span><span>${PAIE_LABEL[c.paie]||c.paie||'Comptant'}</span></div>
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-sack-dollar" style="width:12px"></i> CA payé</span><span style="font-weight:700;color:var(--g2)">${Math.round(cCA/1000)}K F</span></div>
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-hourglass-half" style="width:12px"></i> Crédit ouvert</span><span style="color:${cEncours>0?'var(--amber-d)':'var(--text3)'}">${Math.round(cEncours/1000)}K F</span></div>
+      <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-shopping-cart" style="width:12px"></i> Commandes</span><span>${cSales.length}</span></div>
+      <div class="fcard-actions"><button class="btn btn-sm btn-p" onclick="openSaleModal(null,${c.id})"><i class="fas fa-plus"></i> Commande</button><button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('client',${c.id})" title="Lien espace client"><i class="fas fa-link"></i></button><button class="btn btn-sm btn-gh" onclick="openClientModal(${c.id})"><i class="fas fa-edit"></i></button><button class="btn-del" onclick="delClient(${c.id})"><i class="fas fa-trash"></i></button></div>
+    </div></div>`).join('');
+  const listHtml = vm==='grid'
+    ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px">${cards||'<div style="color:var(--text3);text-align:center;padding:40px;grid-column:1/-1">Aucun client</div>'}</div>`
+    : `<div class="card">
+        <div class="card-hd">Annuaire clients (${clients.length})</div>
+        <div class="card-bd tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Téléphone</th><th>Paiement</th><th>CA payé</th><th>Crédit ouvert</th><th>Commandes</th><th></th></tr></thead>
+            <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:32px">Aucun client enregistré.<br><button class="btn btn-p" style="margin-top:12px" onclick="openClientModal()"><i class="fas fa-plus"></i> Ajouter un client</button></td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>`;
   ca.innerHTML=`
     <div class="page-header">
       <div class="page-header-title"><i class="fas fa-user-tie" style="color:var(--g2)"></i> Clients</div>
-      <button class="btn btn-p btn-sm" onclick="openClientModal()"><i class="fas fa-plus"></i> Nouveau client</button>
+      <div style="display:flex;gap:8px;align-items:center">${viewToggleHtml('clients',vm)}<button class="btn btn-p btn-sm" onclick="openClientModal()"><i class="fas fa-plus"></i> Nouveau client</button></div>
     </div>
     <div class="stock-page">
       <div class="g4">
@@ -8375,15 +8480,7 @@ async function renderClients(ca){
         <div class="kpi kpi-a"><div class="kpi-lbl">En cours</div><div class="kpi-val">${Math.round(encours/1000)}K</div><div class="kpi-sub">FCFA crédit ouvert</div></div>
         <div class="kpi kpi-b"><div class="kpi-lbl">Commandes totales</div><div class="kpi-val">${sales.length}</div><div class="kpi-sub">toutes périodes</div></div>
       </div>
-      <div class="card">
-        <div class="card-hd">Annuaire clients (${clients.length})</div>
-        <div class="card-bd tbl-wrap">
-          <table class="tbl">
-            <thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Téléphone</th><th>Paiement</th><th>CA payé</th><th>Crédit ouvert</th><th>Commandes</th><th></th></tr></thead>
-            <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:32px">Aucun client enregistré.<br><button class="btn btn-p" style="margin-top:12px" onclick="openClientModal()"><i class="fas fa-plus"></i> Ajouter un client</button></td></tr>'}</tbody>
-          </table>
-        </div>
-      </div>
+      ${listHtml}
     </div>`;
 }
 
@@ -10806,7 +10903,7 @@ window.printChargesEtat=async function(preview){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">ÉTAT DES DÉPENSES</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
     <div class="filtres">🔎 ${filtreLbl}</div>
     <div class="kpis">
@@ -10819,6 +10916,7 @@ window.printChargesEtat=async function(preview){
     <table><thead><tr><th>Date</th><th>Lot</th><th>Catégorie</th><th>Libellé</th><th style="text-align:right">Qté</th><th style="text-align:right">P.U.</th><th style="text-align:right">Montant</th></tr></thead>
     <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucune charge pour ces filtres</td></tr>'}</tbody>
     <tfoot><tr><td colspan="6">TOTAL</td><td style="text-align:right">${Math.round(total).toLocaleString('fr-FR')}</td></tr></tfoot></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'DEPENSES',new Date().toISOString().slice(0,10),Math.round(total),new Date().toISOString().slice(0,10))}</div>
   </div></body></html>`;
   const w=window.open('','_blank','width=1000,height=750');
   if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
@@ -13640,7 +13738,7 @@ window.printBalanceAgee=async function(type,preview){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">BALANCE ÂGÉE — ${type==='client'?'COMPTES CLIENTS (411)':'COMPTES FOURNISSEURS (401)'}</div><div style="font-size:10px;color:#888">Éditée le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
     <div class="kpis">
       <div class="kpi-box"><div class="kpi-val">${lignes.length}</div>Comptes ouverts</div>
@@ -13651,6 +13749,7 @@ window.printBalanceAgee=async function(type,preview){
     <table><thead><tr><th>Réf.</th><th>Date</th><th>${type==='client'?'Client':'Fournisseur'}</th><th style="text-align:right">Total</th><th style="text-align:right">Réglé</th><th style="text-align:right">Reste dû</th><th style="text-align:right">Ancienneté</th></tr></thead>
     <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucun solde ouvert</td></tr>'}</tbody>
     <tfoot><tr><td colspan="5">TOTAL</td><td style="text-align:right">${totalDu.toLocaleString('fr-FR')}</td><td></td></tr></tfoot></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'BALANCE-'+type.toUpperCase(),new Date().toISOString().slice(0,10),Math.round(totalDu),new Date().toISOString().slice(0,10))}</div>
   </div></body></html>`;
   const w=window.open('','_blank','width=1000,height=750');
   if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
@@ -13717,12 +13816,13 @@ window.printReleveCompte=async function(type,id,preview){
   </style></head><body>
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
-    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div class="hdr">${buildEmetteurHeader(cfg)}
       <div style="text-align:right"><div class="doc-type">RELEVÉ DE COMPTE</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
     <p><strong>${type==='client'?'Client':'Fournisseur'} :</strong> ${esc(t.nom)} ${t.ville?'— '+esc(t.ville):''}</p>
     <table><thead><tr><th>Date</th><th>Libellé</th><th style="text-align:right">${type==='client'?'Débit':'Débit (réglé)'}</th><th style="text-align:right">${type==='client'?'Crédit (réglé)':'Crédit'}</th><th style="text-align:right">Solde</th></tr></thead>
     <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucun mouvement</td></tr>'}</tbody>
     <tfoot><tr><td colspan="4">SOLDE ${solde>0?'DÛ':'CRÉDITEUR'}</td><td style="text-align:right;color:${solde>0?'#c1121f':'#059669'}">${Math.abs(solde).toLocaleString('fr-FR')} FCFA</td></tr></tfoot></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'RELEVE-'+type.toUpperCase(),esc(t.nom),Math.round(Math.abs(solde)),new Date().toISOString().slice(0,10))}</div>
   </div></body></html>`;
   const w=window.open('','_blank','width=900,height=750');
   if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
