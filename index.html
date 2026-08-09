@@ -1615,8 +1615,8 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
 <!-- STAFF MODAL -->
 <div class="overlay" id="mStaff">
-<div class="modal">
-  <h3 id="mStaffTitle">Nouvel opérateur</h3>
+<div class="modal" style="max-width:640px">
+  <h3 id="mStaffTitle">Nouvel employé</h3>
   <input type="hidden" id="staffId">
   <div class="form-grid">
     <div class="fg"><label>Nom complet *</label><input id="staffNom"></div>
@@ -1626,6 +1626,23 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     </select></div>
     <div class="fg"><label>Téléphone</label><input id="staffTel"></div>
     <div class="fg"><label>Email</label><input id="staffEmail" type="email"></div>
+    <div class="fg fg-full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px"><strong style="font-size:12px;color:var(--g2)">📋 Dossier RH</strong></div>
+    <div class="fg"><label>Matricule</label><input id="staffMatricule" placeholder="EMP-001"></div>
+    <div class="fg"><label>N° CNPS</label><input id="staffCnpsNum"></div>
+    <div class="fg"><label>Type de contrat</label><select id="staffContrat">
+      <option value="cdi">CDI</option><option value="cdd">CDD</option><option value="journalier">Journalier</option>
+      <option value="consultant">Consultant / Prestataire</option><option value="stagiaire">Stagiaire</option>
+    </select></div>
+    <div class="fg"><label>Statut</label><select id="staffStatut">
+      <option value="actif">Actif</option><option value="suspendu">Suspendu</option><option value="parti">Parti</option>
+    </select></div>
+    <div class="fg"><label>Date d'embauche</label><input id="staffDateEmbauche" type="date"></div>
+    <div class="fg"><label>Date de fin (CDD)</label><input id="staffDateFin" type="date"></div>
+    <div class="fg"><label>Salaire de base (FCFA/mois) *</label><input id="staffSalaireBase" type="number" min="0"></div>
+    <div class="fg"><label>Personnes à charge (CMU)</label><input id="staffCmuPersonnes" type="number" min="1" value="1"></div>
+    <div class="fg"><label><input type="checkbox" id="staffCmuActif" style="width:auto;margin-right:6px">Affilié CMU</label></div>
+    <div class="fg"><label><input type="checkbox" id="staffExonereITS" style="width:auto;margin-right:6px">Exonéré ITS (consultant externe)</label></div>
+    <div class="fg"><label>Mobile Money / Banque</label><input id="staffPaiementRef" placeholder="N° Wave, Orange Money, IBAN…"></div>
   </div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mStaff')">Annuler</button>
@@ -2234,7 +2251,8 @@ const S={
   COUVOIR_INCUB:'couvoir_incubation',// Mises en incubation (batchs)
   COUVOIR_MIRAGE:'couvoir_mirage',   // Résultats de mirage (J7/J14/J18)
   COUVOIR_ECLOSION:'couvoir_eclosion',// Résultats d'éclosion
-  INVENTAIRES:'inventaires_stock'    // Sessions d'inventaire physique (théorique/compté/écarts)
+  INVENTAIRES:'inventaires_stock',   // Sessions d'inventaire physique (théorique/compté/écarts)
+  PAIE:'paie_bulletins'              // Bulletins de paie mensuels (RH)
 };
 
 const STORES_DEF=[
@@ -2273,7 +2291,8 @@ const STORES_DEF=[
   [S.COUVOIR_INCUB,'reproLotId'],
   [S.COUVOIR_MIRAGE,'incubId'],
   [S.COUVOIR_ECLOSION,'incubId'],
-  [S.INVENTAIRES,'depotId']
+  [S.INVENTAIRES,'depotId'],
+  [S.PAIE,'staffId']
 ];
 
 // ════════════════════════════════════════════════════════
@@ -3037,6 +3056,83 @@ const ROLE_MODULE_PAGES = [
 const ROLE_PROTECTED = ['admin']; // rôles non modifiables/supprimables
 
 // Charge les rôles personnalisés/édités depuis Supabase et les fusionne dans ROLE_PERMS (en mémoire)
+// ════════════════════════════════════════════════════════
+//  MOTEUR DE PAIE — Côte d'Ivoire (CNPS / ITS / CMU / SMIG)
+//  ⚠️ Taux et barème par défaut à VALIDER avec un expert-comptable avant
+//  utilisation réelle — la réglementation évolue (réforme ITS 2024 notamment).
+//  Objet paramétrique : ajustable sans toucher au code (Paramétrage > Paie).
+// ════════════════════════════════════════════════════════
+var PAIE_CI = {
+  smig: 75000,                    // SMIG mensuel FCFA
+  cnpsPlafond: 2700000,            // Plafond mensuel cotisable CNPS
+  cnpsTauxSalarie: 6.3,            // % retraite — part salarié
+  cnpsTauxEmployeurRetraite: 7.7,  // % retraite — part employeur
+  cnpsTauxPrestaFam: 5.75,         // % prestations familiales — employeur seul
+  cnpsTauxAT: 3.0,                 // % accident du travail — employeur seul (variable 2 à 5% selon secteur)
+  cmuMontant: 1000,                // FCFA/mois/personne (forfait), part salarié
+  cmuMontantEmployeur: 1000,       // FCFA/mois/personne, part employeur
+  abattementForfaitaire: 20,       // % abattement forfaitaire frais professionnels avant ITS (barème CI usuel)
+  // Barème ITS mensuel progressif (tranches en FCFA, taux en %) — à vérifier/actualiser.
+  bareme: [
+    {jusqua: 75000,      taux: 0},
+    {jusqua: 240000,     taux: 15},
+    {jusqua: 800000,     taux: 20},
+    {jusqua: 2400000,    taux: 25},
+    {jusqua: 8000000,    taux: 35},
+    {jusqua: Infinity,   taux: 45}
+  ]
+};
+async function loadPaieParamsOverrides(){
+  try{
+    const s = await getAll(S.SETTINGS_APP);
+    const rec = s.find(r=>r.key==='paie_ci');
+    if(rec && rec.params) Object.assign(PAIE_CI, rec.params);
+  }catch(e){ console.warn('Paramètres de paie : défauts utilisés —', e.message); }
+}
+window.savePaieParams=async function(){
+  const ids=['smig','cnpsPlafond','cnpsTauxSalarie','cnpsTauxEmployeurRetraite','cnpsTauxPrestaFam','cnpsTauxAT','cmuMontant','cmuMontantEmployeur','abattementForfaitaire'];
+  const params={};
+  ids.forEach(id=>{ const el=document.getElementById('pp_'+id); if(el) params[id]=parseFloat(el.value)||0; });
+  const s=await getAll(S.SETTINGS_APP);const existing=s.find(r=>r.key==='paie_ci');
+  if(existing) await updRec(S.SETTINGS_APP,existing.id,{key:'paie_ci',params});
+  else await addRec(S.SETTINGS_APP,{key:'paie_ci',params});
+  Object.assign(PAIE_CI, params);
+  toast('✅ Paramètres de paie enregistrés');
+};
+// Calcule l'ITS mensuel par application du barème progressif sur la base imposable
+// (brut après abattement forfaitaire).
+function calculITS(baseImposable){
+  let its=0, reste=baseImposable, dernierSeuil=0;
+  for(const tranche of PAIE_CI.bareme){
+    const largeurTranche = tranche.jusqua - dernierSeuil;
+    const montantDansTranche = Math.max(0, Math.min(reste, largeurTranche));
+    its += montantDansTranche * (tranche.taux/100);
+    reste -= montantDansTranche;
+    dernierSeuil = tranche.jusqua;
+    if(reste<=0) break;
+  }
+  return Math.round(its);
+}
+// Calcule un bulletin de paie complet pour un employé sur une période donnée.
+function calculBulletin(staff, salaireBase, primes, nbPersonnesCMU){
+  primes = primes||0; nbPersonnesCMU = nbPersonnesCMU || 1;
+  const exonereITS = !!staff.exonereITS; // ex : consultant externe déjà imposé ailleurs
+  const brut = Math.round(salaireBase + primes);
+  const baseCnps = Math.min(brut, PAIE_CI.cnpsPlafond);
+  const cnpsSalarie = Math.round(baseCnps * PAIE_CI.cnpsTauxSalarie/100);
+  const cnpsEmployeurRetraite = Math.round(baseCnps * PAIE_CI.cnpsTauxEmployeurRetraite/100);
+  const cnpsPrestaFam = Math.round(baseCnps * PAIE_CI.cnpsTauxPrestaFam/100);
+  const cnpsAT = Math.round(baseCnps * PAIE_CI.cnpsTauxAT/100);
+  const cnpsEmployeurTotal = cnpsEmployeurRetraite + cnpsPrestaFam + cnpsAT;
+  const cmuSalarie = staff.cmuActif ? PAIE_CI.cmuMontant * nbPersonnesCMU : 0;
+  const cmuEmployeur = staff.cmuActif ? PAIE_CI.cmuMontantEmployeur * nbPersonnesCMU : 0;
+  const baseImposable = exonereITS ? 0 : Math.max(0, Math.round((brut - cnpsSalarie) * (1 - PAIE_CI.abattementForfaitaire/100)));
+  const its = exonereITS ? 0 : calculITS(baseImposable);
+  const net = brut - cnpsSalarie - cmuSalarie - its;
+  const coutEmployeur = brut + cnpsEmployeurTotal + cmuEmployeur;
+  return { brut, cnpsSalarie, cnpsEmployeurRetraite, cnpsPrestaFam, cnpsAT, cnpsEmployeurTotal, cmuSalarie, cmuEmployeur, baseImposable, its, net, coutEmployeur };
+}
+
 async function loadRoleOverrides(){
   try{
     const all = await getAll(S.SETTINGS_APP);
@@ -3366,6 +3462,7 @@ async function renderSettings(ca){
     ['cloud','fa-cloud','Cloud'],
     ['fne','fa-stamp','FNE (DGI)'],
     ['tarifs','fa-tags','Tarifs Cond.'],
+    ['paie','fa-money-check-dollar','Paie (CNPS/ITS/CMU)'],
     ['data','fa-database','Données'],
     ['diagnostic','fa-stethoscope','Diagnostic'],
   ];
@@ -3398,6 +3495,7 @@ async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='cloud')        return renderSettingsCloud(cfg);
   if(tab==='fne')          return renderSettingsFNE(cfg, isAdmin);
   if(tab==='tarifs')       return renderSettingsTarifs(isAdmin);
+  if(tab==='paie')         return renderSettingsPaie(isAdmin);
   if(tab==='data')         return renderSettingsData(isSuperAdmin);
   if(tab==='diagnostic')   return '<div id="diagContainer"><div style="padding:30px;text-align:center"><button class="btn btn-p" onclick="runDbDiagnostic()"><i class="fas fa-stethoscope"></i> Lancer le diagnostic</button></div></div>';
   return '';
@@ -3638,6 +3736,27 @@ function renderSettingsTarifs(isAdmin){
     <p style="font-size:11px;color:var(--text3);margin-bottom:12px">Base de valorisation du module Conditionnement (rapport périodique, KPI valeur). Modifier ici sans toucher au code.</p>
     <div class="form-grid">${rows}</div>
     ${isAdmin?'<button class="btn btn-p" style="margin-top:10px" onclick="saveCalibreTarifs()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3)">Réservé Admin/Manager.</p>'}`;
+}
+
+function renderSettingsPaie(isAdmin){
+  const ro = isAdmin ? '' : 'disabled';
+  return `<div class="settings-section-title">💰 Paramètres de paie — Côte d'Ivoire</div>
+    <p style="font-size:11px;color:var(--red);margin-bottom:12px;font-weight:600">⚠️ Valeurs par défaut à faire valider par un expert-comptable avant toute utilisation réelle. La réglementation évolue.</p>
+    <div class="form-grid">
+      <div class="fg"><label>SMIG mensuel (FCFA)</label><input id="pp_smig" type="number" value="${PAIE_CI.smig}" ${ro}></div>
+      <div class="fg"><label>Plafond mensuel cotisable CNPS (FCFA)</label><input id="pp_cnpsPlafond" type="number" value="${PAIE_CI.cnpsPlafond}" ${ro}></div>
+      <div class="fg"><label>CNPS retraite — part salarié (%)</label><input id="pp_cnpsTauxSalarie" type="number" step="0.1" value="${PAIE_CI.cnpsTauxSalarie}" ${ro}></div>
+      <div class="fg"><label>CNPS retraite — part employeur (%)</label><input id="pp_cnpsTauxEmployeurRetraite" type="number" step="0.1" value="${PAIE_CI.cnpsTauxEmployeurRetraite}" ${ro}></div>
+      <div class="fg"><label>Prestations familiales — employeur (%)</label><input id="pp_cnpsTauxPrestaFam" type="number" step="0.01" value="${PAIE_CI.cnpsTauxPrestaFam}" ${ro}></div>
+      <div class="fg"><label>Accident du travail — employeur (%)</label><input id="pp_cnpsTauxAT" type="number" step="0.1" value="${PAIE_CI.cnpsTauxAT}" ${ro}></div>
+      <div class="fg"><label>CMU — part salarié (FCFA/pers./mois)</label><input id="pp_cmuMontant" type="number" value="${PAIE_CI.cmuMontant}" ${ro}></div>
+      <div class="fg"><label>CMU — part employeur (FCFA/pers./mois)</label><input id="pp_cmuMontantEmployeur" type="number" value="${PAIE_CI.cmuMontantEmployeur}" ${ro}></div>
+      <div class="fg"><label>Abattement forfaitaire ITS (%)</label><input id="pp_abattementForfaitaire" type="number" step="1" value="${PAIE_CI.abattementForfaitaire}" ${ro}></div>
+    </div>
+    <div class="settings-section-title" style="margin-top:18px">📊 Barème ITS mensuel (lecture seule ici)</div>
+    <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Jusqu'à (FCFA)</th><th>Taux</th></tr></thead>
+    <tbody>${PAIE_CI.bareme.map(t=>`<tr><td>${t.jusqua===Infinity?'Au-delà':t.jusqua.toLocaleString('fr-FR')}</td><td>${t.taux}%</td></tr>`).join('')}</tbody></table></div>
+    ${isAdmin?'<button class="btn btn-p" style="margin-top:14px" onclick="savePaieParams()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3);margin-top:10px">Réservé Admin/Manager.</p>'}`;
 }
 
 function renderSettingsFNE(cfg, isAdmin){
@@ -7853,27 +7972,307 @@ window.saveProd=saveProd;
 window.delProd=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(apCA());}};
 
 // ══ PERSONNEL ══
-async function renderStaff(ca){
+// ══ RH & PAIE — module unifié à onglets ══
+const CONTRAT_LABEL={cdi:'CDI',cdd:'CDD',journalier:'Journalier',consultant:'Consultant',stagiaire:'Stagiaire'};
+const STAFF_STATUT_LABEL={actif:'Actif',suspendu:'Suspendu',parti:'Parti'};
+const STAFF_STATUT_CSS={actif:'b-g',suspendu:'b-a',parti:'b-gr'};
+function rhCA(){ return document.getElementById('rhTabContent') || document.getElementById('contentArea'); }
+let rhTab='personnel';
+async function renderStaff(ca){ return renderRHModule(ca); }
+async function renderRHModule(ca){
+  const allTabs=[
+    {id:'personnel', icon:'fa-users',           label:'Personnel'},
+    {id:'paiedumois',icon:'fa-money-check-dollar',label:'Paie du mois'},
+    {id:'bulletins', icon:'fa-file-invoice-dollar',label:'Bulletins'},
+    {id:'declarations',icon:'fa-landmark',      label:'Déclarations'},
+  ];
+  if(!allTabs.some(t=>t.id===rhTab)) rhTab=allTabs[0].id;
+  const tabNav=allTabs.map(t=>`<button class="tab-btn ${rhTab===t.id?'on':''}" onclick="switchRHTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
+  ca.innerHTML=`
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-users" style="color:var(--g2)"></i> Ressources Humaines</div></div>
+    <div class="tab-nav" id="rhTabNav">${tabNav}</div>
+    <div id="rhTabContent" class="stock-page"></div>
+  `;
+  await renderRHTab();
+}
+window.renderRHModule=renderRHModule;
+window.switchRHTab=async function(t){
+  rhTab=t;
+  document.querySelectorAll('#rhTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchRHTab('${t}')`));
+  await renderRHTab();
+};
+async function renderRHTab(){
+  const el=rhCA();if(!el) return;
+  if(rhTab==='personnel') await renderPersonnel(el);
+  else if(rhTab==='paiedumois') await renderPaieDuMois(el);
+  else if(rhTab==='bulletins') await renderBulletins(el);
+  else if(rhTab==='declarations') await renderDeclarationsSociales(el);
+}
+
+// ── Onglet Personnel ──
+async function renderPersonnel(ca){
   const staff=await getAll(S.STAFF);
-  const rows=staff.map(s=>`<tr><td><strong>${s.nom}</strong></td><td><span class="badge b-bl">${s.role}</span></td><td style="color:var(--text3)">${s.tel||'—'}</td><td style="color:var(--text3)">${s.email||'—'}</td><td><button class="btn btn-sm btn-gh" onclick="openStaffModal(${s.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delStaff(${s.id})"><i class="fas fa-trash"></i></button></td></tr>`).join('');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-users" style="color:var(--g2)"></i> Personnel</div><button class="btn btn-p btn-sm" onclick="openStaffModal()"><i class="fas fa-plus"></i> Nouvel opérateur</button></div><div class="stock-page"><div class="card"><div class="card-hd">Opérateurs (${staff.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Nom</th><th>Fonction</th><th>Téléphone</th><th>Email</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucun opérateur</td></tr>'}</tbody></table></div></div></div>`;
+  const masseTotale = staff.filter(s=>(s.statut||'actif')==='actif').reduce((a,s)=>a+(s.salaireBase||0),0);
+  const rows=staff.map(s=>`<tr>
+    <td><strong>${esc(s.nom)}</strong><div style="font-size:10px;color:var(--text3)">${esc(s.matricule||'—')}</div></td>
+    <td><span class="badge b-bl">${esc(s.role||'—')}</span></td>
+    <td style="font-size:11px">${CONTRAT_LABEL[s.contrat]||'—'}</td>
+    <td style="color:var(--text3)">${s.tel||'—'}</td>
+    <td style="font-weight:700">${(s.salaireBase||0).toLocaleString('fr-FR')} F</td>
+    <td>${s.cmuActif?'<span class="badge b-g" style="font-size:9px">CMU ✓</span>':'<span style="color:var(--text3);font-size:10px">—</span>'}</td>
+    <td><span class="badge ${STAFF_STATUT_CSS[s.statut]||'b-g'}" style="font-size:10px">${STAFF_STATUT_LABEL[s.statut]||'Actif'}</span></td>
+    <td style="white-space:nowrap"><button class="btn btn-sm btn-gh" onclick="openStaffModal(${s.id})"><i class="fas fa-edit"></i></button> <button class="btn-del" onclick="delStaff(${s.id})"><i class="fas fa-trash"></i></button></td>
+  </tr>`).join('');
+  ca.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div class="g4" style="flex:1;min-width:280px">
+      <div class="kpi kpi-b"><div class="kpi-lbl">Employés</div><div class="kpi-val">${staff.length}</div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">Actifs</div><div class="kpi-val">${staff.filter(s=>(s.statut||'actif')==='actif').length}</div></div>
+      <div class="kpi kpi-g" style="border-left-color:#166534"><div class="kpi-lbl">Masse salariale/mois</div><div class="kpi-val" style="font-size:14px">${masseTotale.toLocaleString('fr-FR')} F</div></div>
+    </div>
+    <button class="btn btn-p btn-sm" onclick="openStaffModal()"><i class="fas fa-plus"></i> Nouvel employé</button>
+  </div>
+  <div class="card"><div class="card-hd">Personnel (${staff.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Nom</th><th>Fonction</th><th>Contrat</th><th>Téléphone</th><th>Salaire base</th><th>CMU</th><th>Statut</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucun employé</td></tr>'}</tbody></table></div></div>`;
 }
 function openStaffModal(id=null){
-  document.getElementById('staffId').value=id||'';document.getElementById('mStaffTitle').textContent=id?'Modifier':'Nouvel opérateur';
-  if(!id){['staffNom','staffTel','staffEmail'].forEach(x=>document.getElementById(x).value='');document.getElementById('staffRole').value='Éleveur';}
-  else getAll(S.STAFF).then(ss=>{const s=ss.find(x=>x.id===id);if(s){document.getElementById('staffNom').value=s.nom||'';document.getElementById('staffRole').value=s.role||'Éleveur';document.getElementById('staffTel').value=s.tel||'';document.getElementById('staffEmail').value=s.email||'';}});
+  document.getElementById('staffId').value=id||'';document.getElementById('mStaffTitle').textContent=id?'Modifier':'Nouvel employé';
+  if(!id){
+    ['staffNom','staffTel','staffEmail','staffMatricule','staffCnpsNum','staffDateFin','staffPaiementRef'].forEach(x=>document.getElementById(x).value='');
+    document.getElementById('staffRole').value='Éleveur';
+    document.getElementById('staffContrat').value='cdi';
+    document.getElementById('staffStatut').value='actif';
+    document.getElementById('staffDateEmbauche').value=new Date().toISOString().slice(0,10);
+    document.getElementById('staffSalaireBase').value=PAIE_CI.smig;
+    document.getElementById('staffCmuPersonnes').value=1;
+    document.getElementById('staffCmuActif').checked=false;
+    document.getElementById('staffExonereITS').checked=false;
+  }
+  else getAll(S.STAFF).then(ss=>{const s=ss.find(x=>x.id===id);if(s){
+    document.getElementById('staffNom').value=s.nom||'';document.getElementById('staffRole').value=s.role||'Éleveur';
+    document.getElementById('staffTel').value=s.tel||'';document.getElementById('staffEmail').value=s.email||'';
+    document.getElementById('staffMatricule').value=s.matricule||'';document.getElementById('staffCnpsNum').value=s.cnpsNum||'';
+    document.getElementById('staffContrat').value=s.contrat||'cdi';document.getElementById('staffStatut').value=s.statut||'actif';
+    document.getElementById('staffDateEmbauche').value=s.dateEmbauche||'';document.getElementById('staffDateFin').value=s.dateFin||'';
+    document.getElementById('staffSalaireBase').value=s.salaireBase||0;document.getElementById('staffCmuPersonnes').value=s.cmuPersonnes||1;
+    document.getElementById('staffCmuActif').checked=!!s.cmuActif;document.getElementById('staffExonereITS').checked=!!s.exonereITS;
+    document.getElementById('staffPaiementRef').value=s.paiementRef||'';
+  }});
   openOverlay('mStaff');
 }
 window.openStaffModal=openStaffModal;
 async function saveStaff(){
   const id=document.getElementById('staffId').value;
-  const data={nom:document.getElementById('staffNom').value.trim(),role:document.getElementById('staffRole').value,tel:document.getElementById('staffTel').value.trim(),email:document.getElementById('staffEmail').value.trim()};
+  const data={
+    nom:document.getElementById('staffNom').value.trim(),role:document.getElementById('staffRole').value,
+    tel:document.getElementById('staffTel').value.trim(),email:document.getElementById('staffEmail').value.trim(),
+    matricule:document.getElementById('staffMatricule').value.trim(),cnpsNum:document.getElementById('staffCnpsNum').value.trim(),
+    contrat:document.getElementById('staffContrat').value,statut:document.getElementById('staffStatut').value,
+    dateEmbauche:document.getElementById('staffDateEmbauche').value,dateFin:document.getElementById('staffDateFin').value,
+    salaireBase:parseFloat(document.getElementById('staffSalaireBase').value)||0,
+    cmuPersonnes:parseInt(document.getElementById('staffCmuPersonnes').value)||1,
+    cmuActif:document.getElementById('staffCmuActif').checked,exonereITS:document.getElementById('staffExonereITS').checked,
+    paiementRef:document.getElementById('staffPaiementRef').value.trim()
+  };
   if(!data.nom){toast('Nom requis','err');return;}
+  if(data.salaireBase>0 && data.salaireBase<PAIE_CI.smig){toast('⚠ Salaire inférieur au SMIG ('+PAIE_CI.smig.toLocaleString()+' F) — vérifiez la conformité','err');}
   if(id) await updRec(S.STAFF,parseInt(id),data);else await addRec(S.STAFF,data);
-  closeOverlay('mStaff');toast(id?'Mis à jour':'Opérateur créé');await renderStaff(document.getElementById('contentArea'));
+  closeOverlay('mStaff');toast(id?'Mis à jour':'Employé créé');await renderRHTab();
 }
 window.saveStaff=saveStaff;
-window.delStaff=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.STAFF,id);toast('Supprimé');await renderStaff(document.getElementById('contentArea'));}};
+window.delStaff=async(id)=>{
+  const bulletins=(await getAll(S.PAIE)).filter(b=>b.staffId===id);
+  if(bulletins.length){toast('⛔ Des bulletins de paie existent pour cet employé — suppression interdite (historique RH)','err');return;}
+  if(confirm('Supprimer cet employé ?')){await delRec(S.STAFF,id);toast('Supprimé');await renderRHTab();}
+};
+
+// ── Onglet Paie du mois ──
+let paieMoisSelection = new Set();
+async function renderPaieDuMois(ca){
+  const staff = (await getAll(S.STAFF)).filter(s=>(s.statut||'actif')==='actif');
+  const periode = document.getElementById('paiePeriode')?.value || new Date().toISOString().slice(0,7);
+  const bulletinsExistants = (await getAll(S.PAIE)).filter(b=>b.periode===periode);
+  const rows = staff.map(s=>{
+    const b = calculBulletin(s, s.salaireBase||0, 0, s.cmuPersonnes||1);
+    const dejaGenere = bulletinsExistants.find(x=>x.staffId===s.id);
+    return `<tr>
+      <td><input type="checkbox" class="paieChk" value="${s.id}" ${dejaGenere?'disabled':'checked'}></td>
+      <td><strong>${esc(s.nom)}</strong><div style="font-size:10px;color:var(--text3)">${CONTRAT_LABEL[s.contrat]||'—'}</div></td>
+      <td>${(s.salaireBase||0).toLocaleString('fr-FR')} F</td>
+      <td style="color:var(--red)">${b.cnpsSalarie.toLocaleString('fr-FR')} F</td>
+      <td style="color:var(--amber-d)">${b.its.toLocaleString('fr-FR')} F</td>
+      <td style="font-weight:700;color:var(--g2)">${b.net.toLocaleString('fr-FR')} F</td>
+      <td>${dejaGenere?`<span class="badge b-g" style="font-size:9px">✓ Généré</span>`:'<span style="color:var(--text3);font-size:10px">À générer</span>'}</td>
+    </tr>`;
+  }).join('');
+  const totNet = staff.reduce((a,s)=>a+calculBulletin(s,s.salaireBase||0,0,s.cmuPersonnes||1).net,0);
+  const totCout = staff.reduce((a,s)=>a+calculBulletin(s,s.salaireBase||0,0,s.cmuPersonnes||1).coutEmployeur,0);
+  ca.innerHTML=`<div class="card" style="margin-bottom:14px"><div class="card-bd" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+    <div class="fg" style="margin:0"><label>Période</label><input type="month" id="paiePeriode" value="${periode}" onchange="renderPaieDuMois(rhCA())"></div>
+    <button class="btn btn-p" onclick="genererBulletinsDuMois()"><i class="fas fa-money-check-dollar"></i> Générer les bulletins sélectionnés</button>
+  </div></div>
+  <div class="g4" style="margin-bottom:14px">
+    <div class="kpi kpi-b"><div class="kpi-lbl">Employés actifs</div><div class="kpi-val">${staff.length}</div></div>
+    <div class="kpi kpi-g"><div class="kpi-lbl">Total net à payer</div><div class="kpi-val" style="font-size:15px">${totNet.toLocaleString('fr-FR')}</div></div>
+    <div class="kpi kpi-a"><div class="kpi-lbl">Coût employeur total</div><div class="kpi-val" style="font-size:15px">${totCout.toLocaleString('fr-FR')}</div></div>
+    <div class="kpi kpi-b"><div class="kpi-lbl">Déjà générés</div><div class="kpi-val">${bulletinsExistants.length}</div></div>
+  </div>
+  <div class="card"><div class="card-hd">Simulation — ${periode}</div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th></th><th>Employé</th><th>Salaire base</th><th>CNPS salarié</th><th>ITS</th><th>Net</th><th>Statut</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun employé actif</td></tr>'}</tbody></table></div></div>
+  <p style="font-size:10px;color:var(--text3);margin-top:8px">⚠️ Taux CNPS/ITS/CMU par défaut — à valider avec un expert-comptable (Paramétrage → Paie).</p>`;
+}
+window.renderPaieDuMois=renderPaieDuMois;
+window.genererBulletinsDuMois=async function(){
+  const periode = document.getElementById('paiePeriode').value;
+  if(!periode){toast('Période requise','err');return;}
+  const checked = Array.from(document.querySelectorAll('.paieChk:checked')).map(el=>parseInt(el.value));
+  if(!checked.length){toast('Aucun employé sélectionné','err');return;}
+  if(!confirm(`Générer ${checked.length} bulletin(s) de paie pour ${periode} ?`)) return;
+  const staff = await getAll(S.STAFF);
+  let n=0;
+  for(const id of checked){
+    const s = staff.find(x=>x.id===id); if(!s) continue;
+    const existants = (await getAll(S.PAIE)).filter(b=>b.staffId===id && b.periode===periode);
+    if(existants.length) continue;
+    const calc = calculBulletin(s, s.salaireBase||0, 0, s.cmuPersonnes||1);
+    await addRec(S.PAIE, {
+      staffId:id, staffNom:s.nom, periode, salaireBase:s.salaireBase||0, primes:0,
+      ...calc, statut:'genere', dateGeneration:new Date().toISOString(), auteur:currentUser?.nom||'Système', ts:Date.now()
+    });
+    n++;
+  }
+  toast(n+' bulletin(s) généré(s) pour '+periode);
+  await renderPaieDuMois(rhCA());
+};
+
+// ── Onglet Bulletins (historique, aperçu, impression) ──
+async function renderBulletins(ca){
+  const[bulletins,staff]=await Promise.all([getAll(S.PAIE),getAll(S.STAFF)]);
+  const sorted=bulletins.slice().sort((a,b)=>(b.periode||'').localeCompare(a.periode||'')||(b.ts||0)-(a.ts||0));
+  const rows=sorted.map(b=>{
+    const s=staff.find(x=>x.id===b.staffId);
+    return `<tr><td>${b.periode}</td><td><strong>${esc(b.staffNom||(s?s.nom:'—'))}</strong></td>
+      <td>${(b.brut||0).toLocaleString('fr-FR')} F</td>
+      <td style="color:var(--red)">${(b.cnpsSalarie||0).toLocaleString('fr-FR')} F</td>
+      <td style="color:var(--amber-d)">${(b.its||0).toLocaleString('fr-FR')} F</td>
+      <td style="font-weight:700;color:var(--g2)">${(b.net||0).toLocaleString('fr-FR')} F</td>
+      <td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="apercuBulletin(${b.id})" title="Aperçu"><i class="fas fa-eye"></i></button> <button class="btn btn-xs btn-gh" onclick="imprimerBulletin(${b.id})" title="Imprimer"><i class="fas fa-print"></i></button> <button class="btn-del" onclick="delBulletin(${b.id})" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>`;
+  }).join('');
+  ca.innerHTML=`<div class="card"><div class="card-hd">Bulletins de paie (${sorted.length})</div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>Période</th><th>Employé</th><th>Brut</th><th>CNPS sal.</th><th>ITS</th><th>Net</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun bulletin généré</td></tr>'}</tbody></table></div></div>`;
+}
+window.delBulletin=async(id)=>{ if(confirm('Supprimer ce bulletin ?')){ await delRec(S.PAIE,id); toast('Bulletin supprimé'); await renderBulletins(rhCA()); } };
+
+async function buildBulletinHtml(id){
+  const[bulletins,staff,cfg]=await Promise.all([getAll(S.PAIE),getAll(S.STAFF),getExploitationSettings()]);
+  const b=bulletins.find(x=>x.id===id); if(!b) return null;
+  const s=staff.find(x=>x.id===b.staffId)||{};
+  const moisLabel = new Date(b.periode+'-01').toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Bulletin — ${esc(s.nom||'')} — ${b.periode}</title><style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:20px}
+    .doc{max-width:700px;margin:0 auto;border:1px solid #ccc;padding:20px}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse;margin:10px 0}
+    td,th{padding:6px 10px;border:1px solid #e5e7eb;font-size:12px;text-align:left}
+    th{background:#f3f4f6}
+    .net-row td{font-weight:800;background:#f0fdf4;font-size:14px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">BULLETIN DE PAIE</div><div style="font-size:11px;color:#888">${moisLabel}</div></div></div>
+    <table><tr><th>Employé</th><td>${esc(s.nom||b.staffNom||'—')}</td><th>Matricule</th><td>${esc(s.matricule||'—')}</td></tr>
+    <tr><th>Fonction</th><td>${esc(s.role||'—')}</td><th>N° CNPS</th><td>${esc(s.cnpsNum||'—')}</td></tr>
+    <tr><th>Contrat</th><td>${CONTRAT_LABEL[s.contrat]||'—'}</td><th>Embauche</th><td>${s.dateEmbauche||'—'}</td></tr></table>
+    <table><thead><tr><th>Élément</th><th>Montant (FCFA)</th></tr></thead><tbody>
+      <tr><td>Salaire de base</td><td>${(b.salaireBase||0).toLocaleString('fr-FR')}</td></tr>
+      ${b.primes?`<tr><td>Primes</td><td>${b.primes.toLocaleString('fr-FR')}</td></tr>`:''}
+      <tr><td><strong>Salaire brut</strong></td><td><strong>${(b.brut||0).toLocaleString('fr-FR')}</strong></td></tr>
+      <tr><td>CNPS (part salarié)</td><td>− ${(b.cnpsSalarie||0).toLocaleString('fr-FR')}</td></tr>
+      ${b.cmuSalarie?`<tr><td>CMU (part salarié)</td><td>− ${b.cmuSalarie.toLocaleString('fr-FR')}</td></tr>`:''}
+      <tr><td>ITS (impôt sur salaire)</td><td>− ${(b.its||0).toLocaleString('fr-FR')}</td></tr>
+      <tr class="net-row"><td>NET À PAYER</td><td>${(b.net||0).toLocaleString('fr-FR')} FCFA</td></tr>
+    </tbody></table>
+    <table><thead><tr><th colspan="2">Charges patronales (information — non déduites du net)</th></tr></thead><tbody>
+      <tr><td>CNPS retraite (employeur)</td><td>${(b.cnpsEmployeurRetraite||0).toLocaleString('fr-FR')}</td></tr>
+      <tr><td>Prestations familiales</td><td>${(b.cnpsPrestaFam||0).toLocaleString('fr-FR')}</td></tr>
+      <tr><td>Accident du travail</td><td>${(b.cnpsAT||0).toLocaleString('fr-FR')}</td></tr>
+      ${b.cmuEmployeur?`<tr><td>CMU (part employeur)</td><td>${b.cmuEmployeur.toLocaleString('fr-FR')}</td></tr>`:''}
+      <tr><td><strong>Coût total employeur</strong></td><td><strong>${(b.coutEmployeur||0).toLocaleString('fr-FR')}</strong></td></tr>
+    </tbody></table>
+    <p style="font-size:10px;color:#888;margin-top:10px">Document généré automatiquement — à faire valider par un expert-comptable avant tout paiement effectif.</p>
+  </div></body></html>`;
+}
+window.apercuBulletin=async function(id){ const html=await buildBulletinHtml(id); if(!html){toast('Bulletin introuvable','err');return;} const w=window.open('','_blank','width=800,height=750'); if(!w){toast('Autoriser les pop-ups','err');return;} w.document.write(html);w.document.close(); };
+window.imprimerBulletin=window.apercuBulletin;
+
+// ── Onglet Déclarations sociales (CNPS/ITS/CMU) — synthèse mensuelle imprimable ──
+async function renderDeclarationsSociales(ca){
+  const periode = document.getElementById('declPeriode')?.value || new Date().toISOString().slice(0,7);
+  const bulletins = (await getAll(S.PAIE)).filter(b=>b.periode===periode);
+  const tot = bulletins.reduce((a,b)=>({
+    brut:a.brut+(b.brut||0), cnpsSalarie:a.cnpsSalarie+(b.cnpsSalarie||0),
+    cnpsEmployeur:a.cnpsEmployeur+(b.cnpsEmployeurTotal||0), its:a.its+(b.its||0),
+    cmuSalarie:a.cmuSalarie+(b.cmuSalarie||0), cmuEmployeur:a.cmuEmployeur+(b.cmuEmployeur||0)
+  }), {brut:0,cnpsSalarie:0,cnpsEmployeur:0,its:0,cmuSalarie:0,cmuEmployeur:0});
+  ca.innerHTML=`<div class="card" style="margin-bottom:14px"><div class="card-bd" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+    <div class="fg" style="margin:0"><label>Période</label><input type="month" id="declPeriode" value="${periode}" onchange="renderDeclarationsSociales(rhCA())"></div>
+    <button class="btn btn-gh" onclick="imprimerDeclarations('${periode}')"><i class="fas fa-print"></i> Imprimer la déclaration</button>
+  </div></div>
+  <div class="g4" style="margin-bottom:14px">
+    <div class="kpi kpi-b"><div class="kpi-lbl">Masse salariale brute</div><div class="kpi-val" style="font-size:15px">${tot.brut.toLocaleString('fr-FR')}</div></div>
+    <div class="kpi kpi-r"><div class="kpi-lbl">CNPS total (sal.+empl.)</div><div class="kpi-val" style="font-size:15px">${(tot.cnpsSalarie+tot.cnpsEmployeur).toLocaleString('fr-FR')}</div></div>
+    <div class="kpi kpi-a"><div class="kpi-lbl">ITS total à reverser</div><div class="kpi-val" style="font-size:15px">${tot.its.toLocaleString('fr-FR')}</div></div>
+    <div class="kpi kpi-g"><div class="kpi-lbl">CMU total</div><div class="kpi-val" style="font-size:15px">${(tot.cmuSalarie+tot.cmuEmployeur).toLocaleString('fr-FR')}</div></div>
+  </div>
+  <div class="card"><div class="card-hd">Détail — ${bulletins.length} bulletin(s) — ${periode}</div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>Cotisation</th><th style="text-align:right">Part salarié</th><th style="text-align:right">Part employeur</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>
+      <tr><td>CNPS (retraite + prestations familiales + AT)</td><td style="text-align:right">${tot.cnpsSalarie.toLocaleString('fr-FR')}</td><td style="text-align:right">${tot.cnpsEmployeur.toLocaleString('fr-FR')}</td><td style="text-align:right;font-weight:700">${(tot.cnpsSalarie+tot.cnpsEmployeur).toLocaleString('fr-FR')}</td></tr>
+      <tr><td>ITS</td><td style="text-align:right">${tot.its.toLocaleString('fr-FR')}</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:700">${tot.its.toLocaleString('fr-FR')}</td></tr>
+      <tr><td>CMU</td><td style="text-align:right">${tot.cmuSalarie.toLocaleString('fr-FR')}</td><td style="text-align:right">${tot.cmuEmployeur.toLocaleString('fr-FR')}</td><td style="text-align:right;font-weight:700">${(tot.cmuSalarie+tot.cmuEmployeur).toLocaleString('fr-FR')}</td></tr>
+    </tbody></table></div></div>
+  <p style="font-size:10px;color:var(--text3);margin-top:8px">⚠️ Document indicatif — à faire vérifier par un expert-comptable avant toute déclaration officielle CNPS/DGI.</p>`;
+}
+window.renderDeclarationsSociales=renderDeclarationsSociales;
+window.imprimerDeclarations=async function(periode){
+  const[bulletins,cfg]=await Promise.all([getAll(S.PAIE),getExploitationSettings()]);
+  const filt=bulletins.filter(b=>b.periode===periode);
+  const tot = filt.reduce((a,b)=>({
+    brut:a.brut+(b.brut||0), cnpsSalarie:a.cnpsSalarie+(b.cnpsSalarie||0),
+    cnpsEmployeur:a.cnpsEmployeur+(b.cnpsEmployeurTotal||0), its:a.its+(b.its||0),
+    cmuSalarie:a.cmuSalarie+(b.cmuSalarie||0), cmuEmployeur:a.cmuEmployeur+(b.cmuEmployeur||0)
+  }), {brut:0,cnpsSalarie:0,cnpsEmployeur:0,its:0,cmuSalarie:0,cmuEmployeur:0});
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Déclarations sociales — ${periode}</title><style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:20px}
+    .doc{max-width:800px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse;margin:10px 0}
+    td,th{padding:6px 10px;border:1px solid #e5e7eb;font-size:12px;text-align:left}
+    th{background:#f3f4f6}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc"><div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+    <div style="text-align:right"><div class="doc-type">DÉCLARATIONS SOCIALES</div><div style="font-size:11px;color:#888">${periode}</div></div></div>
+    <table><thead><tr><th>Cotisation</th><th>Part salarié</th><th>Part employeur</th><th>Total</th></tr></thead><tbody>
+      <tr><td>CNPS</td><td>${tot.cnpsSalarie.toLocaleString('fr-FR')}</td><td>${tot.cnpsEmployeur.toLocaleString('fr-FR')}</td><td><strong>${(tot.cnpsSalarie+tot.cnpsEmployeur).toLocaleString('fr-FR')}</strong></td></tr>
+      <tr><td>ITS</td><td>${tot.its.toLocaleString('fr-FR')}</td><td>—</td><td><strong>${tot.its.toLocaleString('fr-FR')}</strong></td></tr>
+      <tr><td>CMU</td><td>${tot.cmuSalarie.toLocaleString('fr-FR')}</td><td>${tot.cmuEmployeur.toLocaleString('fr-FR')}</td><td><strong>${(tot.cmuSalarie+tot.cmuEmployeur).toLocaleString('fr-FR')}</strong></td></tr>
+    </tbody></table>
+    <p style="font-size:10px;color:#888;margin-top:10px">Document indicatif généré automatiquement — à faire vérifier par un expert-comptable avant toute déclaration officielle CNPS/DGI.</p>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=900,height=750');
+  if(!w){toast('Autoriser les pop-ups','err');return;}
+  w.document.write(html);w.document.close();
+};
 
 // ══ CLIENTS ══
 const CLIENT_TYPE_LABEL={detail:'Détaillant',grossiste:'Grossiste',resto:'Restauration',hotel:'Hôtel',particulier:'Particulier',autre:'Autre'};
@@ -10075,6 +10474,7 @@ async function initAppAfterLogin(){
   try{
     await loadRoleOverrides();
     await loadCalibreTarifsOverrides();
+    await loadPaieParamsOverrides();
     await initDemo(); // idempotent (flags seed_*) — sans effet si l'org a déjà des données
     document.getElementById('lotsPanel').classList.remove('hidden');
     await renderLotSidebar();
