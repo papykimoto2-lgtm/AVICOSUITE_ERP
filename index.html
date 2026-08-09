@@ -1688,6 +1688,8 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
   <div style="margin:14px 0 6px;font-weight:700;font-size:12px">Accès aux modules</div>
   <div id="rolePagesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:260px;overflow:auto;padding:4px"></div>
+  <div style="margin:14px 0 6px;font-weight:700;font-size:12px">🗑️ Suppression autorisée <span style="font-weight:400;color:var(--text3);font-size:11px">(décochez pour permettre consultation/création/modification sans suppression)</span></div>
+  <div id="roleDeleteGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:200px;overflow:auto;padding:4px"></div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mRole')">Annuler</button>
     <button class="btn btn-p" onclick="saveRoleModal()"><i class="fas fa-save"></i> Enregistrer</button>
@@ -3062,12 +3064,25 @@ const ROLE_PERMS = {
            'simubande','fab','gmao','rapports','reappro','prods','fourns','bcs','receptions','cond',
            'staff','settings','reprocouvoir'] },
   operateur:  { label:'Opérateur',      icon:'fa-hard-hat',    color:'#2d6a4f', bg:'#d8f3dc',
-    pages:['lots','stock','fab','cond','gmao','prods','rapports','reprocouvoir','receptions'] },
+    pages:['lots','stock','fab','cond','gmao','prods','rapports','reprocouvoir','receptions'],
+    noDelete:['stock','cond','receptions','prods'] }, // peut créer/traiter, pas supprimer (traçabilité)
   commercial: { label:'Commercial',     icon:'fa-briefcase',   color:'#b45309', bg:'#fff3e0',
-    pages:['dash','clients','commandes','creances','rapports','cond','stock'] },
+    pages:['dash','clients','commandes','creances','rapports','cond','stock'],
+    noDelete:['commandes','clients','stock'] }, // peut créer/modifier, pas supprimer (évite la perte de CA/historique client)
   veterinaire:{ label:'Vétérinaire',    icon:'fa-stethoscope', color:'#6a1b9a', bg:'#f3e5f5',
     pages:['lots','fab','gmao','rapports','prods','reprocouvoir'] }
 };
+// Autorisation de suppression, en plus de l'accès à la page — admin/manager non restreints
+// par défaut. À défaut de restriction déclarée pour le rôle, la suppression suit l'accès page.
+function canDelete(page){
+  if(!currentUser) return false;
+  const rp = ROLE_PERMS[currentUser.role];
+  if(!rp) return false;
+  if(rp.pages==='all') return true;
+  if(!canAccessPage(page)) return false;
+  return !(rp.noDelete && rp.noDelete.includes(page));
+}
+window.canDelete = canDelete;
 
 // Liste des modules pilotables par rôle (partagée entre la matrice et le modal d'édition)
 const ROLE_MODULE_PAGES = [
@@ -3151,6 +3166,13 @@ const COMPTE_PAR_CATEGORIE = {
   main_oeuvre:'6410', energie:'6052', amortissement:'6813',
   entretien:'6224', transport:'6222', assurance:'6161', autre:'628'
 };
+
+// Route vers le bon compte de trésorerie selon le mode de règlement réel — sans ça, un
+// paiement en espèces se retrouvait compté comme une opération bancaire (521), faussant
+// le solde de caisse (571) qui restait toujours à zéro.
+function compteTresorerie(mode){
+  return mode==='especes' ? '571' : '521'; // virement/chèque/mobile money = comptes bancarisés
+}
 
 async function comptaNumeroPiece(journal, date){
   const d=(date||new Date().toISOString().slice(0,10)).replace(/-/g,'');
@@ -4537,18 +4559,39 @@ window.openRoleModal = function(roleKey){
 
   const pagesAll = rp && rp.pages==='all';
   const pagesSet = new Set(!pagesAll ? (rp?.pages||[]) : []);
+  const noDeleteSet = new Set(rp?.noDelete||[]);
   const grid = document.getElementById('rolePagesGrid');
+  const gridDel = document.getElementById('roleDeleteGrid');
   if(locked){
     grid.innerHTML = `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Le rôle Administrateur a toujours accès à tous les modules.</div>`;
+    gridDel.innerHTML = `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Le rôle Administrateur peut toujours tout supprimer.</div>`;
   } else {
     grid.innerHTML = ROLE_MODULE_PAGES.map(p=>{
       const checked = pagesAll || pagesSet.has(p.id);
       return `<label style="display:flex;align-items:center;gap:6px;font-size:11px;background:var(--bg);padding:5px 8px;border-radius:6px">
-        <input type="checkbox" class="rolePageChk" value="${p.id}" ${checked?'checked':''}> ${esc(p.label)}
+        <input type="checkbox" class="rolePageChk" value="${p.id}" ${checked?'checked':''} onchange="majRoleDeleteGrid()"> ${esc(p.label)}
       </label>`;
     }).join('');
+    majRoleDeleteGridInterne(pagesAll, pagesSet, noDeleteSet);
   }
   openOverlay('mRole');
+};
+// Ne montre la case "suppression autorisée" que pour les modules effectivement cochés côté accès —
+// inutile de proposer une restriction de suppression sur un module que le rôle ne peut pas ouvrir.
+function majRoleDeleteGridInterne(pagesAll, pagesSet, noDeleteSet){
+  const gridDel = document.getElementById('roleDeleteGrid'); if(!gridDel) return;
+  const actives = ROLE_MODULE_PAGES.filter(p=>pagesAll || pagesSet.has(p.id));
+  gridDel.innerHTML = actives.length ? actives.map(p=>{
+    const checked = !noDeleteSet.has(p.id);
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:11px;background:var(--bg);padding:5px 8px;border-radius:6px">
+      <input type="checkbox" class="roleDeleteChk" value="${p.id}" ${checked?'checked':''}> ${esc(p.label)}
+    </label>`;
+  }).join('') : `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Cochez d'abord des modules ci-dessus.</div>`;
+}
+window.majRoleDeleteGrid = function(){
+  const pagesSet = new Set(Array.from(document.querySelectorAll('#rolePagesGrid .rolePageChk:checked')).map(c=>c.value));
+  const dejaCoche = new Set(Array.from(document.querySelectorAll('#roleDeleteGrid .roleDeleteChk:checked')).map(c=>c.value));
+  majRoleDeleteGridInterne(false, pagesSet, new Set(ROLE_MODULE_PAGES.filter(p=>pagesSet.has(p.id) && !dejaCoche.has(p.id)).map(p=>p.id)));
 };
 
 window.saveRoleModal = async function(){
@@ -4568,9 +4611,12 @@ window.saveRoleModal = async function(){
   }
 
   const pages = key==='admin' ? 'all' : Array.from(document.querySelectorAll('#rolePagesGrid .rolePageChk:checked')).map(c=>c.value);
+  // Suppression autorisée : une page cochée en accès mais dont la case suppression est décochée
+  // rejoint noDelete. Remplace entièrement l'ancien tableau (reflète l'état actuel du formulaire).
+  const noDelete = key==='admin' ? [] : (Array.isArray(pages) ? pages.filter(p=>!document.querySelector(`#roleDeleteGrid .roleDeleteChk[value="${p}"]`)?.checked) : []);
   const bg = color + '22'; // teinte claire dérivée de la couleur (alpha ~13%)
 
-  ROLE_PERMS[key] = { label, icon:'fa-'+iconRaw, color, bg, pages };
+  ROLE_PERMS[key] = { label, icon:'fa-'+iconRaw, color, bg, pages, noDelete };
   try{
     await saveRoleOverrides();
     closeOverlay('mRole');
@@ -6890,7 +6936,7 @@ async function renderDepots(ca){
     </div>`;
 }
 window.selDep=async(id)=>{selDepot=id===selDepot?null:id;await renderDepots(document.getElementById('contentArea'));};
-window.delDep=async(id)=>{if(confirm('Supprimer ce dépôt ?')){await delRec(S.DEPOTS,id);if(selDepot===id)selDepot=null;toast('Dépôt supprimé');await renderDepots(document.getElementById('contentArea'));}};
+window.delDep=async(id)=>{if(!canDelete('stock')){toast('⛔ Votre rôle ne permet pas de supprimer des dépôts','err');return;}if(confirm('Supprimer ce dépôt ?')){await delRec(S.DEPOTS,id);if(selDepot===id)selDepot=null;toast('Dépôt supprimé');await renderDepots(document.getElementById('contentArea'));}};
 function openDepotModal(id=null){
   document.getElementById('depotId').value=id||'';document.getElementById('mDepotTitle').textContent=id?'Modifier':'Nouveau dépôt';
   if(!id){['depotName','depotResp','depotLoc','depotDesc'].forEach(x=>document.getElementById(x).value='');document.getElementById('depotCap').value='';document.getElementById('depotType').value='aliment';}
@@ -7434,7 +7480,7 @@ async function renderMvts(ca,p=1){
   const slice=sorted.slice((p-1)*PAGE,p*PAGE);
   const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
   const typeCls={entree:'b-g',sortie:'b-r',transfert:'b-bl',inventaire:'b-gr'};
-  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> <button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}</td></tr>`;}).join('');
+  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> ${canDelete('stock')?`<button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}`:''}</td></tr>`;}).join('');
   const pagerBtns=[`<button ${p<=1?'disabled':''} onclick="mvtPage=${p-1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p-1})">‹</button>`,...Array.from({length:Math.min(pages,5)},(_,i)=>Math.max(1,p-2)+i).filter(n=>n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="mvtPage=${n};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${n})">${n}</button>`),`<button ${p>=pages?'disabled':''} onclick="mvtPage=${p+1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p+1})">›</button>`].join('');
   const depOpts='<option value="">Tous dépôts</option>'+deps.map(d=>`<option value="${d.id}" ${mvtFilters.depotId==String(d.id)?'selected':''}>${esc(d.nom)}</option>`).join('');
   const prodOpts='<option value="">Tous produits</option>'+prods.map(pr=>`<option value="${pr.id}" ${mvtFilters.produitId==String(pr.id)?'selected':''}>${esc(pr.nom)}</option>`).join('');
@@ -7536,6 +7582,7 @@ async function saveMvt(){
 }
 window.saveMvt=saveMvt;
 window.mvtDelete=async function(id){
+  if(!canDelete('stock')){ toast('⛔ Votre rôle ne permet pas de supprimer des mouvements de stock','err'); return; }
   if(!confirm('Supprimer définitivement ce mouvement ?\nLe solde de stock sera recalculé immédiatement.')) return;
   try{ await delMvt(id); toast('Mouvement supprimé'); await render(); }
   catch(e){ toast('⛔ '+e.message,'err'); }
@@ -8386,6 +8433,7 @@ window.saveRecUpdate=saveRecUpdate;
 
 // ── Supprimer une réception : annule son effet sur le BC (quantités livrées, statut) et retire les mouvements de stock associés ──
 async function delReception(recId){
+  if(!canDelete('receptions')){ toast('⛔ Votre rôle ne permet pas de supprimer des réceptions','err'); return; }
   if(!confirm('Supprimer définitivement cette réception ?\nLes quantités seront retirées du stock et du bon de commande associé.')) return;
   const[recs,bcs]=await Promise.all([getAll(S.RECS),getAll(S.BCS)]);
   const rec=recs.find(x=>x.id===recId);if(!rec){toast('Réception introuvable','err');return;}
@@ -8500,7 +8548,7 @@ async function saveProd(){
   closeOverlay('mProd');toast(id?'Produit mis à jour':'Produit créé');await renderProds(apCA());
 }
 window.saveProd=saveProd;
-window.delProd=async(id)=>{if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(apCA());}};
+window.delProd=async(id)=>{if(!canDelete('prods')){toast('⛔ Votre rôle ne permet pas de supprimer des produits','err');return;}if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(apCA());}};
 
 // ══ PERSONNEL ══
 // ══ RH & PAIE — module unifié à onglets ══
@@ -9196,7 +9244,7 @@ async function renderClients(ca){
         <button class="btn btn-sm btn-p" title="Nouvelle commande" onclick="openSaleModal(null,${c.id})"><i class="fas fa-plus"></i></button>
         <button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('client',${c.id})" title="Lien espace client"><i class="fas fa-link"></i></button>
         <button class="btn btn-sm btn-gh" onclick="openClientModal(${c.id})"><i class="fas fa-edit"></i></button>
-        <button class="btn-del" onclick="delClient(${c.id})"><i class="fas fa-trash"></i></button>
+        ${canDelete('clients')?`<button class="btn-del" onclick="delClient(${c.id})"><i class="fas fa-trash"></i></button>`:''}
       </td>
     </tr>`;
   }).join('');
@@ -9209,7 +9257,7 @@ async function renderClients(ca){
       <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-sack-dollar" style="width:12px"></i> CA payé</span><span style="font-weight:700;color:var(--g2)">${Math.round(cCA/1000)}K F</span></div>
       <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-hourglass-half" style="width:12px"></i> Crédit ouvert</span><span style="color:${cEncours>0?'var(--amber-d)':'var(--text3)'}">${Math.round(cEncours/1000)}K F</span></div>
       <div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-shopping-cart" style="width:12px"></i> Commandes</span><span>${cSales.length}</span></div>
-      <div class="fcard-actions"><button class="btn btn-sm btn-p" onclick="openSaleModal(null,${c.id})"><i class="fas fa-plus"></i> Commande</button><button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('client',${c.id})" title="Lien espace client"><i class="fas fa-link"></i></button><button class="btn btn-sm btn-gh" onclick="openClientModal(${c.id})"><i class="fas fa-edit"></i></button><button class="btn-del" onclick="delClient(${c.id})"><i class="fas fa-trash"></i></button></div>
+      <div class="fcard-actions"><button class="btn btn-sm btn-p" onclick="openSaleModal(null,${c.id})"><i class="fas fa-plus"></i> Commande</button><button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('client',${c.id})" title="Lien espace client"><i class="fas fa-link"></i></button><button class="btn btn-sm btn-gh" onclick="openClientModal(${c.id})"><i class="fas fa-edit"></i></button>${canDelete('clients')?`<button class="btn-del" onclick="delClient(${c.id})"><i class="fas fa-trash"></i></button>`:''}</div>
     </div></div>`).join('');
   const listHtml = vm==='grid'
     ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px">${cards||'<div style="color:var(--text3);text-align:center;padding:40px;grid-column:1/-1">Aucun client</div>'}</div>`
@@ -9289,6 +9337,7 @@ async function saveClient(){
 }
 window.saveClient=saveClient;
 window.delClient=async(id)=>{
+  if(!canDelete('clients')){ toast('⛔ Votre rôle ne permet pas de supprimer des clients','err'); return; }
   if(!confirm('Supprimer ce client ? Ses commandes resteront en base.')) return;
   await delRec(S.CLIENTS,id);toast('Client supprimé');
   await renderClients(document.getElementById('contentArea'));
@@ -9321,7 +9370,7 @@ async function renderCommandes(ca){
         ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
-        <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
+        ${canDelete('commandes')?`<button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>`:''}
       </td>
     </tr>`;
   }).join('');
@@ -9379,7 +9428,7 @@ window.filterCommandes=async function(clientId){
         ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
-        <button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>
+        ${canDelete('commandes')?`<button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>`:''}
       </td>
     </tr>`;
   }).join('');
@@ -9679,6 +9728,7 @@ window.changeSaleStatut=async function(id,newStatut){
 };
 
 window.delSale=async(id)=>{
+  if(!canDelete('commandes')){ toast('⛔ Votre rôle ne permet pas de supprimer des commandes','err'); return; }
   const sales=await getAll(S.SALES);const s=sales.find(x=>x.id===id);
   if(!s){toast('Commande introuvable','err');return;}
   if(s.fneReference){toast('⛔ Facture certifiée FNE — suppression interdite. Émettez un avoir FNE à la place.','err');return;}
@@ -10423,6 +10473,7 @@ async function reverseCondSession(s){
 }
 
 window.delCond = async function(id){
+  if(!canDelete('cond')){ toast('⛔ Votre rôle ne permet pas d\'annuler des sessions de conditionnement','err'); return; }
   if(!confirm('Annuler cette session ? La ponte du jour, les mouvements de stock (bruts, alvéoles, plateaux, cartons) et une éventuelle alimentation/prophylaxie associées seront également annulés.')) return;
   const sessions = await getAll(S.COND);
   const s = sessions.find(x => x.id === id);
@@ -10996,7 +11047,7 @@ async function renderCond(ca){
       <td><strong>${s.oeufs_nets}</strong></td>
       <td style="font-size:${s.oeufs_bruts>0?(100-(s.oeufs_casses/s.oeufs_bruts*100)).toFixed(1):100}%;color:var(--text3);font-size:11px">${s.oeufs_bruts>0?(100-s.oeufs_casses/s.oeufs_bruts*100).toFixed(1):100}%</td>
       <td style="font-weight:700;color:#166534">${Math.round(valeurCondSession(s)).toLocaleString('fr-FR')} F</td>
-      <td><button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="editCond(${s.id})" title="Modifier cette session"><i class="fas fa-pen"></i></button><button class="btn-del" onclick="delCond(${s.id})" title="Annuler cette session"><i class="fas fa-trash"></i></button></td>
+      <td><button class="btn-del" style="background:var(--blue-bg);color:var(--blue);margin-right:4px" onclick="editCond(${s.id})" title="Modifier cette session"><i class="fas fa-pen"></i></button>${canDelete('cond')?`<button class="btn-del" onclick="delCond(${s.id})" title="Annuler cette session"><i class="fas fa-trash"></i></button>`:''}</td>
     </tr>`;
   }).join('');
 
@@ -11667,17 +11718,20 @@ async function renderCompta(ca){
     {id:'grandlivre', icon:'fa-book-open',     label:'Grand Livre'},
     {id:'balance',    icon:'fa-scale-balanced',label:'Balance'},
     {id:'fec',        icon:'fa-file-export',   label:'Export FEC'},
-    {id:'import',     icon:'fa-file-import',   label:'Import'},
   ];
   const tabNav=tabs.map(t=>`<button class="tab-btn ${comptaTab===t.id?'on':''}" onclick="switchComptaTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
   ca.innerHTML=`
-    <div class="page-header"><div class="page-header-title"><i class="fas fa-book" style="color:var(--g2)"></i> Comptabilité SYSCOHADA</div></div>
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-book" style="color:var(--g2)"></i> Comptabilité SYSCOHADA</div><button class="btn btn-gh btn-sm" onclick="ouvrirEtatCaisse()"><i class="fas fa-cash-register"></i> État de caisse</button></div>
     <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠️ Plan comptable simplifié généré automatiquement depuis l'activité de l'ERP — à faire valider par un expert-comptable avant toute déclaration officielle ou clôture d'exercice.</div>
     <div class="tab-nav" id="comptaTabNav">${tabNav}</div>
     <div id="comptaTabContent" class="stock-page"></div>`;
   await renderComptaTab();
 }
 window.renderCompta=renderCompta;
+window.ouvrirEtatCaisse=async function(){
+  comptaTab='grandlivre'; comptaCompteSel='571';
+  await renderCompta(document.getElementById('contentArea'));
+};
 window.switchComptaTab=async function(t){ comptaTab=t; document.querySelectorAll('#comptaTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchComptaTab('${t}')`)); await renderComptaTab(); };
 async function renderComptaTab(){
   const el=comptaCA(); if(!el) return;
@@ -11685,7 +11739,6 @@ async function renderComptaTab(){
   else if(comptaTab==='grandlivre') await renderComptaGrandLivre(el);
   else if(comptaTab==='balance') await renderComptaBalance(el);
   else if(comptaTab==='fec') await renderComptaFEC(el);
-  else if(comptaTab==='import') await renderComptaImport(el);
 }
 function comptaFiltreBar(showCompte){
   const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
@@ -12327,6 +12380,7 @@ async function openChargeManuelle(fid,editId){
   document.getElementById('chargeUnite').value = c ? (c.unite||'') : '';
   document.getElementById('chargePU').value = c ? (c.unitCost||'') : '';
   document.getElementById('chargeMontant').value = c ? (c.montant||'') : '';
+  if(document.getElementById('chargeMode')) document.getElementById('chargeMode').value = c ? (c.mode||'virement') : 'virement';
   openOverlay('ovChargeManuelle');
 }
 window.openChargeManuelle=openChargeManuelle;
@@ -12334,13 +12388,13 @@ window.editCharge=(id)=>openChargeManuelle(null,id);
 window.calcChargeMontant=function(){var q=parseFloat(document.getElementById('chargeQte').value)||0,pu=parseFloat(document.getElementById('chargePU').value)||0;if(q>0&&pu>0) document.getElementById('chargeMontant').value=Math.round(q*pu);};
 window.saveChargeManuelle=async function(){
   var editId=parseInt(document.getElementById('chargeId').value)||null;
-  var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0;
+  var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0,mode=document.getElementById('chargeMode')?.value||'virement';
   if(!date||!montant||!lib){toast('Date, libelle et montant requis','err');return;}
-  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,operatorId:currentUser?.id||1,ts:Date.now()};
+  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,mode:mode,operatorId:currentUser?.id||1,ts:Date.now()};
   var chargeId=editId;
   if(editId) await updRec(S.CHARGES,editId,data);
   else chargeId=await addRec(S.CHARGES,data);
-  // ── Comptabilisation automatique : compte de charge (débit) / 521 Banque (crédit) ──
+  // ── Comptabilisation automatique : compte de charge (débit) / 571 Caisse ou 521 Banque (crédit) ──
   try{
     const compte=COMPTE_PAR_CATEGORIE[cat]||'628';
     await annulerEcritures('CHARGE-'+chargeId);
@@ -12348,7 +12402,7 @@ window.saveChargeManuelle=async function(){
       date, journal:'OD', libelle:lib,
       lignes:[
         {compte, libelle:PLAN_COMPTABLE[compte]?.lbl||lib, debit:Math.round(montant), credit:0},
-        {compte:'521', libelle:'Décaissement', debit:0, credit:Math.round(montant)}
+        {compte:compteTresorerie(mode), libelle:'Décaissement '+mode, debit:0, credit:Math.round(montant)}
       ],
       refSource:'CHARGE-'+chargeId
     });
@@ -12526,6 +12580,10 @@ window.exportFinanceCSV=function(fin){
       <div class="fg">
         <label>Montant total (FCFA)</label>
         <input type="number" id="chargeMontant" placeholder="0" step="1" min="0" style="font-weight:700">
+      </div>
+      <div class="fg">
+        <label>Mode de règlement</label>
+        <select id="chargeMode"><option value="virement">Virement</option><option value="cheque">Chèque</option><option value="especes">Espèces (caisse)</option><option value="mobile_money">Mobile Money</option></select>
       </div>
     </div>
     <div class="modal-footer">
@@ -13957,7 +14015,7 @@ window.savePayerBC=async function(){
       date, journal:'BQ', libelle:'Règlement fournisseur '+bc.ref+' — '+(fourn?.nom||''),
       lignes:[
         {compte:'401', libelle:fourn?.nom||'Fournisseur', debit:Math.round(montant), credit:0, tiersId:bc.fournId, tiersNom:fourn?.nom},
-        {compte:'521', libelle:'Décaissement '+mode, debit:0, credit:Math.round(montant)}
+        {compte:compteTresorerie(mode), libelle:'Décaissement '+mode, debit:0, credit:Math.round(montant)}
       ],
       refSource:'REGLFOURN-'+bcId+'-'+Date.now()
     });
@@ -14118,7 +14176,7 @@ window.saveEncaissement = async function() {
     await passerEcriture({
       date, journal:'BQ', libelle:'Règlement client '+(s.numFacture||s.ref||'')+' — '+(client.nom||''),
       lignes:[
-        {compte:'521', libelle:'Encaissement '+mode, debit:Math.round(montant), credit:0},
+        {compte:compteTresorerie(mode), libelle:'Encaissement '+mode, debit:Math.round(montant), credit:0},
         {compte:'411', libelle:client.nom||'Client', debit:0, credit:Math.round(montant), tiersId:s.clientId, tiersNom:client.nom}
       ],
       refSource:'REGLCLIENT-'+saleId+'-'+Date.now()
