@@ -11628,7 +11628,8 @@ function renderFinBudget(el,fin){
       var fav=b.categorie==='recette'?r>=b.montantBudget:r<=b.montantBudget;
       return '<tr><td>'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+'</td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+'</td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td></tr>';
     }).join('');
-    return '<div class="card" style="margin-bottom:14px"><div class="card-hd">'+(f.lot.type==='layer'?'🥚':'🍗')+' '+esc(f.lot.nom||'Lot')+'</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Categorie</th><th>Budget</th><th>Reel</th><th>Ecart</th><th>% Consomme</th></tr></thead><tbody>'+brows+'</tbody></table></div></div>';
+    var issuSimu = lb.some(function(b){return b.source==='simulation';});
+    return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>'+(f.lot.type==='layer'?'🥚':'🍗')+' '+esc(f.lot.nom||'Lot')+'</span>'+(issuSimu?'<span class="badge b-bl" style="font-size:9px" title="Budget issu du module Simulation Déploiement de Bande"><i class="fas fa-calculator"></i> Simulation</span>':'')+'</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Categorie</th><th>Budget</th><th>Reel</th><th>Ecart</th><th>% Consomme</th></tr></thead><tbody>'+brows+'</tbody></table></div></div>';
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">📋 Budget vs Reel</div><button class="btn btn-p btn-sm" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Budget</button></div>'
     +cards
@@ -19694,6 +19695,12 @@ async function renderSimuBande(ca){
         <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="window.print()"><i class="fas fa-print"></i> Imprimer</button>
       </div>
     </div>
+    <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:10px 14px;margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;opacity:.8">🔗 Lier au budget d'un lot réel</label>
+      <select id="simuLotCible" style="border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;min-width:180px" onchange="simuMajBoutonBudget()"></select>
+      <button class="btn btn-sm" id="simuBtnAppliquerBudget" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="simuAppliquerCommeBudget()" disabled><i class="fas fa-check"></i> Enregistrer comme budget du lot</button>
+      <span id="simuBudgetStatus" style="font-size:11px;opacity:.85"></span>
+    </div>
     <div class="simu-kpi-hero">
       <div class="simu-khero ${result.margeNette>=0?'pos':'neg'}">
         <div class="v">${ff(result.margeNette)} F</div>
@@ -19942,7 +19949,58 @@ async function renderSimuBande(ca){
 
   // Injecter les instances Chart.js pour waterfall
   simuBuildCharts(result, p);
+  window._simuLastResult = result; // conservé pour simuAppliquerCommeBudget()
+  await simuInitLotCible();
 }
+
+// ── Liaison Simulation → Budget d'un lot réel (Finance & Rentabilité) ──
+async function simuInitLotCible(){
+  const sel = document.getElementById('simuLotCible'); if(!sel) return;
+  const lots = (await getAll(S.FLOCKS)).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+  sel.innerHTML = '<option value="">— Choisir un lot —</option>' + lots.map(l=>`<option value="${l.id}">${esc(l.nom)} (${l.type==='layer'?'Pondeuse':'Chair'})</option>`).join('');
+  await simuMajBoutonBudget();
+}
+window.simuMajBoutonBudget = async function(){
+  const sel = document.getElementById('simuLotCible');
+  const btn = document.getElementById('simuBtnAppliquerBudget');
+  const status = document.getElementById('simuBudgetStatus');
+  if(!sel || !btn) return;
+  const flockId = parseInt(sel.value)||null;
+  btn.disabled = !flockId;
+  if(!status) return;
+  if(!flockId){ status.textContent=''; return; }
+  const budgets = (await getAll(S.BUDGET)).filter(b=>b.flockId===flockId && b.source==='simulation');
+  status.textContent = budgets.length ? '✓ Budget simulation déjà enregistré pour ce lot' : 'Aucun budget simulation enregistré pour ce lot';
+};
+window.simuAppliquerCommeBudget = async function(){
+  const sel = document.getElementById('simuLotCible');
+  const flockId = parseInt(sel?.value)||null;
+  if(!flockId){ toast('Choisissez un lot','err'); return; }
+  const result = window._simuLastResult;
+  if(!result){ toast('Aucun résultat de simulation à appliquer','err'); return; }
+  const lots = await getAll(S.FLOCKS); const lot = lots.find(l=>l.id===flockId);
+  if(!confirm(`Enregistrer cette simulation comme budget du lot "${lot?.nom||''}" ?\nRemplace le budget précédemment issu d'une simulation pour ce lot (les charges saisies manuellement dans le module Finance ne sont pas affectées).`)) return;
+
+  const coutAlimentTotal = (result.rows||[]).reduce((a,r)=>a+(r.coutAlimentPhase||0),0);
+  const annee = new Date().getFullYear();
+  const budgetsAAppliquer = [
+    {categorie:'total',    montantBudget: Math.round(result.totalCout)},
+    {categorie:'recette',  montantBudget: Math.round(result.cumRecette)},
+    {categorie:'poussin',  montantBudget: Math.round(result.coutPinit)},
+    {categorie:'aliment',  montantBudget: Math.round(coutAlimentTotal)},
+  ];
+
+  // Retirer les anciennes lignes de budget issues d'une simulation pour ce lot (évite l'accumulation
+  // de doublons si on ré-applique après avoir ajusté les paramètres) — les budgets saisis
+  // manuellement (sans source:'simulation') restent intacts.
+  const existants = (await getAll(S.BUDGET)).filter(b=>b.flockId===flockId && b.source==='simulation');
+  for(const b of existants) await delRec(S.BUDGET, b.id);
+  for(const b of budgetsAAppliquer){
+    await addRec(S.BUDGET, {flockId, annee, mois:null, categorie:b.categorie, montantBudget:b.montantBudget, source:'simulation', ts:Date.now()});
+  }
+  toast('✅ Budget du lot "'+(lot?.nom||'')+'" mis à jour depuis la simulation');
+  await simuMajBoutonBudget();
+};
 
 /* ─── Ligne de phase tableau ─── */
 function simuPhaseRow(r, i){
