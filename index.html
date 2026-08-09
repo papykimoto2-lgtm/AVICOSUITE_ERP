@@ -1597,6 +1597,30 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   </div>
 </div></div>
 
+<!-- RÉSERVATION MODAL (création ET modification) -->
+<div class="overlay" id="mResa">
+<div class="modal modal-lg">
+  <h3 id="mResaTitle">Nouvelle réservation</h3>
+  <input type="hidden" id="resaId">
+  <div class="form-grid" style="margin-bottom:14px">
+    <div class="fg"><label>Client *</label><select id="resaClient"></select></div>
+    <div class="fg"><label>Date réservation</label><input id="resaDate" type="date"></div>
+    <div class="fg"><label>Valable jusqu'au *</label><input id="resaDateExp" type="date"></div>
+    <div class="fg"><label>Référence</label><input id="resaRef"></div>
+    <div class="fg fg-full"><label>Notes</label><textarea id="resaNotes" placeholder="Occasion, précisions…"></textarea></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <span style="font-weight:700;font-size:13px">Produits réservés</span>
+    <button class="btn btn-sm btn-gh" onclick="addResaLine()"><i class="fas fa-plus"></i> Ligne</button>
+  </div>
+  <div id="resaLinesDiv"></div>
+  <div style="text-align:right;font-weight:700;font-size:14px;margin-top:10px" id="resaTotalDiv">Total estimé : 0 FCFA</div>
+  <div class="modal-footer">
+    <button class="btn btn-s" onclick="closeOverlay('mResa')">Annuler</button>
+    <button class="btn btn-p" onclick="saveReservation()"><i class="fas fa-save"></i> Enregistrer</button>
+  </div>
+</div></div>
+
 <!-- RÉCEPTION MODAL (création ET modification — le mode est piloté par recEditId) -->
 <div class="overlay" id="mRec">
 <div class="modal modal-lg">
@@ -2253,7 +2277,8 @@ const S={
   COUVOIR_MIRAGE:'couvoir_mirage',   // Résultats de mirage (J7/J14/J18)
   COUVOIR_ECLOSION:'couvoir_eclosion',// Résultats d'éclosion
   INVENTAIRES:'inventaires_stock',   // Sessions d'inventaire physique (théorique/compté/écarts)
-  PAIE:'paie_bulletins'              // Bulletins de paie mensuels (RH)
+  PAIE:'paie_bulletins',             // Bulletins de paie mensuels (RH)
+  RESERVATIONS:'reservations'        // Réservations produits (stock futur avant commande ferme)
 };
 
 const STORES_DEF=[
@@ -2293,7 +2318,8 @@ const STORES_DEF=[
   [S.COUVOIR_MIRAGE,'incubId'],
   [S.COUVOIR_ECLOSION,'incubId'],
   [S.INVENTAIRES,'depotId'],
-  [S.PAIE,'staffId']
+  [S.PAIE,'staffId'],
+  [S.RESERVATIONS,'clientId']
 ];
 
 // ════════════════════════════════════════════════════════
@@ -7065,6 +7091,11 @@ async function renderStocks(ca){
     return{dep:d,depQ,depVal,pct};
   });
   const topAlertes=[...critiques,...faibles].sort((a,b)=>(stockTot[a.id]||0)-(stockTot[b.id]||0)).slice(0,8).map(p=>({p,q:stockTot[p.id]||0}));
+  // Stock retenu par des réservations actives (produits/œufs promis à un client, pas encore
+  // commande ferme) — à garder à l'œil pour ne pas survendre ce qui est déjà réservé.
+  const reserveParProduit = await getReserveParProduit();
+  const valeurReservee = prods.reduce((a,p)=>a+(reserveParProduit[p.id]||0)*(p.prix||0),0);
+  const nbProduitsReserves = Object.keys(reserveParProduit).length;
 
   const dashHtml=`
     <div class="g4">
@@ -7078,6 +7109,7 @@ async function renderStocks(ca){
       <div class="kpi kpi-r"><div class="kpi-lbl">📤 Sorties (30j)</div><div class="kpi-val">${Math.round(valSorties30/1000)}K</div><div class="kpi-sub">FCFA</div></div>
       <div class="kpi kpi-g"><div class="kpi-lbl">🔄 Rotation stock</div><div class="kpi-val">${valeurTotale>0?(valSorties30/valeurTotale).toFixed(2):'0'}</div><div class="kpi-sub">Sorties 30j / valeur stock</div></div>
       <div class="kpi kpi-g"><div class="kpi-lbl">📋 Mouvements (30j)</div><div class="kpi-val">${mvts30.length}</div><div class="kpi-sub"><a href="#" onclick="goStockSub('mvts');return false" style="color:var(--g2)">Voir le journal →</a></div></div>
+      <div class="kpi ${valeurReservee>0?'kpi-a':''}"><div class="kpi-lbl">🔖 Réservé (non commandé)</div><div class="kpi-val" style="font-size:14px">${Math.round(valeurReservee/1000)}K F</div><div class="kpi-sub">${nbProduitsReserves} produit(s) · <a href="#" onclick="goDistSub('reservations');return false" style="color:var(--amber-d)">Voir →</a></div></div>
     </div>
     ${topAlertes.length?`<div class="card" style="border:1.5px solid #fcd34d">
       <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Articles à surveiller (${critiques.length+faibles.length})</span></div>
@@ -8516,7 +8548,9 @@ async function renderDistributionModule(ca){
   if(!canAccessPage('distribution')){ ca.innerHTML='<div class="page-header"><div class="page-header-title">Distribution</div></div><div class="stock-page"><div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Accès non autorisé.</div></div></div>'; return; }
   const allTabs=[
     {id:'clients',   icon:'fa-user-tie',        label:'Clients'},
+    {id:'reservations', icon:'fa-clock',        label:'Réservations'},
     {id:'commandes', icon:'fa-shopping-cart',   label:'Commandes'},
+    {id:'livraison', icon:'fa-truck',           label:'Livraison'},
     {id:'creances',  icon:'fa-hourglass-half',  label:'Créances'},
   ];
   if(!allTabs.some(t=>t.id===distTab)) distTab=allTabs[0].id;
@@ -8537,12 +8571,292 @@ window.switchDistTab=async function(t){
 async function renderDistTab(){
   const el=distCA();if(!el) return;
   if(distTab==='clients') await renderClients(el);
+  else if(distTab==='reservations') await renderReservations(el);
   else if(distTab==='commandes') await renderCommandes(el);
+  else if(distTab==='livraison') await renderLivraisonDistribution(el);
   else if(distTab==='creances') await renderCreances(el);
 }
 // Sous-navigation depuis n'importe où (KPI, dashboard, relances…)
 function goDistSub(id){ if(document.getElementById('distTabContent')) switchDistTab(id); else{ distTab=id; goTo('distribution'); } }
 window.goDistSub=goDistSub;
+
+// ══ RÉSERVATIONS — stock futur avant commande ferme ══
+const RESA_STATUT_LABEL={active:'Active',convertie:'Convertie',annulee:'Annulée',expiree:'Expirée'};
+const RESA_STATUT_CSS={active:'b-bl',convertie:'b-g',annulee:'b-gr',expiree:'b-a'};
+// Statut effectif : une réservation active dont la date de validité est dépassée est
+// considérée expirée à l'affichage, sans qu'il soit nécessaire de la modifier en base
+// (recalculé à chaque lecture — pas de tâche planifiée nécessaire).
+function statutEffectifResa(r){
+  if(r.statut==='active' && r.dateExpiration && r.dateExpiration < new Date().toISOString().slice(0,10)) return 'expiree';
+  return r.statut;
+}
+// Quantité réservée par produit, toutes réservations actives (non expirées) confondues —
+// à soustraire du stock disponible pour ne pas survendre ce qui est déjà retenu pour un client.
+async function getReserveParProduit(){
+  const resas = await getAll(S.RESERVATIONS);
+  const parProduit = {};
+  for(const r of resas){
+    if(statutEffectifResa(r)!=='active') continue;
+    for(const l of (r.lignes||[])) parProduit[l.produitId]=(parProduit[l.produitId]||0)+(l.qte||0);
+  }
+  return parProduit;
+}
+window.getReserveParProduit = getReserveParProduit;
+
+async function renderReservations(ca){
+  const[resas,clients,prods]=await Promise.all([getAll(S.RESERVATIONS),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
+  const enrichies = resas.map(r=>({...r, statutEff:statutEffectifResa(r)}));
+  const actives = enrichies.filter(r=>r.statutEff==='active');
+  const valeurActive = actives.reduce((a,r)=>a+(r.lignes||[]).reduce((s,l)=>s+l.qte*(l.prixUnit||0),0),0);
+  const expirentBientot = actives.filter(r=>r.dateExpiration && r.dateExpiration<=new Date(Date.now()+3*86400000).toISOString().slice(0,10));
+  const sorted = enrichies.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.ts||0)-(a.ts||0));
+  const rows = sorted.map(r=>{
+    const c=clients.find(x=>x.id===r.clientId);
+    const total=(r.lignes||[]).reduce((s,l)=>s+l.qte*(l.prixUnit||0),0);
+    const lignesTxt=(r.lignes||[]).map(l=>`${l.designation} ×${l.qte}`).join(', ');
+    const bientot = r.statutEff==='active' && r.dateExpiration && r.dateExpiration<=new Date(Date.now()+3*86400000).toISOString().slice(0,10);
+    return `<tr>
+      <td><strong>${esc(r.ref||'—')}</strong><div style="font-size:10px;color:var(--text3)">${r.date||'—'}</div></td>
+      <td>${esc(c?c.nom:'—')}</td>
+      <td style="font-size:11px;color:var(--text3);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(lignesTxt)}">${esc(lignesTxt)||'—'}</td>
+      <td style="font-weight:700">${Math.round(total).toLocaleString('fr-FR')} F</td>
+      <td>${r.dateExpiration||'—'}${bientot?' <span class="badge b-a" style="font-size:9px">⏰ bientôt</span>':''}</td>
+      <td><span class="badge ${RESA_STATUT_CSS[r.statutEff]}">${RESA_STATUT_LABEL[r.statutEff]}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-xs btn-gh" onclick="apercuReservation(${r.id})" title="Aperçu"><i class="fas fa-eye"></i></button>
+        <button class="btn btn-xs btn-gh" onclick="imprimerReservation(${r.id})" title="Imprimer"><i class="fas fa-print"></i></button>
+        ${r.statutEff==='active'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier"><i class="fas fa-pen"></i></button>
+        <button class="btn btn-xs" style="background:#dcfce7;color:#166534" onclick="convertirReservationEnCommande(${r.id})" title="Convertir en commande ferme"><i class="fas fa-right-left"></i></button>
+        <button class="btn-del" onclick="annulerReservation(${r.id})" title="Annuler"><i class="fas fa-ban"></i></button>`:''}
+      </td>
+    </tr>`;
+  }).join('');
+  ca.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div class="g4" style="flex:1;min-width:280px">
+      <div class="kpi kpi-bl"><div class="kpi-lbl">Réservations actives</div><div class="kpi-val">${actives.length}</div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">Valeur retenue</div><div class="kpi-val" style="font-size:14px">${Math.round(valeurActive).toLocaleString('fr-FR')} F</div></div>
+      <div class="kpi ${expirentBientot.length?'kpi-a':''}"><div class="kpi-lbl">Expirent sous 3j</div><div class="kpi-val">${expirentBientot.length}</div></div>
+      <div class="kpi"><div class="kpi-lbl">Total historique</div><div class="kpi-val">${resas.length}</div></div>
+    </div>
+    <button class="btn btn-p btn-sm" onclick="openReservationModal()"><i class="fas fa-plus"></i> Nouvelle réservation</button>
+  </div>
+  <div class="card"><div class="card-hd">Réservations (${sorted.length})</div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>Réf./Date</th><th>Client</th><th>Produits</th><th>Valeur estimée</th><th>Valable jusqu'au</th><th>Statut</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucune réservation</td></tr>'}</tbody></table></div></div>`;
+}
+window.renderReservations = renderReservations;
+
+let resaLines=[];
+window.addResaLine = async function(presetProdId,presetQte,presetPrix){
+  const allProds = await getAll(S.PRODUITS);
+  // Une réservation porte sur des produits finis vendables (œufs conditionnés, volailles) —
+  // même filtre que les commandes.
+  const prods = allProds.filter(p=>p.stade==='produit_fini');
+  const prodsList = prods.length?prods:allProds;
+  const defProd = presetProdId?(prodsList.find(p=>p.id===presetProdId)||prodsList[0]):prodsList[0];
+  const idx = resaLines.length;
+  const qte = presetQte!=null?presetQte:0;
+  const prix = presetPrix!=null?presetPrix:(defProd?.prix||0);
+  resaLines.push({produitId:defProd?.id,qte,prixUnit:prix});
+  const div=document.createElement('div');div.id='resaL'+idx;div.style.cssText='display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)';
+  div.innerHTML=`<select onchange="resaUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" ${p.id===defProd?.id?'selected':''}>${p.nom}</option>`).join('')}</select><input type="number" placeholder="Qté" value="${qte||''}" onchange="resaUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix estimé" onchange="resaUpd(${idx},'px',this)" value="${prix}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="resaT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">${Math.round(qte*prix).toLocaleString()} F</div><button onclick="rmResaLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
+  document.getElementById('resaLinesDiv').appendChild(div);
+  const grand=resaLines.reduce((a,l)=>a+(l.removed?0:l.qte*(l.prixUnit||0)),0);
+  document.getElementById('resaTotalDiv').textContent='Total estimé : '+Math.round(grand).toLocaleString()+' FCFA';
+};
+window.resaUpd = function(i,f,el){
+  if(f==='p'){const o=el.options[el.selectedIndex];resaLines[i].produitId=parseInt(el.value);resaLines[i].prixUnit=parseFloat(o.dataset.px)||0;const pi=document.getElementById('resaL'+i)?.querySelectorAll('input')[1];if(pi) pi.value=resaLines[i].prixUnit;}
+  else if(f==='q') resaLines[i].qte=parseFloat(el.value)||0;
+  else resaLines[i].prixUnit=parseFloat(el.value)||0;
+  const t=resaLines[i].qte*(resaLines[i].prixUnit||0);const te=document.getElementById('resaT'+i);if(te) te.textContent=Math.round(t).toLocaleString()+' F';
+  const grand=resaLines.reduce((a,l)=>a+(l.removed?0:l.qte*(l.prixUnit||0)),0);
+  document.getElementById('resaTotalDiv').textContent='Total estimé : '+Math.round(grand).toLocaleString()+' FCFA';
+};
+window.rmResaLine = function(i){ const el=document.getElementById('resaL'+i); if(el) el.remove(); resaLines[i]={removed:true}; };
+
+window.openReservationModal = async function(id=null){
+  const[clients]=await Promise.all([getAll(S.CLIENTS)]);
+  resaLines=[];
+  let r=null;
+  if(id){
+    const resas=await getAll(S.RESERVATIONS); r=resas.find(x=>x.id===id);
+    if(!r){toast('Réservation introuvable','err');return;}
+    if(statutEffectifResa(r)!=='active'){toast('⛔ Seule une réservation active peut être modifiée.','err');return;}
+  }
+  document.getElementById('resaId').value=id||'';
+  document.getElementById('mResaTitle').textContent=id?'Modifier la réservation':'Nouvelle réservation';
+  document.getElementById('resaClient').innerHTML=clients.map(c=>`<option value="${c.id}" ${c.id===(r?r.clientId:null)?'selected':''}>${esc(c.nom)}</option>`).join('');
+  document.getElementById('resaDate').value=r?r.date:new Date().toISOString().slice(0,10);
+  document.getElementById('resaDateExp').value=r?r.dateExpiration:new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+  document.getElementById('resaRef').value=r?r.ref:('RESA-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4));
+  document.getElementById('resaNotes').value=r?(r.notes||''):'';
+  document.getElementById('resaLinesDiv').innerHTML='';
+  if(r && r.lignes && r.lignes.length){ for(const l of r.lignes) await addResaLine(l.produitId,l.qte,l.prixUnit); }
+  else { document.getElementById('resaTotalDiv').textContent='Total estimé : 0 FCFA'; addResaLine(); }
+  openOverlay('mResa');
+};
+window.saveReservation = async function(){
+  const id=document.getElementById('resaId').value;
+  const clientId=parseInt(document.getElementById('resaClient').value);
+  const date=document.getElementById('resaDate').value;
+  const dateExpiration=document.getElementById('resaDateExp').value;
+  const ref=document.getElementById('resaRef').value.trim();
+  const notes=document.getElementById('resaNotes').value.trim();
+  if(!clientId){toast('Client requis','err');return;}
+  if(!dateExpiration){toast('Date de validité requise','err');return;}
+  const prods=await getAll(S.PRODUITS);
+  const lignes=resaLines.filter(l=>!l.removed&&l.qte>0).map(l=>{const p=prods.find(x=>x.id===l.produitId);return{produitId:l.produitId,designation:p?.nom||'',qte:l.qte,unite:p?.unite||'',prixUnit:l.prixUnit};});
+  if(!lignes.length){toast('Ajoutez au moins une ligne','err');return;}
+  if(id){
+    const resas=await getAll(S.RESERVATIONS);const existing=resas.find(x=>x.id===parseInt(id));
+    await updRec(S.RESERVATIONS,parseInt(id),{...existing,clientId,date,dateExpiration,ref,notes,lignes});
+    toast('✓ Réservation modifiée');
+  } else {
+    await addRec(S.RESERVATIONS,{clientId,date,dateExpiration,ref,notes,lignes,statut:'active',operatorId:currentUser?.id||1,ts:Date.now()});
+    toast('✓ Réservation enregistrée');
+  }
+  closeOverlay('mResa');await renderReservations(distCA());
+};
+window.annulerReservation = async function(id){
+  if(!confirm('Annuler cette réservation ? Le stock retenu sera libéré.')) return;
+  const resas=await getAll(S.RESERVATIONS);const r=resas.find(x=>x.id===id);if(!r) return;
+  await updRec(S.RESERVATIONS,id,{...r,statut:'annulee'});
+  toast('Réservation annulée — stock libéré');await renderReservations(distCA());
+};
+// Transforme la réservation en commande ferme (statut 'pending', comme toute nouvelle commande) —
+// la réservation est marquée convertie et référence la commande créée, pour traçabilité.
+window.convertirReservationEnCommande = async function(id){
+  const resas=await getAll(S.RESERVATIONS);const r=resas.find(x=>x.id===id);if(!r){toast('Réservation introuvable','err');return;}
+  if(statutEffectifResa(r)!=='active'){toast('⛔ Réservation non active — conversion impossible','err');return;}
+  if(!confirm('Convertir cette réservation en commande ferme ?')) return;
+  const ref='CMD-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4);
+  const saleId=await addRec(S.SALES,{
+    clientId:r.clientId, ref, date:new Date().toISOString().slice(0,10),
+    lignes:r.lignes.map(l=>({...l})), statut:'pending', totalHT:(r.lignes||[]).reduce((a,l)=>a+l.qte*(l.prixUnit||0),0),
+    notes:'Issue de la réservation '+(r.ref||''), ts:Date.now()
+  });
+  await updRec(S.RESERVATIONS,id,{...r,statut:'convertie',commandeId:saleId,commandeRef:ref});
+  toast('✅ Commande '+ref+' créée à partir de la réservation');
+  await render();
+};
+
+async function buildReservationHtml(id){
+  const[resas,clients,cfg]=await Promise.all([getAll(S.RESERVATIONS),getAll(S.CLIENTS),getExploitationSettings()]);
+  const r=resas.find(x=>x.id===id); if(!r) return null;
+  const c=clients.find(x=>x.id===r.clientId)||{};
+  const statutEff=statutEffectifResa(r);
+  const total=(r.lignes||[]).reduce((a,l)=>a+l.qte*(l.prixUnit||0),0);
+  const rows=(r.lignes||[]).map(l=>`<tr><td>${esc(l.designation)}</td><td style="text-align:right">${l.qte} ${esc(l.unite||'')}</td><td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.qte*(l.prixUnit||0)).toLocaleString('fr-FR')}</td></tr>`).join('');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.ref||'')}</title><style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:20px}
+    .doc{max-width:700px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    .statut{display:inline-block;padding:3px 10px;border-radius:5px;font-weight:700;font-size:11px;margin-top:4px}
+    table{width:100%;border-collapse:collapse;margin:10px 0}
+    td,th{padding:6px 10px;border:1px solid #e5e7eb;font-size:12px;text-align:left}
+    th{background:#f3f4f6}
+    tfoot td{font-weight:800;background:#f9fafb}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr">${buildEmetteurHeader(cfg)}
+      <div style="text-align:right"><div class="doc-type">BON DE RÉSERVATION</div><div style="font-size:11px;color:#888">${esc(r.ref||'')}</div>
+      <span class="statut" style="background:${statutEff==='active'?'#dbeafe':statutEff==='convertie'?'#d8f3dc':'#fee2e2'};color:${statutEff==='active'?'#1e40af':statutEff==='convertie'?'#166534':'#991b1b'}">${RESA_STATUT_LABEL[statutEff]}</span></div></div>
+    <table><tr><th>Client</th><td>${esc(c.nom||'—')}</td><th>Téléphone</th><td>${esc(c.tel||'—')}</td></tr>
+    <tr><th>Date réservation</th><td>${r.date||'—'}</td><th>Valable jusqu'au</th><td><strong>${r.dateExpiration||'—'}</strong></td></tr></table>
+    <table><thead><tr><th>Produit</th><th style="text-align:right">Quantité</th><th style="text-align:right">Prix estimé</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="4" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="3">TOTAL ESTIMÉ</td><td style="text-align:right">${Math.round(total).toLocaleString('fr-FR')} FCFA</td></tr></tfoot></table>
+    ${r.notes?`<p style="font-size:11px;color:#555"><strong>Notes :</strong> ${esc(r.notes)}</p>`:''}
+    <p style="font-size:10px;color:#888;margin-top:10px">Réservation à titre indicatif — les prix et disponibilités seront confirmés à la commande ferme.</p>
+  </div></body></html>`;
+}
+window.apercuReservation = async function(id){ const html=await buildReservationHtml(id); if(!html){toast('Introuvable','err');return;} const w=window.open('','_blank','width=800,height=750'); if(!w){toast('Autoriser les pop-ups','err');return;} w.document.write(html);w.document.close(); };
+window.imprimerReservation = window.apercuReservation;
+
+// ══ LIVRAISON — tableau de bord + historique d'enlèvement (Distribution) ══
+let livrDistDateMin=null, livrDistDateMax=null, livrDistVue='flat';
+async function renderLivraisonDistribution(el){
+  const[sales,clients]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS)]);
+  const dateMin = livrDistDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = livrDistDateMax || new Date().toISOString().slice(0,10);
+  const livrees = sales.filter(s=>s.dateLiv && s.dateLiv>=dateMin && s.dateLiv<=dateMax)
+    .sort((a,b)=>(b.dateLiv||'').localeCompare(a.dateLiv||'')||(b.ts||0)-(a.ts||0));
+
+  // ── KPI période ──
+  const nbLivraisons = livrees.length;
+  const valeurLivree = livrees.reduce((a,s)=>a+(s.totalHT||0),0);
+  const delais = livrees.filter(s=>s.date && s.dateLiv).map(s=>Math.max(0,Math.round((new Date(s.dateLiv)-new Date(s.date))/86400000)));
+  const delaiMoyen = delais.length ? (delais.reduce((a,d)=>a+d,0)/delais.length).toFixed(1) : '—';
+  const tourneesDistinctes = new Set(livrees.filter(s=>s.tourneeRef).map(s=>s.tourneeRef));
+  const clientsDistincts = new Set(livrees.map(s=>s.clientId)).size;
+
+  // ── Vue par tournée (regroupée) ou liste plate ──
+  let corpsHtml;
+  if(livrDistVue==='tournee' && tourneesDistinctes.size){
+    const parTournee={};
+    livrees.forEach(s=>{
+      const key=s.tourneeRef||('SOLO-'+s.id);
+      if(!parTournee[key]) parTournee[key]={ref:s.tourneeRef,date:s.dateLiv,ventes:[],valeur:0};
+      parTournee[key].ventes.push(s); parTournee[key].valeur+=(s.totalHT||0);
+    });
+    const groupes=Object.values(parTournee).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    corpsHtml=groupes.map(g=>{
+      const lignes=g.ventes.map(s=>{const c=clients.find(x=>x.id===s.clientId);return `<tr><td style="padding-left:24px;font-size:11px">${esc(s.ref||'')}</td><td style="font-size:11px">${esc(c?c.nom:'—')}</td><td style="font-size:11px;text-align:right">${(s.totalHT||0).toLocaleString('fr-FR')} F</td><td style="font-size:11px"><button class="btn btn-xs btn-gh" onclick="printBL(${s.id})"><i class="fas fa-file-alt"></i></button></td></tr>`;}).join('');
+      return `<tr style="background:#f0fdf4"><td colspan="2"><strong>${g.ref?'🚚 '+esc(g.ref):'Livraison individuelle'}</strong> — ${g.date||'—'}</td><td style="text-align:right;font-weight:700">${Math.round(g.valeur).toLocaleString('fr-FR')} F</td><td>${g.ref?`<button class="btn btn-xs btn-p" onclick="imprimerFeuilleTournee('${esc(g.ref)}')" title="Feuille de tournée"><i class="fas fa-print"></i></button>`:''}</td></tr>${lignes}`;
+    }).join('');
+  } else {
+    corpsHtml = livrees.map(s=>{
+      const c=clients.find(x=>x.id===s.clientId);
+      const delai = (s.date&&s.dateLiv)?Math.max(0,Math.round((new Date(s.dateLiv)-new Date(s.date))/86400000)):'—';
+      return `<tr>
+        <td>${s.dateLiv||'—'}</td>
+        <td><strong>${esc(s.ref||'—')}</strong>${s.tourneeRef?`<div style="font-size:9px;color:var(--g2);cursor:pointer" onclick="imprimerFeuilleTournee('${esc(s.tourneeRef)}')"><i class="fas fa-truck-ramp-box"></i> ${esc(s.tourneeRef)}</div>`:''}</td>
+        <td>${esc(c?c.nom:'—')}</td>
+        <td style="font-size:11px;color:var(--text3)">${(s.lignes||[]).length} article(s)</td>
+        <td style="text-align:right">${delai}j</td>
+        <td style="text-align:right;font-weight:700">${(s.totalHT||0).toLocaleString('fr-FR')} F</td>
+        <td><span class="badge ${s.statut==='paid'?'b-g':s.statut==='invoiced'?'b-bl':'b-a'}" style="font-size:9px">${s.statut==='paid'?'Payée':s.statut==='invoiced'?'Facturée':'Livrée'}</span></td>
+        <td><button class="btn btn-xs btn-gh" onclick="printBL(${s.id})" title="Réimprimer BL"><i class="fas fa-file-alt"></i></button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:14px"><div class="card-bd" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+      <div class="fg" style="margin:0"><label style="font-size:11px">Du</label><input type="date" id="livrDistDateMin" value="${dateMin}" onchange="majFiltreLivraisonDist()"></div>
+      <div class="fg" style="margin:0"><label style="font-size:11px">Au</label><input type="date" id="livrDistDateMax" value="${dateMax}" onchange="majFiltreLivraisonDist()"></div>
+      <div class="tab-nav" style="margin:0">
+        <button class="tab-btn ${livrDistVue==='flat'?'on':''}" onclick="switchVueLivraisonDist('flat')">Liste</button>
+        <button class="tab-btn ${livrDistVue==='tournee'?'on':''}" onclick="switchVueLivraisonDist('tournee')">Par tournée</button>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn btn-gh btn-sm" onclick="goStockSub('livr')"><i class="fas fa-clipboard-list"></i> Traiter des commandes</button>
+    </div></div>
+
+    <div class="g4" style="margin-bottom:14px">
+      <div class="kpi kpi-b"><div class="kpi-lbl">Livraisons période</div><div class="kpi-val">${nbLivraisons}</div><div class="kpi-sub">${clientsDistincts} client(s)</div></div>
+      <div class="kpi kpi-g"><div class="kpi-lbl">Valeur livrée</div><div class="kpi-val" style="font-size:15px">${Math.round(valeurLivree/1000)}K F</div></div>
+      <div class="kpi"><div class="kpi-lbl">Délai moyen</div><div class="kpi-val">${delaiMoyen}${delaiMoyen!=='—'?' j':''}</div><div class="kpi-sub">commande → livraison</div></div>
+      <div class="kpi kpi-bl"><div class="kpi-lbl">Tournées groupées</div><div class="kpi-val">${tourneesDistinctes.size}</div></div>
+    </div>
+
+    <div class="card"><div class="card-hd">📜 Historique d'enlèvement (${nbLivraisons})</div><div class="card-bd tbl-wrap">
+      <table class="tbl"><thead><tr><th>Date livr.</th><th>Réf.</th><th>Client</th><th>Contenu</th><th style="text-align:right">Délai</th><th style="text-align:right">Valeur</th><th>Statut</th><th></th></tr></thead>
+      <tbody>${corpsHtml||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:24px">Aucun enlèvement sur cette période</td></tr>'}</tbody></table>
+    </div></div>`;
+}
+window.renderLivraisonDistribution = renderLivraisonDistribution;
+window.majFiltreLivraisonDist = function(){
+  livrDistDateMin = document.getElementById('livrDistDateMin')?.value || null;
+  livrDistDateMax = document.getElementById('livrDistDateMax')?.value || null;
+  renderLivraisonDistribution(distCA());
+};
+window.switchVueLivraisonDist = function(v){ livrDistVue=v; renderLivraisonDistribution(distCA()); };
 
 async function renderClients(ca){
   const[clients,sales]=await Promise.all([getAll(S.CLIENTS),getAll(S.SALES)]);
