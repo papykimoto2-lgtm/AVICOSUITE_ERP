@@ -1665,7 +1665,8 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     &nbsp;|&nbsp; <strong>Calibres :</strong> Petit &lt;53g · Moyen 53-63g · Gros 63-73g · TG 73g+
   </div>
   <div class="form-grid" style="margin-bottom:14px">
-    <div class="fg fg-full"><label>🐔 Lot (pondeuses) *</label><select id="condLot" onchange="onCondLotChange()"></select></div>
+    <div class="fg fg-full"><label>🐔 Lot (pondeuses) *</label><select id="condLot" onchange="onCondLotChange();afficherResteCondLot()"></select></div>
+    <div class="fg fg-full" id="condResteBox" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e"></div>
     <div class="fg"><label>Date *</label><input id="condDate" type="date"></div>
     <div class="fg"><label>🥚 Œufs pondus / collectés aujourd'hui *</label><input id="condBruts" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
     <div class="fg"><label>Œufs cassés / non conformes</label><input id="condCasses" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
@@ -8631,6 +8632,7 @@ async function openCondModal(flockId){
     `📦 Conditionnement — Stocks disponibles : <span style="color:var(--g2)">${Math.round(qBruts)} œufs bruts</span> · <span style="color:var(--blue)">${Math.round(qAlv)} alvéoles</span>`;
 
   calcCond();
+  afficherResteCondLot();
   openOverlay('mCond');
 }
 window.openCondModal = openCondModal;
@@ -8698,11 +8700,17 @@ async function saveCond(){
 
   var nets = Math.max(0, bruts - casses);
   var plateaux = Math.floor(nets / 30);
-  var cartons = Math.floor(plateaux / 12);
-  var pltRestants = plateaux % 12;
-
   if(plateaux === 0){ toast('Pas assez d’oeufs pour un plateau (min. 30)', 'err'); return; }
   if(sommeCal > nets){ toast('Erreur: total calibres ('+sommeCal+') superieur aux oeufs nets ('+nets+')','err'); return; }
+
+  // ── Report du reste de la collecte précédente du même lot ──
+  // Un déficit (ex: 9 plateaux, pas assez pour un carton complet) ne reste plus bloqué :
+  // il se combine avec les plateaux de cette session pour former de nouveaux cartons.
+  var reste = await getResteEnAttente(flockId, editId);
+  var pltCumule = plateaux + reste.global;
+  var cartons = Math.floor(pltCumule / 12);
+  var pltRestantsApres = pltCumule % 12;
+  var pltRestants = plateaux % 12; // reste propre à CETTE session (affichage/traçabilité)
 
   // Si calibres partiellement remplis, completer par Moyen
   if(sommeCal > 0 && sommeCal < nets){ cMoyen += (nets - sommeCal); }
@@ -8712,10 +8720,19 @@ async function saveCond(){
   var pltMoyen    = Math.floor(cMoyen/30);
   var pltGros     = Math.floor(cGros/30);
   var pltTresGros = Math.floor(cTresGros/30);
-  var carPetit    = Math.floor(pltPetit/12);
-  var carMoyen    = Math.floor(pltMoyen/12);
-  var carGros     = Math.floor(pltGros/12);
-  var carTresGros = Math.floor(pltTresGros/12);
+  // Report du reste précédent, par calibre — un carton ne mélange jamais deux calibres.
+  var pltPetitCumule    = pltPetit    + reste.petit;
+  var pltMoyenCumule    = pltMoyen    + reste.moyen;
+  var pltGrosCumule     = pltGros     + reste.gros;
+  var pltTresGrosCumule = pltTresGros + reste.tresGros;
+  var carPetit    = Math.floor(pltPetitCumule/12);
+  var carMoyen    = Math.floor(pltMoyenCumule/12);
+  var carGros     = Math.floor(pltGrosCumule/12);
+  var carTresGros = Math.floor(pltTresGrosCumule/12);
+  var pltResteApres_petit    = pltPetitCumule    % 12;
+  var pltResteApres_moyen    = pltMoyenCumule    % 12;
+  var pltResteApres_gros     = pltGrosCumule     % 12;
+  var pltResteApres_tresGros = pltTresGrosCumule % 12;
 
   var prods = await getAll(S.PRODUITS);
   var pBruts = findCondProduit(prods,'bruts');
@@ -8752,10 +8769,13 @@ async function saveCond(){
   await addRec(S.COND, {
     flockId:flockId, date:date, oeufs_bruts: bruts, oeufs_casses: casses,
     oeufs_nets: nets, plateaux:plateaux, cartons:cartons, plt_restants: pltRestants,
+    plt_restants_apres: pltRestantsApres,
     depotSrcId:depotSrcId, depotDestId:depotDestId, operatorId: opId, notes:notes, ref:ref, ts:ts, bomId:bomId,
     cal_petit:cPetit, cal_moyen:cMoyen, cal_gros:cGros, cal_tres_gros:cTresGros,
     plt_petit:pltPetit, plt_moyen:pltMoyen, plt_gros:pltGros, plt_tres_gros:pltTresGros,
-    car_petit:carPetit, car_moyen:carMoyen, car_gros:carGros, car_tres_gros:carTresGros
+    car_petit:carPetit, car_moyen:carMoyen, car_gros:carGros, car_tres_gros:carTresGros,
+    pltReste_petit:pltResteApres_petit, pltReste_moyen:pltResteApres_moyen,
+    pltReste_gros:pltResteApres_gros, pltReste_tresGros:pltResteApres_tresGros
   });
 
   // Mouvements de stock automatiques
@@ -8893,6 +8913,39 @@ window.saveCond = saveCond;
 // Annule les mouvements de stock et la ponte du jour générés par une session de
 // conditionnement, sans supprimer la session elle-même (utilisé par delCond et,
 // en amont d'une réécriture, par saveCond en mode édition).
+// ── Reste plateaux en attente de carton pour un lot — reporté de la session la plus
+// récente vers la suivante. Sans ce report, un déficit (ex: 9 plateaux, pas assez pour
+// un carton) restait bloqué indéfiniment au lieu d'être complété par l'excédent de la
+// collecte suivante du même lot.
+async function getResteEnAttente(flockId, excludeId){
+  if(!flockId) return {global:0, petit:0, moyen:0, gros:0, tresGros:0};
+  const sessions = (await getAll(S.COND))
+    .filter(s=>s.flockId===flockId && s.id!==excludeId)
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.ts||0)-(a.ts||0)));
+  const last = sessions[0];
+  if(!last) return {global:0, petit:0, moyen:0, gros:0, tresGros:0};
+  return {
+    global:  last.plt_restants_apres  ?? last.plt_restants  ?? 0,
+    petit:   last.pltReste_petit      ?? 0,
+    moyen:   last.pltReste_moyen      ?? 0,
+    gros:    last.pltReste_gros       ?? 0,
+    tresGros:last.pltReste_tresGros   ?? 0,
+  };
+}
+window.getResteEnAttente = getResteEnAttente;
+// Affiche le reste en attente dans l'aperçu du formulaire dès qu'un lot est sélectionné.
+window.afficherResteCondLot = async function(){
+  const flockId = parseInt(document.getElementById('condLot')?.value)||null;
+  const box = document.getElementById('condResteBox');
+  if(!box) return;
+  if(!flockId){ box.style.display='none'; return; }
+  const r = await getResteEnAttente(flockId, parseInt(document.getElementById('condEditId')?.value)||null);
+  const total = r.global + r.petit + r.moyen + r.gros + r.tresGros;
+  if(total<=0){ box.style.display='none'; return; }
+  box.style.display='block';
+  box.innerHTML = `⏳ <strong>${total} plateau(x)</strong> en attente de la collecte précédente de ce lot — seront complétés automatiquement en carton avec cette session si l'appoint suffit.`;
+};
+
 async function reverseCondSession(s){
   if(s.ref){
     const mvtsADel = (await getAll(S.MVTS)).filter(m => m.ref === s.ref);
