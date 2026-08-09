@@ -889,7 +889,24 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   .msg-chat{min-height:380px}
   .msg-bubble{max-width:85%}
   .msg-info-panel{display:none}
-}
+/* ── États périodiques : affichage inline (mêmes classes que les templates d'impression) ── */
+.etat-inline-corps{font-size:12px;color:#111;line-height:1.5;overflow-x:auto}
+.etat-inline-corps .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px}
+.etat-inline-corps .kpi-box{background:#f8faf8;border:1px solid #c8e6d0;border-radius:8px;padding:10px;text-align:center}
+.etat-inline-corps .kpi-val{font-size:18px;font-weight:800;color:#1a5c2a}
+.etat-inline-corps .kpi-lbl{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+.etat-inline-corps .section{margin-bottom:16px}
+.etat-inline-corps .section-title{font-size:12px;font-weight:800;color:#1a5c2a;text-transform:uppercase;letter-spacing:.5px;border-left:3px solid #1a5c2a;padding-left:8px;margin-bottom:8px}
+.etat-inline-corps table{width:100%;border-collapse:collapse;margin-bottom:12px;min-width:560px}
+.etat-inline-corps thead th{background:#1a5c2a;color:#fff;padding:7px 9px;font-size:10px;text-align:left;text-transform:uppercase;letter-spacing:.3px}
+.etat-inline-corps tbody td{padding:6px 9px;border-bottom:1px solid #e5e7eb;font-size:11px}
+.etat-inline-corps tbody tr:nth-child(even){background:#f9fafb}
+.etat-inline-corps .total-row td{font-weight:800;background:#f0fdf4;border-top:2px solid #1a5c2a}
+.etat-inline-corps .badge-ok{background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
+.etat-inline-corps .badge-warn{background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
+.etat-inline-corps .badge-err{background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
+.etat-inline-corps .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:640px){.etat-inline-corps .grid2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -1158,7 +1175,6 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 
   <!-- 3. APPROVISIONNEMENT — intrants entrants (aliments, intrants vétérinaires…) -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ③ Approvisionnement</div>
-  <div class="nav-item nav-item-biz" id="nav-fourns"  onclick="goTo('fourns')"><i class="fas fa-truck"></i> Fournisseurs</div>
   <div class="nav-item nav-item-biz" id="nav-appro"   onclick="goTo('appro')"><i class="fas fa-dolly"></i> Approvisionnement</div>
 
   <!-- 4. FABRICATION — transformation des matières premières en aliments -->
@@ -1235,7 +1251,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
           <span style="color:rgba(82,183,136,.7);font-weight:600">+225 07 79 18 10 75</span>
         </div>
       </div>
-      <button onclick="resetDB()" style="width:100%;padding:6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:rgba(255,255,255,.35);font-size:9px;cursor:pointer;font-family:inherit;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.08)'" onmouseout="this.style.background='rgba(255,255,255,.05)'">🔄 Réinitialiser la base</button>
+      <button id="navResetDbBtn" onclick="confirmHardReset()" style="display:none;width:100%;padding:6px;background:rgba(193,18,31,.12);border:1px solid rgba(193,18,31,.25);border-radius:6px;color:rgba(252,165,165,.8);font-size:9px;cursor:pointer;font-family:inherit;transition:.15s" onmouseover="this.style.background='rgba(193,18,31,.22)'" onmouseout="this.style.background='rgba(193,18,31,.12)'" title="Réservé Administrateur — réinitialisation totale de l'organisation">🔄 Réinitialiser la base (Admin)</button>
       <div style="text-align:center;margin-top:6px;font-size:8px;color:rgba(255,255,255,.18)">v12.0 · © 2025 Sanix Africa</div>
     </div>
   </div>
@@ -3123,6 +3139,8 @@ function updateNavUser(){
   if(avatar) avatar.textContent = (currentUser.nom||'?').charAt(0).toUpperCase();
   if(name)   name.textContent   = currentUser.nom||'—';
   if(role)   role.innerHTML     = '<span style="color:'+(rp.color||'#888')+'">'+( rp.label||currentUser.role)+'</span>';
+  const resetBtn=document.getElementById('navResetDbBtn');
+  if(resetBtn) resetBtn.style.display = currentUser.role==='admin' ? 'block' : 'none';
   // Masquer les nav-items non accessibles
   document.querySelectorAll('.nav-item').forEach(el=>{
     const id = el.id ? el.id.replace('nav-','') : '';
@@ -3347,6 +3365,7 @@ async function renderSettings(ca){
     ['production','fa-rocket','Prod.'],
     ['cloud','fa-cloud','Cloud'],
     ['fne','fa-stamp','FNE (DGI)'],
+    ['tarifs','fa-tags','Tarifs Cond.'],
     ['data','fa-database','Données'],
     ['diagnostic','fa-stethoscope','Diagnostic'],
   ];
@@ -3378,6 +3397,7 @@ async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='production')   return await renderSettingsProduction(cfg, users);
   if(tab==='cloud')        return renderSettingsCloud(cfg);
   if(tab==='fne')          return renderSettingsFNE(cfg, isAdmin);
+  if(tab==='tarifs')       return renderSettingsTarifs(isAdmin);
   if(tab==='data')         return renderSettingsData(isSuperAdmin);
   if(tab==='diagnostic')   return '<div id="diagContainer"><div style="padding:30px;text-align:center"><button class="btn btn-p" onclick="runDbDiagnostic()"><i class="fas fa-stethoscope"></i> Lancer le diagnostic</button></div></div>';
   return '';
@@ -3605,6 +3625,21 @@ window.previewFactureTest = async function(){
 };
 
 // ── Tab FNE (Facture Normalisée Électronique — DGI Côte d'Ivoire) ──
+// ── Tab Tarifs Conditionnement — rend éditable ce qui était codé en dur (CALIBRE_TARIFS) ──
+function renderSettingsTarifs(isAdmin){
+  const ro = isAdmin ? '' : 'disabled';
+  const rows=[['petit','🟡 Petit <53g'],['moyen','🟢 Moyen 53-63g'],['gros','🔵 Gros 63-73g'],['tresGros','🟣 Très Gros 73g+']]
+    .map(([k,lbl])=>`<div class="fg"><label>${lbl}</label>
+      <div style="display:flex;gap:6px">
+        <input id="tarif_${k}_plt" type="number" placeholder="Prix plateau" value="${CALIBRE_TARIFS[k].prixPlateau}" ${ro}>
+        <input id="tarif_${k}_car" type="number" placeholder="Prix carton" value="${CALIBRE_TARIFS[k].prixCarton}" ${ro}>
+      </div></div>`).join('');
+  return `<div class="settings-section-title">🥚 Tarifs calibrés — conditionnement œufs</div>
+    <p style="font-size:11px;color:var(--text3);margin-bottom:12px">Base de valorisation du module Conditionnement (rapport périodique, KPI valeur). Modifier ici sans toucher au code.</p>
+    <div class="form-grid">${rows}</div>
+    ${isAdmin?'<button class="btn btn-p" style="margin-top:10px" onclick="saveCalibreTarifs()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3)">Réservé Admin/Manager.</p>'}`;
+}
+
 function renderSettingsFNE(cfg, isAdmin){
   const ro  = isAdmin ? '' : 'readonly';
   const dis = isAdmin ? '' : 'disabled';
@@ -4162,7 +4197,7 @@ function renderSettingsNotifs(cfg, isAdmin){
     <div class="card-bd">
       <div class="form-grid" style="grid-template-columns:1fr;gap:10px">
         <div class="fg"><label>Numéro WhatsApp (alertes)</label>
-          <input id="st_whatsapp" value="${esc(cfg.whatsapp||'+225 07 79 18 10 75')}" placeholder="+225 07 …" ${ro}>
+          <input id="st_whatsapp" value="${esc(cfg.whatsapp||'')}" placeholder="+225 07 …" ${ro}>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:0">
@@ -7435,6 +7470,7 @@ async function renderApprovisionnement(ca){
     {id:'receptions', page:'receptions', icon:'fa-truck-ramp-box',    label:'Bon de réception'},
     {id:'reappro',    page:'reappro',    icon:'fa-robot',             label:'Réappro. automatique'},
     {id:'prods',      page:'prods',      icon:'fa-tag',               label:'Produit et matière'},
+    {id:'fourns',     page:'fourns',     icon:'fa-truck',             label:'Fournisseurs'},
   ].filter(t=>canAccessPage(t.page));
   if(!allTabs.length){ ca.innerHTML='<div class="page-header"><div class="page-header-title">Approvisionnement</div></div><div class="stock-page"><div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Accès non autorisé.</div></div></div>'; return; }
   if(!allTabs.some(t=>t.id===approTab)) approTab=allTabs[0].id;
@@ -7458,6 +7494,7 @@ async function renderApproTab(){
   else if(approTab==='receptions') await renderReceptions(el);
   else if(approTab==='reappro') await renderReappro(el);
   else if(approTab==='prods') await renderProds(el);
+  else if(approTab==='fourns') await renderFourns(el);
 }
 
 function goApproSub(id){ if(document.getElementById('approTabContent')) switchApproTab(id); else goTo(id); }
@@ -8308,6 +8345,36 @@ var CALIBRE_TARIFS = {
   gros:     {label:'Gros 63-73g',   prixPlateau:2700,  prixCarton:32400},
   tresGros: {label:'Tres Gros 73g+',prixPlateau:3200,  prixCarton:38400}
 };
+// Applique une éventuelle surcharge des tarifs calibrés enregistrée dans Paramétrage.
+// Mutation en place (pas de réaffectation) : toutes les références existantes à
+// CALIBRE_TARIFS restent valides sans modifier chaque point d'utilisation.
+async function loadCalibreTarifsOverrides(){
+  try{
+    const s = await getAll(S.SETTINGS_APP);
+    const rec = s.find(r=>r.key==='calibre_tarifs');
+    if(rec && rec.tarifs){
+      Object.keys(CALIBRE_TARIFS).forEach(k=>{
+        if(rec.tarifs[k]){
+          if(rec.tarifs[k].prixPlateau!=null) CALIBRE_TARIFS[k].prixPlateau = rec.tarifs[k].prixPlateau;
+          if(rec.tarifs[k].prixCarton!=null) CALIBRE_TARIFS[k].prixCarton = rec.tarifs[k].prixCarton;
+        }
+      });
+    }
+  }catch(e){ console.warn('Tarifs calibrés : défauts utilisés —', e.message); }
+}
+window.saveCalibreTarifs=async function(){
+  const tarifs={};
+  ['petit','moyen','gros','tresGros'].forEach(k=>{
+    const plt=parseFloat(document.getElementById('tarif_'+k+'_plt')?.value)||CALIBRE_TARIFS[k].prixPlateau;
+    const car=parseFloat(document.getElementById('tarif_'+k+'_car')?.value)||CALIBRE_TARIFS[k].prixCarton;
+    tarifs[k]={prixPlateau:plt,prixCarton:car};
+    CALIBRE_TARIFS[k].prixPlateau=plt;CALIBRE_TARIFS[k].prixCarton=car;
+  });
+  const s=await getAll(S.SETTINGS_APP);const existing=s.find(r=>r.key==='calibre_tarifs');
+  if(existing) await updRec(S.SETTINGS_APP,existing.id,{key:'calibre_tarifs',tarifs});
+  else await addRec(S.SETTINGS_APP,{key:'calibre_tarifs',tarifs});
+  toast('✅ Tarifs calibrés enregistrés');
+};
 
 function calcCond(){
   var bruts = parseInt(document.getElementById('condBruts')?.value)||0;
@@ -8833,12 +8900,12 @@ async function renderLotCond(lot, kpi, el){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px">
       <div class="kpi kpi-a">
         <div class="kpi-lbl">Œufs bruts en stock</div>
-        <div class="kpi-val" style="color:${qBruts<300?'var(--red)':'inherit'}">${Math.round(qBruts)}</div>
+        <div class="kpi-val" style="color:${qBruts<(pBruts?.seuil||300)?'var(--red)':'inherit'}">${Math.round(qBruts)}</div>
         <div class="kpi-sub">unités disponibles</div>
       </div>
       <div class="kpi kpi-b">
         <div class="kpi-lbl">Alvéoles disponibles</div>
-        <div class="kpi-val" style="color:${qAlv<100?'var(--red)':'inherit'}">${Math.round(qAlv)}</div>
+        <div class="kpi-val" style="color:${qAlv<(pAlv?.seuil||100)?'var(--red)':'inherit'}">${Math.round(qAlv)}</div>
         <div class="kpi-sub">en stock</div>
       </div>
       <div class="kpi kpi-g">
@@ -9135,8 +9202,8 @@ async function renderCond(ca){
     <div class="stock-page">
       <!-- STOCKS EN TEMPS RÉEL -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
-        <div class="kpi kpi-a"><div class="kpi-lbl">Œufs bruts</div><div class="kpi-val" style="color:${qBruts<300?'var(--red)':'inherit'}">${qBruts}</div><div class="kpi-sub">en attente de cond.</div></div>
-        <div class="kpi kpi-b"><div class="kpi-lbl">Alvéoles</div><div class="kpi-val" style="color:${qAlv<200?'var(--red)':'inherit'}">${qAlv}</div><div class="kpi-sub">disponibles</div></div>
+        <div class="kpi kpi-a"><div class="kpi-lbl">Œufs bruts</div><div class="kpi-val" style="color:${qBruts<(pBruts?.seuil||300)?'var(--red)':'inherit'}">${qBruts}</div><div class="kpi-sub">en attente de cond.</div></div>
+        <div class="kpi kpi-b"><div class="kpi-lbl">Alvéoles</div><div class="kpi-val" style="color:${qAlv<(pAlv?.seuil||200)?'var(--red)':'inherit'}">${qAlv}</div><div class="kpi-sub">disponibles</div></div>
         <div class="kpi kpi-g"><div class="kpi-lbl">Plateaux</div><div class="kpi-val">${qPlt}</div><div class="kpi-sub">en stock</div></div>
         <div class="kpi kpi-g" style="border-left-color:var(--purple)"><div class="kpi-lbl">Cartons</div><div class="kpi-val">${qCar}</div><div class="kpi-sub">= ${qCar*360} œufs</div></div>
         <div class="kpi kpi-b"><div class="kpi-lbl">Sessions totales</div><div class="kpi-val">${sorted.length}</div><div class="kpi-sub">${totBruts.toLocaleString()} œufs traités</div></div>
@@ -9621,6 +9688,7 @@ window.onload=async()=>{
 async function initAppAfterLogin(){
   try{
     await loadRoleOverrides();
+    await loadCalibreTarifsOverrides();
     await initDemo(); // idempotent (flags seed_*) — sans effet si l'org a déjà des données
     document.getElementById('lotsPanel').classList.remove('hidden');
     await renderLotSidebar();
@@ -15735,7 +15803,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Lots · Œufs · Mortalité · Aliments</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:var(--g2);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('production')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:var(--g1);border:1.5px solid var(--g3);border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('production')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:var(--g1);border:1.5px solid var(--g3);border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('production')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15744,7 +15812,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Inventaire · Entrées/Sorties · Alertes</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#534AB7;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('stocks')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:#534AB7;border:1.5px solid #c4b5fd;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('stocks')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:#534AB7;border:1.5px solid #c4b5fd;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('stocks')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15753,7 +15821,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">BC · Fournisseurs · Délais · Retards</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#ea580c;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('appro')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:#ea580c;border:1.5px solid #fdba74;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('appro')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:#ea580c;border:1.5px solid #fdba74;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('appro')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15762,7 +15830,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Recettes · Dépenses · Solde · CA</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#059669;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('finance')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:#059669;border:1.5px solid #86efac;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('finance')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:#059669;border:1.5px solid #86efac;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('finance')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15771,7 +15839,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Ventes · Clients · Créances</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#b45309;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('commercial')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:#b45309;border:1.5px solid #fcd34d;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('commercial')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:#b45309;border:1.5px solid #fcd34d;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('commercial')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15780,7 +15848,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Pannes · Maintenances · Coûts</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#993556;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('gmao')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:#993556;border:1.5px solid #fda4af;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('gmao')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:#993556;border:1.5px solid #fda4af;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('gmao')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15789,7 +15857,7 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Par ligne · Bâtiment · Taux conditionné & casse</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#0f766e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
-          <button style="padding:11px 14px;background:#fff;color:#0f766e;border:1.5px solid #99f6e4;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('prodcond')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:#0f766e;border:1.5px solid #99f6e4;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('prodcond')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
@@ -15798,11 +15866,14 @@ async function renderRapports(ca){
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Tous modules · Synthèse direction</div>
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:var(--g1);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('bilan')"><i class="fas fa-print"></i> Bilan complet</button>
-          <button style="padding:11px 14px;background:#fff;color:var(--g1);border:1.5px solid var(--g3);border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="previewEtat('bilan')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#fff;color:var(--g1);border:1.5px solid var(--g3);border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('bilan')"><i class="fas fa-eye"></i></button>
         </div>
       </div>
 
     </div>
+
+    <!-- Résultat inline — rempli par afficherEtatInline() au clic sur 👁️ -->
+    <div id="etatInlineResult" style="margin-top:14px"></div>
   </div>
 
   <!-- TAB: RAPPORTS & ENVOI -->
@@ -16468,44 +16539,66 @@ window.refreshCondGlobalDashboard = async function(){
 // ── Fonctions preview et impression d'états ──
 window.previewEtat = function(type){ printEtatPeriodique(type, true); };
 
-window.printEtatPeriodique = async function(type, preview=false){
-  const dateMin = document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
-  const dateMax = document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
-  const lotId   = document.getElementById('rapLotFilter')?.value || '';
-  const cfg     = await getExploitationSettings();
-  const data    = await collectRapportData('custom', dateMin, dateMax);
-
-  // Filtrer par lot si sélectionné
+async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
+  const data = await collectRapportData('custom', dateMin, dateMax);
   if(lotId){
     data.eggsP     = data.eggsP.filter(e=>String(e.flockId)===String(lotId));
     data.mortsP    = data.mortsP.filter(m=>String(m.flockId)===String(lotId));
     data.oeufsByLot = data.oeufsByLot.filter(b=>String(data.flocks.find(f=>f.nom===b.nom)?.id)===String(lotId));
-    // Les KPI de synthèse doivent suivre le filtre, sinon ils affichent encore le total tous-lots
-    // alors que le tableau détaillé juste en-dessous, lui, n'affiche que le lot sélectionné.
     data.totalOeufs = data.eggsP.reduce((a,e)=>a+(e.eggCount||0),0);
     data.totalMorts = data.mortsP.reduce((a,m)=>a+(m.nbMorts||0),0);
     const selLot = data.flocks.find(f=>String(f.id)===String(lotId));
     data.lotsLayer = selLot&&selLot.type==='layer' ? [selLot] : [];
     data.lotsBroiler = selLot&&selLot.type==='broiler' ? [selLot] : [];
   }
+  if(type==='production') return buildCorpsProduction(data, cfg);
+  if(type==='stocks') return buildCorpsStocks(data, cfg);
+  if(type==='finance') return buildCorpsFinance(data, cfg);
+  if(type==='commercial') return buildCorpsCommercial(data, cfg);
+  if(type==='gmao') return buildCorpsGMAO(data, cfg);
+  if(type==='bilan') return buildCorpsBilan(data, cfg);
+  if(type==='prodcond') return buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId), cfg);
+  if(type==='appro') return buildCorpsApprovisionnement(await collectApprovisionnementData(dateMin, dateMax), cfg);
+  return '';
+}
 
+window.printEtatPeriodique = async function(type, preview=false){
+  const dateMin = document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('rapLotFilter')?.value || '';
+  const cfg     = await getExploitationSettings();
   const entreprise = buildEnteteEtat(cfg, type, dateMin, dateMax);
-  let corps = '';
-
-  if(type==='production') corps = buildCorpsProduction(data, cfg);
-  else if(type==='stocks') corps = buildCorpsStocks(data, cfg);
-  else if(type==='finance') corps = buildCorpsFinance(data, cfg);
-  else if(type==='commercial') corps = buildCorpsCommercial(data, cfg);
-  else if(type==='gmao') corps = buildCorpsGMAO(data, cfg);
-  else if(type==='bilan') corps = buildCorpsBilan(data, cfg);
-  else if(type==='prodcond') corps = buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId), cfg);
-  else if(type==='appro') corps = buildCorpsApprovisionnement(await collectApprovisionnementData(dateMin, dateMax), cfg);
+  const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
 
   const html = buildDocumentImprimable(entreprise, corps, cfg, type, dateMin, dateMax, true);
   const w = window.open('','_blank','width=960,height=750');
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html);
   w.document.close();
+};
+
+// ── Affichage inline — insère le tableau directement sous les boutons, sans popup ──
+window.afficherEtatInline = async function(type){
+  const zone = document.getElementById('etatInlineResult');
+  if(!zone) return;
+  zone.innerHTML = '<div class="card"><div class="card-bd" style="text-align:center;padding:20px;color:var(--text3)"><i class="fas fa-spinner fa-spin"></i> Chargement…</div></div>';
+  zone.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const dateMin = document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('rapLotFilter')?.value || '';
+  const cfg     = await getExploitationSettings();
+  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet'};
+  const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
+  zone.innerHTML = `<div class="card" style="border:1.5px solid var(--g3)">
+    <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center">
+      <span>${titres[type]||'État'} — ${dateMin} au ${dateMax}</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm btn-p" onclick="printEtatPeriodique('${type}')"><i class="fas fa-print"></i> Imprimer</button>
+        <button class="btn btn-sm btn-gh" onclick="document.getElementById('etatInlineResult').innerHTML=''"><i class="fas fa-xmark"></i></button>
+      </div>
+    </div>
+    <div class="card-bd etat-inline-corps">${corps}</div>
+  </div>`;
 };
 
 // ── En-tête commun de document ──
