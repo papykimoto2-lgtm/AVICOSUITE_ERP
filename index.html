@@ -8128,7 +8128,7 @@ window.genererBulletinsDuMois=async function(){
   if(!checked.length){toast('Aucun employé sélectionné','err');return;}
   if(!confirm(`Générer ${checked.length} bulletin(s) de paie pour ${periode} ?`)) return;
   const staff = await getAll(S.STAFF);
-  let n=0;
+  let n=0, coutTotalEmployeur=0;
   for(const id of checked){
     const s = staff.find(x=>x.id===id); if(!s) continue;
     const existants = (await getAll(S.PAIE)).filter(b=>b.staffId===id && b.periode===periode);
@@ -8138,9 +8138,29 @@ window.genererBulletinsDuMois=async function(){
       staffId:id, staffNom:s.nom, periode, salaireBase:s.salaireBase||0, primes:0,
       ...calc, statut:'genere', dateGeneration:new Date().toISOString(), auteur:currentUser?.nom||'Système', ts:Date.now()
     });
+    coutTotalEmployeur += calc.coutEmployeur;
     n++;
   }
-  toast(n+' bulletin(s) généré(s) pour '+periode);
+  // ── Reflète automatiquement le coût réel de la paie en Finance & Rentabilité ──
+  // Sans ça, la paie générée ici restait invisible du Compte de Résultat, sauf à la
+  // ressaisir manuellement en double dans le module Charges (source d'erreur/oubli).
+  // Référencée par période pour éviter tout doublon si on régénère des bulletins.
+  if(coutTotalEmployeur>0){
+    const refPaie = 'PAIE-'+periode;
+    const chargesExistantes = (await getAll(S.CHARGES)).filter(c=>c.paieRef===refPaie);
+    const nouveauMontant = chargesExistantes.reduce((a,c)=>a+(c.montant||0),0) + coutTotalEmployeur;
+    if(chargesExistantes.length){
+      await updRec(S.CHARGES, chargesExistantes[0].id, Object.assign({}, chargesExistantes[0], {montant:nouveauMontant}));
+    } else {
+      await addRec(S.CHARGES, {
+        flockId:null, date: periode+'-28', categorie:'main_oeuvre',
+        libelle:'Paie '+periode+' ('+n+' employé(s) — coût employeur incl. charges patronales)',
+        qte:0, unite:'', unitCost:0, montant:coutTotalEmployeur, paieRef:refPaie,
+        operatorId:currentUser?.id||1, ts:Date.now()
+      });
+    }
+  }
+  toast(n+' bulletin(s) généré(s) pour '+periode+(coutTotalEmployeur>0?' — charge Finance mise à jour ('+coutTotalEmployeur.toLocaleString('fr-FR')+' F)':''));
   await renderPaieDuMois(rhCA());
 };
 
@@ -10549,7 +10569,13 @@ async function computeFinanceGlobale(){
       margePct:totalCh>0?marge/totalCh*100:0,coutParSujet:vivants>0?totalCh/vivants:0});
   }
   var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0);
-  var totalCh=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
+  var totalChLots=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
+  // Charges globales (sans lot assigné, ex: main d'œuvre mutualisée, paie) — ignorées
+  // jusqu'ici car finLots ne les agrège que par lot. Sans ce correctif, une charge
+  // enregistrée en "Global" n'apparaissait dans AUCUN total de Finance & Rentabilité.
+  var chargesGlobalesLibres = charges.filter(function(c){return !c.flockId;});
+  var totalChGlobal = chargesGlobalesLibres.reduce(function(a,c){return a+(c.montant||0);},0);
+  var totalCh = totalChLots + totalChGlobal;
   var margeG=totalRec-totalCh;
   var encaiss=tresoData.filter(function(t){return t.type==='entree';}).reduce(function(a,t){return a+(t.montant||0);},0);
   var decaiss=tresoData.filter(function(t){return t.type==='sortie';}).reduce(function(a,t){return a+(t.montant||0);},0);
@@ -10559,9 +10585,11 @@ async function computeFinanceGlobale(){
     if(!fl.chargesByCat.poussin) chargesGlobCat.poussin=(chargesGlobCat.poussin||0)+fl.cPoussins;
     Object.entries(fl.chargesByCat).forEach(function(e){chargesGlobCat[e[0]]=(chargesGlobCat[e[0]]||0)+e[1];});
   });
+  chargesGlobalesLibres.forEach(function(c){chargesGlobCat[c.categorie]=(chargesGlobCat[c.categorie]||0)+(c.montant||0);});
   return{finLots:finLots,totalRecettes:totalRec,totalCharges:totalCh,margeGlobale:margeG,
     margePctGlobal:totalCh>0?margeG/totalCh*100:0,encaissements:encaiss,decaissements:decaiss,
-    soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets};
+    soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets,
+    totalChargesGlobalesNonAffectees:totalChGlobal};
 }
 
 async function renderFinance(ca){
@@ -10716,10 +10744,10 @@ async function renderFinCharges(el,fin){
       +'<td>'+(c.date||'—')+'</td>'
       +'<td>'+(c.flockId?esc(lm[c.flockId]||'—'):'<span style="color:var(--text3)">Global</span>')+'</td>'
       +'<td><span class="badge b-gr">'+(CAT_ICONS[c.categorie]||'📦')+' '+(CAT_LABELS[c.categorie]||c.categorie||'—')+'</span></td>'
-      +'<td>'+esc(c.libelle||'')+'</td><td>'+(c.qte||'—')+'</td><td>'+esc(c.unite||'—')+'</td>'
+      +'<td>'+esc(c.libelle||'')+(c.paieRef?' <span class="badge b-bl" style="font-size:9px" title="Générée automatiquement par RH">🔗 Paie</span>':'')+'</td><td>'+(c.qte||'—')+'</td><td>'+esc(c.unite||'—')+'</td>'
       +'<td>'+(c.unitCost?fcfa(c.unitCost):'—')+'</td>'
       +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+'</td>'
-      +'<td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button></td></tr>';
+      +'<td style="white-space:nowrap">'+(c.paieRef?'<span style="color:var(--text3);font-size:10px">Voir RH &gt; Bulletins</span>':'<button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button>')+'</td></tr>';
   }).join('');
   var lo=lots.map(function(l){return '<option value="'+l.id+'">'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
   var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'">'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
@@ -10740,7 +10768,11 @@ window.filtrerCharges=function(){
   var cf=document.getElementById('filtreChargeCat')?.value;
   document.querySelectorAll('#tbodyCharges tr').forEach(function(tr){tr.style.display=(!lf||tr.dataset.lot===lf)&&(!cf||tr.dataset.cat===cf)?'':'none';});
 };
-window.deleteCharge=async function(id){if(!confirm('Supprimer ?')) return;await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));};
+window.deleteCharge=async function(id){
+  const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);
+  if(c && c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — supprimez plutôt les bulletins correspondants dans RH > Bulletins','err');return;}
+  if(!confirm('Supprimer ?')) return;await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
+};
 
 // ── État des dépenses imprimable — respecte les filtres lot/catégorie actifs à l'écran ──
 window.printChargesEtat=async function(preview){
@@ -10845,7 +10877,10 @@ async function openChargeManuelle(fid,editId){
   var lots=await getAll(S.FLOCKS);
   var sel=document.getElementById('chargeLot');
   var c=null;
-  if(editId){ const charges=await getAll(S.CHARGES); c=charges.find(x=>x.id===editId); if(!c){toast('Charge introuvable','err');return;} }
+  if(editId){
+    const charges=await getAll(S.CHARGES); c=charges.find(x=>x.id===editId); if(!c){toast('Charge introuvable','err');return;}
+    if(c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — non modifiable ici. Ajustez via RH > Paie du mois.','err');return;}
+  }
   sel.innerHTML='<option value="">— Global —</option>'+lots.map(function(l){return '<option value="'+l.id+'"'+(l.id===(c?c.flockId:fid)?' selected':'')+'>'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
   document.getElementById('chargeModalTitle').textContent = editId ? '📉 Modifier la charge' : '📉 Saisir une charge';
   document.getElementById('chargeId').value = editId || '';
@@ -16003,11 +16038,12 @@ async function collectRapportData(type, customMin=null, customMax=null){
   }
 
   const [flocks,eggProd,growthProd,sales,mvts,prods,staff,
-         pannes,maints,ordres,tresorerie,mortalite,reformeAll,venteAll] = await Promise.all([
+         pannes,maints,ordres,tresorerie,mortalite,reformeAll,venteAll,cond] = await Promise.all([
     getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.GROWTH_PROD),
     getAll(S.SALES), getAll(S.MVTS), getAll(S.PRODUITS), getAll(S.STAFF),
     getAll(S.PANNES), getAll(S.MAINTENANCES), getAll(S.FAB_ALIMENTS),
-    getAll(S.TRESORERIE), getAll(S.MORTALITE), getAll(S.REFORME), getAll(S.VENTE_VIVANT)
+    getAll(S.TRESORERIE), getAll(S.MORTALITE), getAll(S.REFORME), getAll(S.VENTE_VIVANT),
+    getAll(S.COND)
   ]);
 
   const inPeriod = (d) => d && d >= dateMin && d <= dateMax;
@@ -16026,6 +16062,31 @@ async function collectRapportData(type, customMin=null, customMax=null){
   const salesP = sales.filter(s=>inPeriod(s.date));
   const caTotal = salesP.reduce((a,s)=>a+(s.total||0),0);
   const nbVentes = salesP.length;
+
+  // Commandes par statut (sur la période de création) + livraisons (sur la période de livraison)
+  const cmdParStatut = {pending:0, confirmed:0, delivered:0, invoiced:0, paid:0, cancelled:0};
+  salesP.forEach(s=>{ cmdParStatut[s.statut]=(cmdParStatut[s.statut]||0)+1; });
+  const livraisonsP = sales.filter(s=>s.dateLiv && inPeriod(s.dateLiv));
+  const nbLivraisons = livraisonsP.length;
+
+  // Conditionnement — sessions, œufs, cartons, rendement pondéré
+  const condP = cond.filter(c=>inPeriod(c.date));
+  const condBruts = condP.reduce((a,c)=>a+(c.oeufs_bruts||0),0);
+  const condNets  = condP.reduce((a,c)=>a+(c.oeufs_nets||0),0);
+  const condCartons = condP.reduce((a,c)=>a+(c.cartons||0),0);
+  const condPlateaux = condP.reduce((a,c)=>a+(c.plateaux||0),0);
+  const condRendement = condBruts>0 ? +(condNets/condBruts*100).toFixed(1) : 0;
+  const condValeur = condP.reduce((a,c)=>a+(typeof valeurCondSession==='function'?valeurCondSession(c):0),0);
+
+  // Tiers — soldes ouverts clients (créances) et fournisseurs (dettes), indépendants de la période
+  // (un solde est une photo à l'instant T, pas un flux sur la période).
+  let tiersClientDu = 0, tiersClientNb = 0, tiersFournDu = 0, tiersFournNb = 0;
+  try{
+    const lc = typeof getBalanceAgeeLignes==='function' ? await getBalanceAgeeLignes('client') : [];
+    tiersClientDu = lc.reduce((a,l)=>a+(l.reste||0),0); tiersClientNb = lc.length;
+    const lf = typeof getBalanceAgeeLignes==='function' ? await getBalanceAgeeLignes('fournisseur') : [];
+    tiersFournDu = lf.reduce((a,l)=>a+(l.reste||0),0); tiersFournNb = lf.length;
+  }catch(e){ /* balance âgée non disponible — rapport dégradé gracieusement */ }
 
   // Stocks critiques
   const stockTot = await getStockTotal();
@@ -16100,7 +16161,9 @@ async function collectRapportData(type, customMin=null, customMax=null){
     eggsP, growthP, salesP, mvtsP, mortsP, tresoP,
     flocks, prods, staff, pannes, maints,
     ventesDetail, oeufsByLot, stockDetail,
-    flocks
+    cmdParStatut, nbLivraisons,
+    condP, condBruts, condNets, condCartons, condPlateaux, condRendement, condValeur,
+    tiersClientDu, tiersClientNb, tiersFournDu, tiersFournNb
   };
 }
 
@@ -16340,6 +16403,15 @@ function genRapportTexte(d, format='whatsapp'){
   t += `• Aliment produit : ${d.kgFabriques.toLocaleString('fr-FR')} kg${NL}`;
   t += SEP + NL;
 
+  // Conditionnement
+  t += `${NL}📦 *CONDITIONNEMENT ŒUFS*${NL}`;
+  t += `• Sessions : ${d.condP.length}${NL}`;
+  t += `• Œufs traités : ${d.condBruts.toLocaleString('fr-FR')} bruts → ${d.condNets.toLocaleString('fr-FR')} nets${NL}`;
+  t += `• Production : ${d.condCartons.toLocaleString('fr-FR')} carton(s) · ${d.condPlateaux.toLocaleString('fr-FR')} plateau(x)${NL}`;
+  t += `• Rendement : ${d.condRendement>=90?'✅':d.condRendement>=70?'⚠️':'🔴'} ${d.condRendement}%${NL}`;
+  t += `• Valeur produite : ${Math.round(d.condValeur).toLocaleString('fr-FR')} FCFA${NL}`;
+  t += SEP + NL;
+
   // Stock
   t += `${NL}📦 *STOCKS*${NL}`;
   t += `• Entrées stock : ${d.entrees}${NL}`;
@@ -16353,10 +16425,21 @@ function genRapportTexte(d, format='whatsapp'){
   }
   t += SEP + NL;
 
-  // Ventes
+  // Ventes / Commandes / Livraisons
   t += `${NL}🛒 *VENTES & DISTRIBUTION*${NL}`;
-  t += `• Commandes : ${d.nbVentes}${NL}`;
+  t += `• Commandes créées : ${d.nbVentes}${NL}`;
+  if(d.cmdParStatut){
+    const cl={pending:'En attente',confirmed:'Confirmées',delivered:'Livrées',invoiced:'Facturées',paid:'Payées',cancelled:'Annulées'};
+    Object.entries(d.cmdParStatut).forEach(([k,v])=>{ if(v>0) t += `  - ${cl[k]||k} : ${v}${NL}`; });
+  }
+  t += `• Livraisons effectuées : ${d.nbLivraisons}${NL}`;
   t += `• Chiffre d'affaires : ${d.caTotal.toLocaleString('fr-FR')} FCFA${NL}`;
+  t += SEP + NL;
+
+  // Tiers — comptes clients/fournisseurs
+  t += `${NL}👥 *COMPTES TIERS*${NL}`;
+  t += `• Créances clients (411) : ${d.tiersClientNb} facture(s) — ${Math.round(d.tiersClientDu).toLocaleString('fr-FR')} FCFA dû${NL}`;
+  t += `• Dettes fournisseurs (401) : ${d.tiersFournNb} BC — ${Math.round(d.tiersFournDu).toLocaleString('fr-FR')} FCFA dû${NL}`;
   t += SEP + NL;
 
   // Finance
