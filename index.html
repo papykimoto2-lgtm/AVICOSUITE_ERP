@@ -3089,6 +3089,15 @@ async function loadPaieParamsOverrides(){
     if(rec && rec.params) Object.assign(PAIE_CI, rec.params);
   }catch(e){ console.warn('Paramètres de paie : défauts utilisés —', e.message); }
 }
+// Confirmation manuelle qu'un expert-comptable a validé les taux CNPS/ITS/CMU —
+// ne peut pas être auto-détecté, repose sur une action explicite de l'utilisateur.
+window.confirmerPaieValidee=async function(){
+  if(!confirm('Confirmez-vous que les taux CNPS/ITS/CMU/SMIG (Paramétrage → Paie) ont été vérifiés et validés par un expert-comptable ?\n\nCette confirmation est déclarative — elle n\'effectue aucune vérification automatique.')) return;
+  const s=await getAll(S.SETTINGS_APP);
+  if(!s.some(r=>r.key==='paie_valide_comptable')) await addRec(S.SETTINGS_APP,{key:'paie_valide_comptable',date:new Date().toISOString(),par:currentUser?.nom||'Système'});
+  toast('✅ Confirmation enregistrée');
+  switchSettingsTab('production');
+};
 window.savePaieParams=async function(){
   const ids=['smig','cnpsPlafond','cnpsTauxSalarie','cnpsTauxEmployeurRetraite','cnpsTauxPrestaFam','cnpsTauxAT','cmuMontant','cmuMontantEmployeur','abattementForfaitaire'];
   const params={};
@@ -15513,14 +15522,17 @@ function checkForceChangePwd(user){
 //  TAB — MISE EN PRODUCTION
 // ════════════════════════════════════════════════════════
 async function renderSettingsProduction(cfg, users){
-  const [flocks, clients, settingsAll] = await Promise.all([
-    getAll(S.FLOCKS), getAll(S.CLIENTS), getAll(S.SETTINGS_APP)
+  const [flocks, clients, settingsAll, prods] = await Promise.all([
+    getAll(S.FLOCKS), getAll(S.CLIENTS), getAll(S.SETTINGS_APP), getAll(S.PRODUITS)
   ]);
   const demoFlocks  = flocks.filter(f=>f.isDemo);
   const demoClients = clients.filter(c=>c.isDemo);
   const defaultPwdUsers = users.filter(u=>!u.pwd || !/^[0-9a-f]{64}$/.test(u.pwd));
   const lastBackup  = localStorage.getItem('sanixavi_lastBackup');
   const cloudCfg    = JSON.parse(localStorage.getItem('sanixavi_cloud')||'{}');
+  const pltProd = findCondProduit(prods,'plateau');
+  const carProd = findCondProduit(prods,'carton');
+  const paieValide = settingsAll.some(r=>r.key==='paie_valide_comptable');
 
   const phases = [
     { phase:'Phase 1 — Identité entreprise', checks:[
@@ -15549,6 +15561,12 @@ async function renderSettingsProduction(cfg, users){
     { phase:'Phase 5 — Sauvegarde', checks:[
       {ok:!!lastBackup,            label:'Au moins une sauvegarde effectuée',    fix:"switchSettingsTab('cloud')"},
       {ok:!!cloudCfg.autoBackup,  label:'Sauvegarde automatique configurée',    fix:"switchSettingsTab('cloud')"},
+    ]},
+    { phase:'Phase 6 — Configuration métier avancée', checks:[
+      {ok: SUPA_ORG!=='default', label:'Organisation Supabase dédiée (org_id ≠ "default")', fix:"switchSettingsTab('cloud')"},
+      {ok: !!(pltProd && carProd && pltProd.id!==carProd.id), label:'Produits "Plateau" et "Carton" distincts (Conditionnement)', fix:"goApproSub('prods')"},
+      {ok: (!cfg.fneApiKey && !cfg.fneNcc) || (!!cfg.fneApiKey && !!cfg.fneNcc), label:'FNE : clé API + NCC cohérents (les deux configurés, ou aucun si non utilisé)', fix:"switchSettingsTab('fne')"},
+      {ok: paieValide, label:'Taux de paie (CNPS/ITS/CMU) validés par un expert-comptable', fix:"confirmerPaieValidee()"},
     ]},
   ];
 
@@ -16225,6 +16243,8 @@ async function collectRapportData(type, customMin=null, customMax=null){
   // Détail production œufs par lot
   const oeufsByLot = flocks.filter(f=>f.type==='layer').map(f=>({
     nom:f.nom,
+    ageJours: getAge(f.startDate),
+    ageSemaines: Math.floor(getAge(f.startDate)/7),
     oeufs: eggProd.filter(e=>e.flockId===f.id&&inPeriod(e.date)).reduce((a,e)=>a+(e.eggCount||0),0),
     morts: mortalite.filter(m=>m.flockId===f.id&&inPeriod(m.date)).reduce((a,m)=>a+(m.nbMorts||0),0),
   }));
@@ -17012,13 +17032,13 @@ async function renderRapports(ca){
         <table class="tbl" id="tableauRecapSemaines" style="min-width:700px">
           <thead>
             <tr>
-              <th>Sem.</th><th>Période</th><th>Jours</th><th>Œufs</th><th>Taux ponte</th>
+              <th>Sem.</th><th>Période</th><th>Âge</th><th>Jours</th><th>Œufs</th><th>Taux ponte</th>
               <th>Aliment</th><th>Eau</th><th>Mortalité</th><th>Statut</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">
+              <td colspan="10" style="text-align:center;padding:20px;color:var(--text3)">
                 <i class="fas fa-spinner fa-spin"></i> Chargement des données...
               </td>
             </tr>
@@ -17263,9 +17283,21 @@ window.refreshTableauxSemaines = async function(){
     const totalMorts = mS.reduce((a,m)=>a+(m.nbMorts||0),0);
     const nbJours = new Set(eS.map(e=>e.date)).size;
     const tauxPonte = (vivantsTot>0 && nbJours>0) ? (totalOeufs/(nbJours*vivantsTot)*100) : null;
+    // Âge du/des lot(s) à cette semaine (en semaines depuis la mise en place) — un lot
+    // n'est compté que s'il était déjà en place au début de la semaine.
+    const agesLots = matchedLots
+      .map(f=>({nom:f.nom, start:new Date(f.startDate)}))
+      .filter(x=>!isNaN(x.start) && x.start <= wEnd)
+      .map(x=>Math.floor((wStart - x.start)/(7*86400000))+1);
+    let ageLabel = '—';
+    if(agesLots.length===1) ageLabel = agesLots[0]+' sem.';
+    else if(agesLots.length>1){
+      const mn=Math.min(...agesLots), mx=Math.max(...agesLots);
+      ageLabel = mn===mx ? mn+' sem.' : mn+'-'+mx+' sem.';
+    }
     weeks.push({
       wIdx, wStart: fmt(wStart), wEnd: fmt(wEnd), nbJours,
-      totalOeufs, totalCasses, totalAlim, totalEau, totalMorts, tauxPonte,
+      totalOeufs, totalCasses, totalAlim, totalEau, totalMorts, tauxPonte, ageLabel,
       eggsByDate: eS, feedsByDate: fS, watersByDate: waS, mortsByDate: mS,
       hasDonnees: nbJours>0 || totalMorts>0
     });
@@ -17287,7 +17319,7 @@ window.refreshTableauxSemaines = async function(){
     window._currentWeekDetail = weeks.length; // semaine la plus récente par défaut
   }
   const weekSel = weeks[window._currentWeekDetail - 1];
-  document.getElementById('semDetailTitle').textContent = `S${weekSel.wIdx} (${weekSel.wStart.slice(5)} → ${weekSel.wEnd.slice(5)}) — ${scopeLabel}`;
+  document.getElementById('semDetailTitle').textContent = `S${weekSel.wIdx} (${weekSel.wStart.slice(5)} → ${weekSel.wEnd.slice(5)}) — ${scopeLabel} — Âge : ${weekSel.ageLabel}`;
   document.getElementById('semRecapTitle').textContent = scopeLabel;
 
   updateDetailTable(weekSel);
@@ -17346,7 +17378,7 @@ window.updateRecapTable = function(weeks){
   if(!tbody) return;
 
   if(!weeks.length){
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text3)">Aucune donnée disponible</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text3)">Aucune donnée disponible</td></tr>';
     return;
   }
 
@@ -17357,6 +17389,7 @@ window.updateRecapTable = function(weeks){
     return `<tr style="cursor:pointer;${isSel?'background:#f0fdf4':''}" onclick="selectWeekDetail(${w.wIdx})">
       <td><strong style="${isSel?'color:var(--g2)':''}">S${w.wIdx}</strong></td>
       <td style="font-size:11px;color:var(--text3)">${w.wStart.slice(5)} → ${w.wEnd.slice(5)}</td>
+      <td style="font-size:11px;color:var(--amber-d);font-weight:600">${w.ageLabel}</td>
       <td>${w.nbJours}/7</td>
       <td><strong>${w.totalOeufs?w.totalOeufs.toLocaleString('fr-FR'):'—'}</strong></td>
       <td>${tp!==null?`<span class="status-pill ${cls}">${tp}%</span>`:'—'}</td>
@@ -17385,9 +17418,9 @@ window.exportTableauxCSV = function(){
   const weeks = window._semWeeksAll || [];
   const scope = (document.getElementById('semRecapTitle')?.textContent || 'export').trim();
   if(!weeks.length){ toast('Aucune donnée à exporter','err'); return; }
-  let csv = 'Semaine;Période;Jours saisis;Œufs;Taux ponte (%);Aliment (kg);Eau (L);Mortalité\n';
+  let csv = 'Semaine;Période;Age;Jours saisis;Œufs;Taux ponte (%);Aliment (kg);Eau (L);Mortalité\n';
   weeks.forEach(w=>{
-    csv += [`S${w.wIdx}`, `${w.wStart} au ${w.wEnd}`, `${w.nbJours}/7`, w.totalOeufs,
+    csv += [`S${w.wIdx}`, `${w.wStart} au ${w.wEnd}`, w.ageLabel, `${w.nbJours}/7`, w.totalOeufs,
       w.tauxPonte!==null?w.tauxPonte.toFixed(1):'', w.totalAlim.toFixed(1), w.totalEau.toFixed(0), w.totalMorts
     ].join(';') + '\n';
   });
@@ -17687,6 +17720,7 @@ function buildCorpsProduction(data, cfg){
   const dev = cfg.devise||'FCFA';
   const oeufRows = data.oeufsByLot.map(b=>`
     <tr><td>${esc(b.nom)}</td>
+    <td style="text-align:center;color:#555">${b.ageSemaines!=null?b.ageSemaines+' sem. ('+b.ageJours+' j)':'—'}</td>
     <td style="text-align:right;font-weight:700">${b.oeufs.toLocaleString('fr-FR')}</td>
     <td style="text-align:right;color:#c1121f">${b.morts}</td>
     </tr>`).join('');
@@ -17700,9 +17734,9 @@ function buildCorpsProduction(data, cfg){
   </div>
   <div class="section">
     <div class="section-title">Production œufs par lot</div>
-    <table><thead><tr><th>Lot</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th></tr></thead>
-    <tbody>${oeufRows||'<tr><td colspan="3" style="text-align:center;color:#aaa">Aucune donnée</td></tr>'}</tbody>
-    <tr class="total-row"><td><strong>TOTAL</strong></td><td style="text-align:right">${data.totalOeufs.toLocaleString('fr-FR')}</td><td style="text-align:right;color:#c1121f">${data.totalMorts}</td></tr>
+    <table><thead><tr><th>Lot</th><th style="text-align:center">Âge du lot</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th></tr></thead>
+    <tbody>${oeufRows||'<tr><td colspan="4" style="text-align:center;color:#aaa">Aucune donnée</td></tr>'}</tbody>
+    <tr class="total-row"><td colspan="2"><strong>TOTAL</strong></td><td style="text-align:right">${data.totalOeufs.toLocaleString('fr-FR')}</td><td style="text-align:right;color:#c1121f">${data.totalMorts}</td></tr>
     </table>
   </div>
   <div class="section">
