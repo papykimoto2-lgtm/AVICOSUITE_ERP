@@ -7501,11 +7501,54 @@ function goApproSub(id){ if(document.getElementById('approTabContent')) switchAp
 window.goApproSub=goApproSub;
 
 // ══ FOURNISSEURS ══
+// ══ PORTAIL CLIENT/FOURNISSEUR — génération de lien d'accès sécurisé ══
+function genererCodeAcces(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O/1/I ambigus
+  let c=''; for(let i=0;i<10;i++) c+=chars[Math.floor(Math.random()*chars.length)];
+  return c;
+}
+window.genererLienPortail=async function(type,id){
+  const store = type==='client' ? S.CLIENTS : S.FOURNISSEURS;
+  const list = await getAll(store);
+  const t = list.find(x=>x.id===id);
+  if(!t){toast('Introuvable','err');return;}
+  let code = t.portalCode;
+  if(!code){
+    code = genererCodeAcces();
+    await updRec(store, id, Object.assign({}, t, {portalCode: code}));
+    toast('Code d\'accès généré');
+  }
+  const cfg = getSupaConfig();
+  const base = (location.href.replace(/index[^/]*\.html.*$/,'').replace(/\/$/,'')) + '/portail-client-fournisseur.html';
+  const url = `${base}?type=${type}&id=${id}&code=${code}&org=${encodeURIComponent(cfg.org)}&url=${encodeURIComponent(cfg.url)}&key=${encodeURIComponent(cfg.key)}`;
+  const html = `<div class="card" style="max-width:520px;margin:0 auto"><div class="card-hd">🔗 Lien espace ${type==='client'?'client':'fournisseur'} — ${esc(t.nom)}</div>
+    <div class="card-bd">
+      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Partagez ce lien avec ${esc(t.nom)} — accès en lecture seule à son espace personnel (commandes, factures, solde).</p>
+      <textarea readonly style="width:100%;height:80px;font-size:11px;font-family:monospace;padding:8px;border:1px solid var(--border);border-radius:6px" onclick="this.select()">${url}</textarea>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-p btn-sm" onclick="navigator.clipboard.writeText('${url.replace(/'/g,"\\'")}');toast('Lien copié')"><i class="fas fa-copy"></i> Copier</button>
+        ${t.tel?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="envoyerWhatsApp('Bonjour ${esc(t.nom)}, voici le lien vers votre espace en ligne : ${url}','${t.tel}')"><i class="fab fa-whatsapp"></i> WhatsApp</button>`:''}
+        <button class="btn btn-gh btn-sm" onclick="regenererCodePortail('${type}',${id})" title="Invalider l'ancien lien et en générer un nouveau"><i class="fas fa-rotate"></i></button>
+      </div>
+    </div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML=html;openOverlay('mMvtApercu');
+};
+window.regenererCodePortail=async function(type,id){
+  if(!confirm('Régénérer le code ? L\'ancien lien cessera de fonctionner.')) return;
+  const store = type==='client' ? S.CLIENTS : S.FOURNISSEURS;
+  const list = await getAll(store);
+  const t = list.find(x=>x.id===id);
+  if(!t) return;
+  await updRec(store, id, Object.assign({}, t, {portalCode: genererCodeAcces()}));
+  toast('Nouveau code généré');
+  genererLienPortail(type,id);
+};
+
 async function renderFourns(ca){
   const[fourns,bcs]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.BCS)]);
   const specL={aliment:'Aliment',medicament:'Médicaments',poussin:'Poussins',materiel:'Matériel',general:'Général'};
   const specC={aliment:'b-g',medicament:'b-bl',poussin:'b-a',materiel:'b-gr',general:'b-gr'};
-  const cards=fourns.map(f=>{const fBCs=bcs.filter(b=>b.fournId===f.id);const tot=fBCs.reduce((a,b)=>a+(b.totalHT||0),0);const stars='⭐'.repeat(f.note||3)+'☆'.repeat(5-(f.note||3));return `<div class="fcard"><div class="fcard-head"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:14px;margin-bottom:5px">${esc(f.nom)}</div><span class="badge ${specC[f.specialite]||'b-gr'}">${specL[f.specialite]||f.specialite}</span></div><div style="font-size:16px">${stars}</div></div></div><div class="fcard-body"><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-user" style="width:12px"></i> Contact</span><span>${f.contact||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-phone" style="width:12px"></i> Tél</span><span>${f.tel||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-location-dot" style="width:12px"></i> Ville</span><span>${f.ville||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-clock" style="width:12px"></i> Délai</span><span>${f.delai||'—'}j</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-file-invoice" style="width:12px"></i> Commandes</span><span>${fBCs.length} · ${Math.round(tot/1000)}K F</span></div>${f.notes?`<div style="margin-top:8px;font-size:11px;color:var(--text3);background:#f5f5f5;border-radius:6px;padding:7px">${esc(f.notes)}</div>`:''}<div class="fcard-actions"><button class="btn btn-sm btn-p" onclick="openBCModal(${f.id})"><i class="fas fa-file-invoice"></i> Commander</button><button class="btn btn-sm btn-gh" onclick="openFournModal(${f.id})"><i class="fas fa-edit"></i></button><button class="btn-del" onclick="delFourn(${f.id})"><i class="fas fa-trash"></i></button></div></div></div>`;}).join('');
+  const cards=fourns.map(f=>{const fBCs=bcs.filter(b=>b.fournId===f.id);const tot=fBCs.reduce((a,b)=>a+(b.totalHT||0),0);const stars='⭐'.repeat(f.note||3)+'☆'.repeat(5-(f.note||3));return `<div class="fcard"><div class="fcard-head"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:14px;margin-bottom:5px">${esc(f.nom)}</div><span class="badge ${specC[f.specialite]||'b-gr'}">${specL[f.specialite]||f.specialite}</span></div><div style="font-size:16px">${stars}</div></div></div><div class="fcard-body"><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-user" style="width:12px"></i> Contact</span><span>${f.contact||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-phone" style="width:12px"></i> Tél</span><span>${f.tel||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-location-dot" style="width:12px"></i> Ville</span><span>${f.ville||'—'}</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-clock" style="width:12px"></i> Délai</span><span>${f.delai||'—'}j</span></div><div class="fcard-stat"><span style="color:var(--text3)"><i class="fas fa-file-invoice" style="width:12px"></i> Commandes</span><span>${fBCs.length} · ${Math.round(tot/1000)}K F</span></div>${f.notes?`<div style="margin-top:8px;font-size:11px;color:var(--text3);background:#f5f5f5;border-radius:6px;padding:7px">${esc(f.notes)}</div>`:''}<div class="fcard-actions"><button class="btn btn-sm btn-p" onclick="openBCModal(${f.id})"><i class="fas fa-file-invoice"></i> Commander</button><button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('fournisseur',${f.id})" title="Lien espace fournisseur"><i class="fas fa-link"></i></button><button class="btn btn-sm btn-gh" onclick="openFournModal(${f.id})"><i class="fas fa-edit"></i></button><button class="btn-del" onclick="delFourn(${f.id})"><i class="fas fa-trash"></i></button></div></div></div>`;}).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-truck" style="color:var(--g2)"></i> Fournisseurs</div><button class="btn btn-p btn-sm" onclick="openFournModal()"><i class="fas fa-plus"></i> Nouveau</button></div><div class="stock-page"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px">${cards||'<div style="color:var(--text3);text-align:center;padding:40px;grid-column:1/-1">Aucun fournisseur</div>'}</div></div>`;
 }
 function openFournModal(id=null){
@@ -7859,6 +7902,7 @@ async function renderClients(ca){
       <td>${cSales.length}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-sm btn-p" title="Nouvelle commande" onclick="openSaleModal(null,${c.id})"><i class="fas fa-plus"></i></button>
+        <button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="genererLienPortail('client',${c.id})" title="Lien espace client"><i class="fas fa-link"></i></button>
         <button class="btn btn-sm btn-gh" onclick="openClientModal(${c.id})"><i class="fas fa-edit"></i></button>
         <button class="btn-del" onclick="delClient(${c.id})"><i class="fas fa-trash"></i></button>
       </td>
