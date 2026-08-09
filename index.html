@@ -1688,7 +1688,8 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
     <div class="fg"><label>🥚 Œufs pondus / collectés aujourd'hui *</label><input id="condBruts" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
     <div class="fg"><label>Œufs cassés / non conformes</label><input id="condCasses" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
     <div class="fg"><label>Dépôt de stockage œufs bruts</label><select id="condDepotSrc"></select></div>
-    <div class="fg"><label>Dépôt destination (plateaux)</label><select id="condDepotDest"></select></div>
+    <div class="fg"><label>Dépôt destination (plateaux)</label><select id="condDepotDest" onchange="verifierDepotCartonCond()"></select></div>
+    <div class="fg fg-full" id="condDepotWarnBox" style="display:none;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:8px 12px;font-size:11px;color:#991b1b"></div>
     <div class="fg fg-full"><label>🧩 Nomenclature (BOM) à appliquer</label><select id="condBomId"><option value="">— aucune (produits par défaut) —</option></select></div>
     <div class="fg"><label>Opérateur</label><select id="condOp"></select></div>
     <div class="fg fg-full"><label>Observations</label><textarea id="condNotes" placeholder="optionnel"></textarea></div>
@@ -6583,9 +6584,17 @@ async function renderDepots(ca){
   if(selDepot){
     const dep=deps.find(d=>d.id===selDepot);
     if(dep){
-      const items=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===selDepot&&(bal[k]||0)>0);
-      const pRows=items.map(([k,qty])=>{const pid=parseInt(k.split('_')[0]);const p=prods.find(x=>x.id===pid);if(!p) return '';const al=stockEnAlerte(p,qty);const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦'}[p.categorie]||'📦';return `<div class="prod-row"><div class="prod-icon" style="background:${al?'var(--red-bg)':'var(--g4)'}">${ci}</div><div style="flex:1"><div class="prod-name">${p.nom} ${al?'<span class="badge b-r">⚠ Critique</span>':''}</div><div class="prod-meta">${p.ref||'—'} · Seuil: ${p.seuil} ${p.unite}</div></div><div style="text-align:right"><div class="prod-qty-val" style="color:${al?'var(--red)':'inherit'}">${qty.toFixed(1)}</div><div class="prod-qty-unit">${p.unite}</div><div style="font-size:10px;color:var(--text3)">${Math.round(qty*(p.prix||0)).toLocaleString()} F</div></div></div>`;}).join('');
-      detail=`<div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">${dep.nom}</div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',null,${selDepot})"><i class="fas fa-plus"></i> Entrée</button></div>${pRows||'<div style="color:var(--text3);text-align:center;padding:20px">Aucun article</div>'}`;
+      // Union : produits ayant un mouvement de stock dans ce dépôt (bal ≠ 0, y compris négatif —
+      // anomalie à signaler) ET produits affectés à ce dépôt même sans aucun mouvement encore
+      // (depotAffecteId) — sinon une rupture totale (stock à 0, jamais mouvementé) restait invisible.
+      const idsAvecMvt = new Set(
+        Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===selDepot && (bal[k]||0)!==0).map(([k])=>parseInt(k.split('_')[0]))
+      );
+      const idsAffectes = new Set(prods.filter(p=>p.depotAffecteId===selDepot).map(p=>p.id));
+      const allIds = new Set([...idsAvecMvt, ...idsAffectes]);
+      const items = Array.from(allIds).map(pid=>[`${pid}_${selDepot}`, bal[`${pid}_${selDepot}`]||0]);
+      const pRows=items.map(([k,qty])=>{const pid=parseInt(k.split('_')[0]);const p=prods.find(x=>x.id===pid);if(!p) return '';const rupture=qty<=0;const ci={aliment:'🌾',medicament:'💊',oeuf:'🥚',viande:'🍗',materiel:'🔧',intrant:'📦'}[p.categorie]||'📦';return `<div class="prod-row"><div class="prod-icon" style="background:${rupture?'var(--red-bg)':'var(--g4)'}">${ci}</div><div style="flex:1"><div class="prod-name">${p.nom} ${rupture?'<span class="badge b-r">🚫 Rupture (ce dépôt)</span>':''}</div><div class="prod-meta">${p.ref||'—'} · Seuil global: ${p.seuil} ${p.unite} <span title="Le seuil est global au produit, pas par dépôt — un stock sain peut être réparti sur plusieurs dépôts">ⓘ</span></div></div><div style="text-align:right"><div class="prod-qty-val" style="color:${qty<0?'var(--red)':rupture?'var(--text3)':'inherit'}">${qty.toFixed(1)}</div><div class="prod-qty-unit">${p.unite}</div><div style="font-size:10px;color:var(--text3)">${Math.round(qty*(p.prix||0)).toLocaleString()} F</div></div></div>`;}).join('');
+      detail=`<div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">${dep.nom}</div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',null,${selDepot})"><i class="fas fa-plus"></i> Entrée</button></div>${pRows||'<div style="color:var(--text3);text-align:center;padding:20px">Aucun article affecté ni mouvementé dans ce dépôt</div>'}`;
     }
   }
 
@@ -9128,6 +9137,7 @@ async function openCondModal(flockId){
   document.getElementById('condDepotDest').innerHTML = depOpts;
   const destDep = deps.find(d => d.type === 'produit_fini');
   if(destDep) document.getElementById('condDepotDest').value = destDep.id;
+  await verifierDepotCartonCond();
 
   await populateCondBomSelect();
 
@@ -9187,6 +9197,7 @@ window.editCond = async function(id){
   document.getElementById('condNotes').value = s.notes || '';
   if(s.depotSrcId) document.getElementById('condDepotSrc').value = s.depotSrcId;
   if(s.depotDestId) document.getElementById('condDepotDest').value = s.depotDestId;
+  await verifierDepotCartonCond();
   if(s.operatorId) document.getElementById('condOp').value = s.operatorId;
   await populateCondBomSelect(s.bomId);
   document.getElementById('calPetit').value    = s.cal_petit    || '';
@@ -9334,6 +9345,16 @@ async function saveCond(){
   var alvCouvSel  = pAlvCouvBom || alvSel;     // par défaut, même alvéole que celle des plateaux
   var alvCouvQte  = bom ? (bom.alvCouvQte ?? 4) : 4;   // 4 alvéoles de couverture / carton (1 par pile)
   var cartonsProduits = sommeCal > 0 ? (carPetit+carMoyen+carGros+carTresGros) : cartons;
+  // Chaque consommable sort de SON PROPRE dépôt affecté (Catalogue produits) s'il en a un —
+  // pas du dépôt œufs bruts. Repli sur ce dernier + avertissement si non configuré, pour ne
+  // pas bloquer le conditionnement mais signaler la lacune de configuration.
+  var consoDepotWarn = [];
+  function depotConso(p){
+    if(!p) return depotSrcId;
+    if(p.depotAffecteId) return p.depotAffecteId;
+    consoDepotWarn.push(p.nom);
+    return depotSrcId;
+  }
 
   // Ponte du jour du lot : la collecte et le conditionnement sont désormais une seule
   // opération saisie ici — plus besoin de la ressaisir dans "Saisie du jour".
@@ -9350,19 +9371,19 @@ async function saveCond(){
   }
 
   if(alvSel && alvQte > 0)
-    await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvSel.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvSel.id,depotSrcId:depotConso(alvSel),depotDestId:null,
       quantite:plateaux*alvQte,unite:'unite',prixUnit:alvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles)',date:date,ts:mvtTs++});
 
   if(alvCouvSel && alvCouvQte > 0 && cartonsProduits > 0)
-    await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvCouvSel.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvCouvSel.id,depotSrcId:depotConso(alvCouvSel),depotDestId:null,
       quantite:cartonsProduits*alvCouvQte,unite:'unite',prixUnit:alvCouvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles de couverture)',date:date,ts:mvtTs++});
 
   if(pCartonVide && bom.cartonQte > 0 && cartonsProduits > 0)
-    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pCartonVide.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pCartonVide.id,depotSrcId:depotConso(pCartonVide),depotDestId:null,
       quantite:cartonsProduits*bom.cartonQte,unite:'unite',prixUnit:pCartonVide.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie cartons vides - BOM)',date:date,ts:mvtTs++});
 
   if(pFicelle && bom.ficelleQte > 0 && cartonsProduits > 0)
-    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pFicelle.id,depotSrcId:depotSrcId,depotDestId:null,
+    await regMvt({cadre:'conditionnement',type:'sortie',produitId:pFicelle.id,depotSrcId:depotConso(pFicelle),depotDestId:null,
       quantite:cartonsProduits*bom.ficelleQte,unite:'unite',prixUnit:pFicelle.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie ficelles - BOM)',date:date,ts:mvtTs++});
 
   // Mouvements par calibre si calibres saisis
@@ -9388,6 +9409,9 @@ async function saveCond(){
   }
   }catch(e){
     toast('⚠ Session enregistrée mais mouvements de stock incomplets : '+e.message+' — vérifier la configuration des produits/dépôts puis corriger via le module Mouvements','err');
+  }
+  if(consoDepotWarn.length){
+    toast('⚠ Dépôt non affecté pour : '+consoDepotWarn.join(', ')+' — sortie enregistrée dans le dépôt œufs bruts par défaut. Configurez leur "Dépôt affecté" dans Catalogue produits.','err');
   }
 
   // ── Alimentation du jour (optionnelle) ──
@@ -9597,6 +9621,26 @@ async function recalculerCascadeCond(flockId){
 }
 window.recalculerCascadeCond = recalculerCascadeCond;
 // Affiche le reste en attente dans l'aperçu du formulaire dès qu'un lot est sélectionné.
+// Alerte (sans bloquer) si le dépôt destination choisi pour cette session diffère du
+// "Dépôt affecté" configuré sur le produit Carton/Plateau (Catalogue). Un décalage ici
+// fait que la vente (qui décrémente toujours le Dépôt affecté du produit) peut chercher
+// le stock au mauvais endroit — silencieux sinon, donc signalé ici en amont.
+window.verifierDepotCartonCond = async function(){
+  const box = document.getElementById('condDepotWarnBox');
+  if(!box) return;
+  const destId = parseInt(document.getElementById('condDepotDest')?.value)||null;
+  if(!destId){ box.style.display='none'; return; }
+  const prods = await getAll(S.PRODUITS);
+  const pCar = findCondProduit(prods,'carton');
+  const pPlt = findCondProduit(prods,'plateau');
+  const ecarts=[];
+  if(pCar && pCar.depotAffecteId && pCar.depotAffecteId!==destId) ecarts.push(pCar.nom);
+  if(pPlt && pPlt.depotAffecteId && pPlt.depotAffecteId!==destId) ecarts.push(pPlt.nom);
+  if(!ecarts.length){ box.style.display='none'; return; }
+  box.style.display='block';
+  box.innerHTML = `⚠️ Le dépôt destination choisi ne correspond pas au "Dépôt affecté" de : <strong>${ecarts.join(', ')}</strong> (Catalogue produits). La vente décrémentera le dépôt affecté du produit, pas forcément celui-ci — vérifiez la cohérence pour éviter un stock introuvable à la livraison.`;
+};
+
 window.afficherResteCondLot = async function(){
   const flockId = parseInt(document.getElementById('condLot')?.value)||null;
   const box = document.getElementById('condResteBox');
@@ -10079,6 +10123,66 @@ async function renderCondRendementChart(){
 }
 window.renderCondRendementChart = renderCondRendementChart;
 
+// ── Correction des mouvements historiques — consommables sortis du mauvais dépôt ──
+// Recherche toutes les sorties de conditionnement (alvéoles, alvéoles couverture, cartons
+// vides, ficelle) dont le dépôt utilisé à l'époque ne correspond plus au "Dépôt affecté"
+// actuel du produit (Catalogue). Aperçu avant correction, rien n'est modifié sans validation.
+const CONSO_MOTIF_PATTERNS = [/sortie alveoles(?! de couverture)/i, /sortie alveoles de couverture/i, /sortie cartons vides/i, /sortie ficelles/i];
+async function diagnostiquerDepotsConsommablesCond(){
+  const[mvts,prods,deps]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS)]);
+  const suspects = mvts.filter(m=>m.cadre==='conditionnement' && m.type==='sortie' && CONSO_MOTIF_PATTERNS.some(rx=>rx.test(m.motif||'')));
+  const ecarts = [];
+  for(const m of suspects){
+    const p = prods.find(x=>x.id===m.produitId);
+    if(!p || !p.depotAffecteId) continue; // pas de dépôt affecté configuré : rien à corriger automatiquement
+    if(p.depotAffecteId !== m.depotSrcId){
+      const depAncien = deps.find(d=>d.id===m.depotSrcId);
+      const depNouveau = deps.find(d=>d.id===p.depotAffecteId);
+      ecarts.push({mvt:m, produit:p, depAncien, depNouveau});
+    }
+  }
+  return ecarts;
+}
+window.ouvrirCorrectionDepotsConso = async function(){
+  const ecarts = await diagnostiquerDepotsConsommablesCond();
+  const rows = ecarts.map(({mvt,produit,depAncien,depNouveau})=>`<tr>
+    <td style="font-size:11px">${mvt.date||'—'}</td>
+    <td style="font-size:11px">${esc(mvt.ref||mvt.piece||'—')}</td>
+    <td><strong>${esc(produit.nom)}</strong></td>
+    <td style="text-align:right">${mvt.quantite} ${mvt.unite||''}</td>
+    <td style="font-size:11px;color:var(--red)">${esc(depAncien?depAncien.nom:'—')}</td>
+    <td style="font-size:11px;color:var(--g2)">→ ${esc(depNouveau?depNouveau.nom:'—')}</td>
+  </tr>`).join('');
+  const html = `<div class="card" style="max-width:720px;margin:0 auto">
+    <div class="card-hd">🔧 Correction des mouvements historiques — consommables</div>
+    <div class="card-bd">
+      ${ecarts.length
+        ? `<p style="font-size:12px;color:var(--text3);margin-bottom:10px">${ecarts.length} mouvement(s) enregistré(s) dans un dépôt qui ne correspond plus au "Dépôt affecté" actuel du produit. La correction met à jour le dépôt sur ces mouvements — le stock sera recalculé automatiquement (retiré de l'ancien dépôt, ajouté au bon).</p>
+           <div class="tbl-wrap" style="max-height:320px;overflow-y:auto"><table class="tbl"><thead><tr><th>Date</th><th>Réf.</th><th>Produit</th><th>Qté</th><th>Ancien dépôt</th><th>Nouveau dépôt</th></tr></thead><tbody>${rows}</tbody></table></div>
+           <div class="modal-footer" style="margin-top:12px"><button class="btn btn-s" onclick="closeOverlay('mMvtApercu')">Annuler</button><button class="btn btn-p" onclick="appliquerCorrectionDepotsConso()"><i class="fas fa-check"></i> Corriger ces ${ecarts.length} mouvement(s)</button></div>`
+        : `<p style="text-align:center;color:var(--text3);padding:20px">✅ Aucun écart détecté — tous les mouvements consommables de conditionnement correspondent déjà au dépôt affecté actuel des produits.</p>`
+      }
+    </div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML=html;openOverlay('mMvtApercu');
+};
+window.appliquerCorrectionDepotsConso = async function(){
+  const ecarts = await diagnostiquerDepotsConsommablesCond();
+  if(!ecarts.length){ toast('Rien à corriger','err'); return; }
+  if(!confirm(`Corriger ${ecarts.length} mouvement(s) historique(s) ?\nLe dépôt source sera mis à jour sur chacun — le stock des deux dépôts sera recalculé automatiquement.`)) return;
+  for(const {mvt} of ecarts){
+    const prods = await getAll(S.PRODUITS);
+    const p = prods.find(x=>x.id===mvt.produitId);
+    if(!p || !p.depotAffecteId) continue;
+    await updRec(S.MVTS, mvt.id, Object.assign({}, mvt, {
+      depotSrcId: p.depotAffecteId,
+      motif: (mvt.motif||'') + ' [dépôt corrigé le '+new Date().toISOString().slice(0,10)+']'
+    }));
+  }
+  closeOverlay('mMvtApercu');
+  toast('✅ '+ecarts.length+' mouvement(s) corrigé(s) — stock mis à jour');
+  await render();
+};
+
 async function renderCond(ca){
   const [sessions, lots, prods, buildings, lines] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS), getAll(S.BUILDINGS), getAll(S.LINES)]);
   const stockTot = await getStockTotal();
@@ -10124,6 +10228,7 @@ async function renderCond(ca){
       <div class="page-header-title"><i class="fas fa-box-open" style="color:var(--g2)"></i> Conditionnement des œufs</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-gh btn-sm" onclick="openCondBomListModal()"><i class="fas fa-puzzle-piece"></i> Nomenclatures (BOM)</button>
+        <button class="btn btn-gh btn-sm" onclick="ouvrirCorrectionDepotsConso()"><i class="fas fa-wrench"></i> Corriger dépôts historiques</button>
         <button class="btn btn-p btn-sm" onclick="openCondModal()"><i class="fas fa-plus"></i> Nouvelle session</button>
       </div>
     </div>
