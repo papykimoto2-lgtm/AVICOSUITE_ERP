@@ -11626,14 +11626,15 @@ function renderFinBudget(el,fin){
       var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
       var ec=r-b.montantBudget,pc=b.montantBudget>0?Math.min(200,r/b.montantBudget*100):0;
       var fav=b.categorie==='recette'?r>=b.montantBudget:r<=b.montantBudget;
-      return '<tr><td>'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+'</td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+'</td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td></tr>';
+      return '<tr><td>'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+'</td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+'</td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>';
     }).join('');
     var issuSimu = lb.some(function(b){return b.source==='simulation';});
-    return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>'+(f.lot.type==='layer'?'🥚':'🍗')+' '+esc(f.lot.nom||'Lot')+'</span>'+(issuSimu?'<span class="badge b-bl" style="font-size:9px" title="Budget issu du module Simulation Déploiement de Bande"><i class="fas fa-calculator"></i> Simulation</span>':'')+'</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Categorie</th><th>Budget</th><th>Reel</th><th>Ecart</th><th>% Consomme</th></tr></thead><tbody>'+brows+'</tbody></table></div></div>';
+    return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>'+(f.lot.type==='layer'?'🥚':'🍗')+' '+esc(f.lot.nom||'Lot')+'</span>'+(issuSimu?'<span class="badge b-bl" style="font-size:9px" title="Budget issu du module Simulation Déploiement de Bande"><i class="fas fa-calculator"></i> Simulation</span>':'')+'</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Categorie</th><th>Budget</th><th>Reel</th><th>Ecart</th><th>% Consomme</th><th></th></tr></thead><tbody>'+brows+'</tbody></table></div></div>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">📋 Budget vs Reel</div><button class="btn btn-p btn-sm" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Budget</button></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📋 Budget vs Reel</div><div style="display:flex;gap:6px"><button class="btn btn-gh btn-sm" onclick="apercuBudget()"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-gh btn-sm" onclick="imprimerBudget()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-p btn-sm" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Budget</button></div></div>'
     +cards
     +'<div class="card"><div class="card-hd">📊 Graphique Budget vs Reel</div><div class="card-bd" style="position:relative;height:200px"><canvas id="finChartBudget"></canvas></div></div>';
+  window._finBudgetLastFin = fin; // conservé pour l'impression
   var ctxB=document.getElementById('finChartBudget');
   if(ctxB){
     var lb=[],bt=[],rt=[];
@@ -11691,20 +11692,103 @@ window.saveTresorerie=async function(){
   closeOverlay('ovTresorerie');toast((type==='entree'?'📥':'📤')+' '+fcfa(montant));
   await renderFinance(document.getElementById('contentArea'));
 };
-async function openBudgetModal(){
+async function openBudgetModal(editId, presetLotId){
   var lots=await getAll(S.FLOCKS);var sel=document.getElementById('budgetLot');
   sel.innerHTML='<option value="">— Global —</option>'+lots.map(function(l){return '<option value="'+l.id+'">'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
-  document.getElementById('budgetId').value='';document.getElementById('budgetAnnee').value=new Date().getFullYear();document.getElementById('budgetMontant').value='';
+  var b=null;
+  if(editId){
+    var budgets=await getAll(S.BUDGET); b=budgets.find(function(x){return x.id===editId;});
+    if(!b){toast('Budget introuvable','err');return;}
+  }
+  document.getElementById('budgetId').value=editId||'';
+  document.getElementById('budgetLot').value=b?(b.flockId||''):(presetLotId||'');
+  document.getElementById('budgetAnnee').value=b?b.annee:new Date().getFullYear();
+  document.getElementById('budgetMois').value=b?(b.mois||0):0;
+  document.getElementById('budgetCat').value=b?b.categorie:'poussin';
+  document.getElementById('budgetMontant').value=b?b.montantBudget:'';
+  var h3=document.querySelector('#ovBudget h3'); if(h3) h3.textContent=editId?'📋 Modifier le budget':'📋 Paramétrer un budget';
   openOverlay('ovBudget');
 }
 window.openBudgetModal=openBudgetModal;
 window.saveBudget=async function(){
+  var editId=parseInt(document.getElementById('budgetId').value)||null;
   var lotId=document.getElementById('budgetLot').value,annee=parseInt(document.getElementById('budgetAnnee').value)||new Date().getFullYear(),mois=parseInt(document.getElementById('budgetMois').value)||0,cat=document.getElementById('budgetCat').value,montant=parseFloat(document.getElementById('budgetMontant').value)||0;
   if(!montant){toast('Montant requis','err');return;}
-  await addRec(S.BUDGET,{flockId:lotId?parseInt(lotId):null,annee:annee,mois:mois,categorie:cat,montantBudget:montant,ts:Date.now()});
-  closeOverlay('ovBudget');toast('Budget: '+fcfa(montant));
+  if(editId){
+    var budgets=await getAll(S.BUDGET);var existing=budgets.find(function(x){return x.id===editId;});
+    await updRec(S.BUDGET,editId,Object.assign({},existing,{flockId:lotId?parseInt(lotId):null,annee:annee,mois:mois,categorie:cat,montantBudget:montant,ts:Date.now()}));
+    toast('Budget modifié : '+fcfa(montant));
+  } else {
+    await addRec(S.BUDGET,{flockId:lotId?parseInt(lotId):null,annee:annee,mois:mois,categorie:cat,montantBudget:montant,ts:Date.now()});
+    toast('Budget : '+fcfa(montant));
+  }
+  closeOverlay('ovBudget');
   await renderFinance(document.getElementById('contentArea'));
 };
+window.delBudget=async function(id){
+  var budgets=await getAll(S.BUDGET);var b=budgets.find(function(x){return x.id===id;});
+  if(!b){toast('Budget introuvable','err');return;}
+  if(b.source==='simulation' && !confirm('Ce budget provient du module Simulation — le supprimer le désynchronise de la simulation. Continuer ?')) return;
+  if(b.source!=='simulation' && !confirm('Supprimer ce budget ?')) return;
+  await delRec(S.BUDGET,id);toast('Budget supprimé');
+  await renderFinance(document.getElementById('contentArea'));
+};
+// ── Impression Budget vs Réel — reprend les mêmes montants affichés à l'écran ──
+async function buildBudgetHtml(){
+  const fin = window._finBudgetLastFin;
+  if(!fin || !fin.budgets.length) return null;
+  const cfg = await getExploitationSettings();
+  let totBudget=0, totReel=0;
+  const blocs = fin.finLots.map(f=>{
+    const lb = fin.budgets.filter(b=>b.flockId===f.lot.id);
+    if(!lb.length) return '';
+    const issuSimu = lb.some(b=>b.source==='simulation');
+    const rows = lb.map(b=>{
+      const r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
+      const ec=r-b.montantBudget;
+      totBudget+=b.montantBudget; totReel+=r;
+      return `<tr><td>${CAT_LABELS[b.categorie]||b.categorie}</td><td style="text-align:right">${Math.round(b.montantBudget).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(r).toLocaleString('fr-FR')}</td><td style="text-align:right;color:${ec<=0?'#059669':'#c1121f'}">${ec>=0?'+':''}${Math.round(ec).toLocaleString('fr-FR')}</td></tr>`;
+    }).join('');
+    return `<div style="margin-bottom:14px;page-break-inside:avoid"><div style="font-weight:700;font-size:12px;background:#f3f4f6;padding:6px 10px;border-radius:6px 6px 0 0">${f.lot.type==='layer'?'🥚':'🍗'} ${esc(f.lot.nom||'Lot')}${issuSimu?' <span style="font-size:9px;color:#1565c0;font-weight:400">(issu de la Simulation Déploiement de Bande)</span>':''}</div>
+      <table style="margin:0"><thead><tr><th>Catégorie</th><th style="text-align:right">Budget</th><th style="text-align:right">Réel</th><th style="text-align:right">Écart</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Budget vs Réel</title><style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:20px}
+    .doc{max-width:800px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:5px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:left}
+    th{background:#f9fafb}
+    .kpis{display:flex;gap:12px;margin-bottom:14px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800;color:#2d6a4f}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr">${buildEmetteurHeader(cfg)}
+      <div style="text-align:right"><div class="doc-type">BUDGET VS RÉEL</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${Math.round(totBudget).toLocaleString('fr-FR')}</div>Budget total (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(totReel).toLocaleString('fr-FR')}</div>Réel total (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:${totReel<=totBudget?'#059669':'#c1121f'}">${totReel<=totBudget?'+':''}${Math.round(totBudget-totReel).toLocaleString('fr-FR')}</div>Écart global (FCFA)</div>
+    </div>
+    ${blocs}
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'BUDGET-VS-REEL',new Date().toISOString().slice(0,10),Math.round(totReel),new Date().toISOString().slice(0,10))}</div>
+  </div></body></html>`;
+}
+window.apercuBudget = async function(){
+  const html = await buildBudgetHtml();
+  if(!html){ toast('Aucun budget à imprimer','err'); return; }
+  const w=window.open('','_blank','width=900,height=750');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+};
+window.imprimerBudget = window.apercuBudget;
+
 window.exportFinanceCSV=function(fin){
   if(!fin) return;
   var rows=['Lot,Recettes (F),Charges (F),Marge (F),Taux marge (%),Cout/tete (F)'];
@@ -19697,7 +19781,7 @@ async function renderSimuBande(ca){
     </div>
     <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:10px 14px;margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;opacity:.8">🔗 Lier au budget d'un lot réel</label>
-      <select id="simuLotCible" style="border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;min-width:180px" onchange="simuMajBoutonBudget()"></select>
+      <select id="simuLotCible" style="border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;min-width:180px" onchange="simuPrefillFromLot()"></select>
       <button class="btn btn-sm" id="simuBtnAppliquerBudget" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="simuAppliquerCommeBudget()" disabled><i class="fas fa-check"></i> Enregistrer comme budget du lot</button>
       <span id="simuBudgetStatus" style="font-size:11px;opacity:.85"></span>
     </div>
@@ -19954,10 +20038,11 @@ async function renderSimuBande(ca){
 }
 
 // ── Liaison Simulation → Budget d'un lot réel (Finance & Rentabilité) ──
+let simuLotCibleId = null;
 async function simuInitLotCible(){
   const sel = document.getElementById('simuLotCible'); if(!sel) return;
   const lots = (await getAll(S.FLOCKS)).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
-  sel.innerHTML = '<option value="">— Choisir un lot —</option>' + lots.map(l=>`<option value="${l.id}">${esc(l.nom)} (${l.type==='layer'?'Pondeuse':'Chair'})</option>`).join('');
+  sel.innerHTML = '<option value="">— Choisir un lot —</option>' + lots.map(l=>`<option value="${l.id}" ${l.id===simuLotCibleId?'selected':''}>${esc(l.nom)} (${l.type==='layer'?'Pondeuse':'Chair'})</option>`).join('');
   await simuMajBoutonBudget();
 }
 window.simuMajBoutonBudget = async function(){
@@ -19965,16 +20050,15 @@ window.simuMajBoutonBudget = async function(){
   const btn = document.getElementById('simuBtnAppliquerBudget');
   const status = document.getElementById('simuBudgetStatus');
   if(!sel || !btn) return;
-  const flockId = parseInt(sel.value)||null;
-  btn.disabled = !flockId;
+  simuLotCibleId = parseInt(sel.value)||null;
+  btn.disabled = !simuLotCibleId;
   if(!status) return;
-  if(!flockId){ status.textContent=''; return; }
-  const budgets = (await getAll(S.BUDGET)).filter(b=>b.flockId===flockId && b.source==='simulation');
+  if(!simuLotCibleId){ status.textContent=''; return; }
+  const budgets = (await getAll(S.BUDGET)).filter(b=>b.flockId===simuLotCibleId && b.source==='simulation');
   status.textContent = budgets.length ? '✓ Budget simulation déjà enregistré pour ce lot' : 'Aucun budget simulation enregistré pour ce lot';
 };
 window.simuAppliquerCommeBudget = async function(){
-  const sel = document.getElementById('simuLotCible');
-  const flockId = parseInt(sel?.value)||null;
+  const flockId = simuLotCibleId;
   if(!flockId){ toast('Choisissez un lot','err'); return; }
   const result = window._simuLastResult;
   if(!result){ toast('Aucun résultat de simulation à appliquer','err'); return; }
@@ -20628,6 +20712,29 @@ function simuGetCurrentParams(){
     prixOeufUnit:      read('sp_prixOeufUnit')
   };
 }
+
+// Pré-remplit les paramètres de simulation à partir des données réelles du lot choisi
+// (effectif, type, coût poussin si connu) — le reste des paramètres (aliment, vente…)
+// garde les valeurs actuelles/par défaut, ajustables manuellement ensuite.
+window.simuPrefillFromLot = async function(){
+  const sel = document.getElementById('simuLotCible');
+  const flockId = parseInt(sel?.value)||null;
+  if(!flockId) return;
+  const lots = await getAll(S.FLOCKS);
+  const lot = lots.find(l=>l.id===flockId);
+  if(!lot) return;
+  const p = Object.assign({}, SIMU_DEFAULTS, simuGetCurrentParams());
+  p.typeLot = lot.type==='layer' ? 'layer' : 'broiler';
+  if(lot.initialStock>0) p.nbBetes = lot.initialStock;
+  if(lot.costPerChick>0){
+    if(p.typeLot==='layer') p.coutPoussineLayer = lot.costPerChick;
+    else p.coutPoussin = lot.costPerChick;
+  }
+  try{ localStorage.setItem('avico_simu_params', JSON.stringify(p)); }catch(e){}
+  toast('✅ Paramètres pré-remplis depuis le lot "'+(lot.nom||'')+'" ('+p.nbBetes+' sujets, '+(p.typeLot==='layer'?'pondeuse':'chair')+')');
+  const ca = document.getElementById('contentArea');
+  if(ca) await renderSimuBande(ca);
+};
 
 window.simuRecalc = function(){
   const p = Object.assign({}, SIMU_DEFAULTS, simuGetCurrentParams());
