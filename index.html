@@ -1200,6 +1200,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   <!-- 9. FINANCE — résultat économique du cycle complet -->
   <div class="nav-section nav-section-biz"><i class="fas fa-star" style="font-size:8px"></i> ⑨ Finance</div>
   <div class="nav-item nav-item-biz" id="nav-finance"   onclick="goTo('finance')"><i class="fas fa-chart-line"></i> Finance &amp; Rentabilité</div>
+  <div class="nav-item nav-item-biz" id="nav-compta"    onclick="goTo('compta')"><i class="fas fa-book"></i> Comptabilité SYSCOHADA</div>
 
   </div>
   <!-- ══ FIN MODULES MÉTIER ══ -->
@@ -2278,7 +2279,8 @@ const S={
   COUVOIR_ECLOSION:'couvoir_eclosion',// Résultats d'éclosion
   INVENTAIRES:'inventaires_stock',   // Sessions d'inventaire physique (théorique/compté/écarts)
   PAIE:'paie_bulletins',             // Bulletins de paie mensuels (RH)
-  RESERVATIONS:'reservations'        // Réservations produits (stock futur avant commande ferme)
+  RESERVATIONS:'reservations',       // Réservations produits (stock futur avant commande ferme)
+  ECRITURES:'compta_ecritures'       // Écritures comptables SYSCOHADA (journal général)
 };
 
 const STORES_DEF=[
@@ -2319,7 +2321,8 @@ const STORES_DEF=[
   [S.COUVOIR_ECLOSION,'incubId'],
   [S.INVENTAIRES,'depotId'],
   [S.PAIE,'staffId'],
-  [S.RESERVATIONS,'clientId']
+  [S.RESERVATIONS,'clientId'],
+  [S.ECRITURES,'piece']
 ];
 
 // ════════════════════════════════════════════════════════
@@ -3055,7 +3058,7 @@ const ROLE_PERMS = {
   admin:      { label:'Administrateur', icon:'fa-crown',       color:'#c1121f', bg:'#ffebee',
     pages:'all' },
   manager:    { label:'Manager',        icon:'fa-user-tie',    color:'#1565c0', bg:'#e3f2fd',
-    pages:['dash','lots','finance','stock','clients','commandes','creances',
+    pages:['dash','lots','finance','compta','stock','clients','commandes','creances',
            'simubande','fab','gmao','rapports','reappro','prods','fourns','bcs','receptions','cond',
            'staff','settings','reprocouvoir'] },
   operateur:  { label:'Opérateur',      icon:'fa-hard-hat',    color:'#2d6a4f', bg:'#d8f3dc',
@@ -3075,7 +3078,7 @@ const ROLE_MODULE_PAGES = [
   {id:'receptions',label:'Réceptions'},
   {id:'cond',label:'Conditionnement'},
   {id:'clients',label:'Clients'}, {id:'commandes',label:'Commandes'}, {id:'creances',label:'Créances'},
-  {id:'finance',label:'Finance'}, {id:'fab',label:'Fabrication aliments'},
+  {id:'finance',label:'Finance'}, {id:'compta',label:'Comptabilité SYSCOHADA'}, {id:'fab',label:'Fabrication aliments'},
   {id:'gmao',label:'GMAO'}, {id:'staff',label:'Personnel'}, {id:'rapports',label:'Rapports'},
   {id:'reappro',label:'Réappro auto'}, {id:'simubande',label:'Simulation'},
   {id:'settings',label:'Paramétrage'},
@@ -3113,6 +3116,70 @@ var PAIE_CI = {
 // aliment d'un lot UNIQUEMENT si aucune charge "aliment" n'a été saisie manuellement pour
 // ce lot. Configurable (Paramétrage > Finance) au lieu d'être figé dans le code.
 var FINANCE_PARAMS = { prixAlimentDefaut: 185, seuilAlerteDerive: 15 };
+// ════════════════════════════════════════════════════════
+//  COMPTABILITÉ SYSCOHADA — Plan comptable + moteur de comptabilisation automatique
+//  ⚠️ Plan comptable simplifié adapté à l'activité avicole — à faire valider par un
+//  expert-comptable avant tout usage officiel (déclarations DGI, bilan certifié).
+// ════════════════════════════════════════════════════════
+const PLAN_COMPTABLE = {
+  '401':{lbl:'Fournisseurs',classe:4},
+  '411':{lbl:'Clients',classe:4},
+  '4311':{lbl:'CNPS',classe:4},
+  '4471':{lbl:'État — ITS',classe:4},
+  '4472':{lbl:'État — CMU',classe:4},
+  '422':{lbl:'Personnel — rémunérations dues',classe:4},
+  '521':{lbl:'Banque',classe:5},
+  '571':{lbl:'Caisse',classe:5},
+  '6011':{lbl:'Achats poussins',classe:6},
+  '6013':{lbl:'Achats aliment',classe:6},
+  '6015':{lbl:'Achats médicaments/vaccins',classe:6},
+  '6022':{lbl:'Achats emballages (alvéoles, cartons, ficelle)',classe:6},
+  '6051':{lbl:'Achats eau',classe:6},
+  '6052':{lbl:'Achats énergie',classe:6},
+  '6161':{lbl:'Primes d\'assurance',classe:6},
+  '6222':{lbl:'Transport',classe:6},
+  '6224':{lbl:'Entretien, réparations',classe:6},
+  '628':{lbl:'Charges diverses',classe:6},
+  '6410':{lbl:'Charges de personnel — salaires',classe:6},
+  '6411':{lbl:'Charges sociales patronales',classe:6},
+  '6813':{lbl:'Dotations aux amortissements',classe:6},
+  '701':{lbl:'Ventes — produits avicoles',classe:7},
+};
+// Catégorie de charge (module Finance/Charges, CAT_LABELS) → compte OHADA
+const COMPTE_PAR_CATEGORIE = {
+  poussin:'6011', aliment:'6013', medicament:'6015', eau:'6051',
+  main_oeuvre:'6410', energie:'6052', amortissement:'6813',
+  entretien:'6224', transport:'6222', assurance:'6161', autre:'628'
+};
+
+async function comptaNumeroPiece(journal, date){
+  const d=(date||new Date().toISOString().slice(0,10)).replace(/-/g,'');
+  const ecr=await getAll(S.ECRITURES);
+  const n=ecr.filter(e=>e.piece&&e.piece.startsWith(journal+'-'+d)).length+1;
+  return `${journal}-${d}-${String(n).padStart(3,'0')}`;
+}
+// Écriture générique — valide l'équilibre débit=crédit avant toute écriture (partie double).
+// journal : 'VE' (ventes), 'AC' (achats), 'BQ' (banque/trésorerie), 'PAIE' (paie), 'OD' (opérations diverses)
+async function passerEcriture({date, journal, libelle, lignes, refSource, ts}){
+  const totDebit = lignes.reduce((a,l)=>a+(l.debit||0),0);
+  const totCredit = lignes.reduce((a,l)=>a+(l.credit||0),0);
+  if(Math.abs(totDebit-totCredit) > 1){ // tolérance 1 FCFA pour arrondis
+    console.warn('Écriture déséquilibrée ignorée :', libelle, totDebit, totCredit);
+    return null;
+  }
+  const piece = await comptaNumeroPiece(journal, date);
+  const rec = {date, journal, piece, libelle, lignes, refSource:refSource||null, ts:ts||Date.now(), auteur:currentUser?.nom||'Système'};
+  const id = await addRec(S.ECRITURES, rec);
+  return Object.assign({id}, rec);
+}
+// Retire les écritures liées à une pièce source donnée (ex: annulation vente/réception) —
+// pour resynchronisation, sans jamais laisser d'écriture orpheline en cas d'annulation.
+async function annulerEcritures(refSource){
+  if(!refSource) return;
+  const ecr=(await getAll(S.ECRITURES)).filter(e=>e.refSource===refSource);
+  for(const e of ecr) await delRec(S.ECRITURES, e.id);
+}
+
 async function loadFinanceParamsOverrides(){
   try{
     const s = await getAll(S.SETTINGS_APP);
@@ -4602,6 +4669,7 @@ async function render(){
   else if(curPage==='commandes') await renderCommandes(ca);
   else if(curPage==='creances')  await renderCreances(ca);
   else if(curPage==='finance')   await renderFinance(ca);
+  else if(curPage==='compta')    await renderCompta(ca);
   else if(curPage==='gmao')      await renderGmao(ca);
   else if(curPage==='fab')       await renderFab(ca);
   else if(curPage==='rapports')  await renderRapports(ca);
@@ -8038,6 +8106,23 @@ async function saveRecCreate(){
     await regMvt({cadre:'reception',type:'entree',produitId:r.produitId,depotDestId:depotId,depotSrcId:null,quantite:r.qty,unite:r.unite,prixUnit:r.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:newRecId,ts:Date.now()});
   }
   closeOverlay('mRec');toast(allDone?'✓ Réception enregistrée — commande soldée, bon de réception archivé':'✓ Réception partielle enregistrée — bon de réception archivé');await renderBCs(apCA());
+  // ── Comptabilisation automatique : charges par catégorie (débit) / 401 Fournisseur (crédit) ──
+  try{
+    const[prods,fourns]=await Promise.all([getAll(S.PRODUITS),getAll(S.FOURNISSEURS)]);
+    const fourn=fourns.find(f=>f.id===bc.fournId);
+    const parCompte={};
+    for(const r of received){
+      const p=prods.find(x=>x.id===r.produitId);
+      const compte=COMPTE_PAR_CATEGORIE[p?.categorie]||'628';
+      parCompte[compte]=(parCompte[compte]||0)+Math.round(r.qty*r.prixUnit);
+    }
+    const totalAchat=Object.values(parCompte).reduce((a,v)=>a+v,0);
+    if(totalAchat>0){
+      const lignes=Object.entries(parCompte).map(([compte,montant])=>({compte,libelle:PLAN_COMPTABLE[compte]?.lbl||compte,debit:montant,credit:0}));
+      lignes.push({compte:'401',libelle:fourn?.nom||'Fournisseur',debit:0,credit:totalAchat,tiersId:bc.fournId,tiersNom:fourn?.nom});
+      await passerEcriture({date, journal:'AC', libelle:'Réception '+bc.ref+' — '+(fourn?.nom||''), lignes, refSource:'RECEPTION-'+newRecId});
+    }
+  }catch(e){ console.warn('Comptabilisation achat échouée :', e.message); }
   // Proposer l'aperçu / impression immédiate du bon de réception (livraison de la commande)
   if(newRecId>0 && confirm('Réception enregistrée. Voulez-vous ouvrir l\'aperçu du bon de réception à imprimer ?')){
     printBR(newRecId);
@@ -8125,6 +8210,24 @@ async function saveRecUpdate(){
     await regMvt({cadre:'reception',type:'entree',produitId:e.produitId,depotDestId:depotId,depotSrcId:null,quantite:e.qteRecue,unite:e.unite,prixUnit:e.prixUnit,fournId:bc.fournId,ref:bc.ref+'/'+(bl||'BL'),motif:`Réception BC ${bc.ref}`,date,recId:rec.id,ts:rec.ts||Date.now()});
   }
   await updRec(S.RECS,rec.id,{...rec,date,bl:bl||'',depotId,lignes:newLignes,livraisonComplete:allDone});
+  // ── Resynchroniser la comptabilisation (supprime l'ancienne écriture, recrée au bon montant) ──
+  try{
+    const[prods,fourns]=await Promise.all([getAll(S.PRODUITS),getAll(S.FOURNISSEURS)]);
+    const fourn=fourns.find(x=>x.id===bc.fournId);
+    await annulerEcritures('RECEPTION-'+rec.id);
+    const parCompte={};
+    for(const e of newLignes){
+      const p=prods.find(x=>x.id===e.produitId);
+      const compte=COMPTE_PAR_CATEGORIE[p?.categorie]||'628';
+      parCompte[compte]=(parCompte[compte]||0)+Math.round(e.qteRecue*e.prixUnit);
+    }
+    const totalAchat=Object.values(parCompte).reduce((a,v)=>a+v,0);
+    if(totalAchat>0){
+      const lignesC=Object.entries(parCompte).map(([compte,montant])=>({compte,libelle:PLAN_COMPTABLE[compte]?.lbl||compte,debit:montant,credit:0}));
+      lignesC.push({compte:'401',libelle:fourn?.nom||'Fournisseur',debit:0,credit:totalAchat,tiersId:bc.fournId,tiersNom:fourn?.nom});
+      await passerEcriture({date, journal:'AC', libelle:'Réception '+bc.ref+' (modifiée) — '+(fourn?.nom||''), lignes:lignesC, refSource:'RECEPTION-'+rec.id});
+    }
+  }catch(e){ console.warn('Resynchronisation comptable échouée :', e.message); }
   recEditId=null;closeOverlay('mRec');toast('✓ Réception mise à jour — stock et commande resynchronisés');
   await renderReceptions(document.getElementById('contentArea'));
 }
@@ -8147,6 +8250,7 @@ async function delReception(recId){
   }
   const mvts=await findRecMvts(rec,bc);
   for(const m of mvts) await delRec(S.MVTS,m.id);
+  try{ await annulerEcritures('RECEPTION-'+rec.id); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
   await delRec(S.RECS,recId);
   toast('✓ Réception supprimée — stock et commande mis à jour');
   await renderReceptions(document.getElementById('contentArea'));
@@ -8405,6 +8509,7 @@ window.genererBulletinsDuMois=async function(){
   if(!confirm(`Générer ${checked.length} bulletin(s) de paie pour ${periode} ?`)) return;
   const staff = await getAll(S.STAFF);
   let n=0, coutTotalEmployeur=0;
+  let sBrut=0, sCnpsSal=0, sCnpsEmpl=0, sIts=0, sCmuSal=0, sCmuEmpl=0, sNet=0;
   for(const id of checked){
     const s = staff.find(x=>x.id===id); if(!s) continue;
     const existants = (await getAll(S.PAIE)).filter(b=>b.staffId===id && b.periode===periode);
@@ -8415,7 +8520,24 @@ window.genererBulletinsDuMois=async function(){
       ...calc, statut:'genere', dateGeneration:new Date().toISOString(), auteur:currentUser?.nom||'Système', ts:Date.now()
     });
     coutTotalEmployeur += calc.coutEmployeur;
+    sBrut+=calc.brut; sCnpsSal+=calc.cnpsSalarie; sCnpsEmpl+=calc.cnpsEmployeurTotal;
+    sIts+=calc.its; sCmuSal+=calc.cmuSalarie; sCmuEmpl+=calc.cmuEmployeur; sNet+=calc.net;
     n++;
+  }
+  // ── Comptabilisation automatique de la paie (SYSCOHADA) ──
+  if(n>0){
+    try{
+      await annulerEcritures('PAIE-'+periode);
+      const lignes=[
+        {compte:'6410', libelle:'Salaires bruts', debit:Math.round(sBrut), credit:0},
+      ];
+      if(sCnpsEmpl+sCmuEmpl>0) lignes.push({compte:'6411', libelle:'Charges sociales patronales', debit:Math.round(sCnpsEmpl+sCmuEmpl), credit:0});
+      lignes.push({compte:'422', libelle:'Personnel — net à payer', debit:0, credit:Math.round(sNet)});
+      if(sCnpsSal+sCnpsEmpl>0) lignes.push({compte:'4311', libelle:'CNPS à reverser', debit:0, credit:Math.round(sCnpsSal+sCnpsEmpl)});
+      if(sIts>0) lignes.push({compte:'4471', libelle:'ITS à reverser', debit:0, credit:Math.round(sIts)});
+      if(sCmuSal+sCmuEmpl>0) lignes.push({compte:'4472', libelle:'CMU à reverser', debit:0, credit:Math.round(sCmuSal+sCmuEmpl)});
+      await passerEcriture({date:periode+'-28', journal:'PAIE', libelle:'Paie '+periode+' ('+n+' employé(s))', lignes, refSource:'PAIE-'+periode});
+    }catch(e){ console.warn('Comptabilisation paie échouée :', e.message); }
   }
   // ── Reflète automatiquement le coût réel de la paie en Finance & Rentabilité ──
   // Sans ça, la paie générée ici restait invisible du Compte de Résultat, sauf à la
@@ -9383,6 +9505,23 @@ window.changeSaleStatut=async function(id,newStatut){
     if(!s) return;
     const labels={confirmed:'Confirmée',delivered:'Livrée ✓',paid:'Payée — encaissement enregistré ✓'};
     await updRec(S.SALES,id,{...s,statut:newStatut,ts:Date.now()});
+    // ── Paiement comptant direct (jamais passé par "Facturer") : comptabiliser la vente
+    // ET l'encaissement en une fois, sinon le chiffre d'affaires resterait invisible en compta. ──
+    if(newStatut==='paid' && !s.numFacture){
+      try{
+        const clients=await getAll(S.CLIENTS); const c=clients.find(x=>x.id===s.clientId);
+        const today=new Date().toISOString().slice(0,10);
+        await annulerEcritures('VENTE-'+s.id);
+        await passerEcriture({
+          date:today, journal:'VE', libelle:'Vente comptant '+(s.ref||'')+' — '+(c?.nom||''),
+          lignes:[
+            {compte:'521', libelle:'Encaissement comptant', debit:Math.round(s.totalHT||0), credit:0, tiersId:s.clientId, tiersNom:c?.nom},
+            {compte:'701', libelle:'Ventes produits avicoles', debit:0, credit:Math.round(s.totalHT||0)}
+          ],
+          refSource:'VENTE-'+s.id
+        });
+      }catch(e){ console.warn('Comptabilisation vente comptant échouée :', e.message); }
+    }
     toast(labels[newStatut]||'Statut mis à jour');
     await render();
   } finally { _saleActionsInFlight.delete(lockKey); }
@@ -11366,6 +11505,195 @@ async function computeFinanceGlobale(){
     totalChargesGlobalesNonAffectees:totalChGlobal};
 }
 
+// ══════════════════════════════════════════════════════
+//  COMPTABILITÉ SYSCOHADA — Journal général, Grand Livre, Balance, Export FEC
+// ══════════════════════════════════════════════════════
+let comptaTab='journal', comptaDateMin=null, comptaDateMax=null, comptaCompteSel='';
+function comptaCA(){ return document.getElementById('comptaTabContent') || document.getElementById('contentArea'); }
+async function renderCompta(ca){
+  const tabs=[
+    {id:'journal',    icon:'fa-list',          label:'Journal général'},
+    {id:'grandlivre', icon:'fa-book-open',     label:'Grand Livre'},
+    {id:'balance',    icon:'fa-scale-balanced',label:'Balance'},
+    {id:'fec',        icon:'fa-file-export',   label:'Export FEC'},
+  ];
+  const tabNav=tabs.map(t=>`<button class="tab-btn ${comptaTab===t.id?'on':''}" onclick="switchComptaTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
+  ca.innerHTML=`
+    <div class="page-header"><div class="page-header-title"><i class="fas fa-book" style="color:var(--g2)"></i> Comptabilité SYSCOHADA</div></div>
+    <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠️ Plan comptable simplifié généré automatiquement depuis l'activité de l'ERP — à faire valider par un expert-comptable avant toute déclaration officielle ou clôture d'exercice.</div>
+    <div class="tab-nav" id="comptaTabNav">${tabNav}</div>
+    <div id="comptaTabContent" class="stock-page"></div>`;
+  await renderComptaTab();
+}
+window.renderCompta=renderCompta;
+window.switchComptaTab=async function(t){ comptaTab=t; document.querySelectorAll('#comptaTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchComptaTab('${t}')`)); await renderComptaTab(); };
+async function renderComptaTab(){
+  const el=comptaCA(); if(!el) return;
+  if(comptaTab==='journal') await renderComptaJournal(el);
+  else if(comptaTab==='grandlivre') await renderComptaGrandLivre(el);
+  else if(comptaTab==='balance') await renderComptaBalance(el);
+  else if(comptaTab==='fec') await renderComptaFEC(el);
+}
+function comptaFiltreBar(showCompte){
+  const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = comptaDateMax || new Date().toISOString().slice(0,10);
+  return `<div class="card" style="margin-bottom:14px"><div class="card-bd" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+    <div class="fg" style="margin:0"><label style="font-size:11px">Du</label><input type="date" id="comptaDateMinInp" value="${dateMin}" onchange="comptaMajFiltre()"></div>
+    <div class="fg" style="margin:0"><label style="font-size:11px">Au</label><input type="date" id="comptaDateMaxInp" value="${dateMax}" onchange="comptaMajFiltre()"></div>
+    ${showCompte?`<div class="fg" style="margin:0;min-width:220px"><label style="font-size:11px">Compte</label><select id="comptaCompteInp" onchange="comptaMajFiltre()"><option value="">— Choisir —</option>${Object.entries(PLAN_COMPTABLE).map(([n,c])=>`<option value="${n}" ${n===comptaCompteSel?'selected':''}>${n} — ${c.lbl}</option>`).join('')}</select></div>`:''}
+  </div></div>`;
+}
+window.comptaMajFiltre=function(){
+  comptaDateMin=document.getElementById('comptaDateMinInp')?.value||null;
+  comptaDateMax=document.getElementById('comptaDateMaxInp')?.value||null;
+  const cSel=document.getElementById('comptaCompteInp'); if(cSel) comptaCompteSel=cSel.value;
+  renderComptaTab();
+};
+
+// ── Journal général ──
+async function renderComptaJournal(el){
+  const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = comptaDateMax || new Date().toISOString().slice(0,10);
+  const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.ts||0)-(b.ts||0));
+  const totDebit=ecr.reduce((a,e)=>a+e.lignes.reduce((s,l)=>s+(l.debit||0),0),0);
+  const totCredit=ecr.reduce((a,e)=>a+e.lignes.reduce((s,l)=>s+(l.credit||0),0),0);
+  const rows=ecr.map(e=>e.lignes.map((l,i)=>`<tr>
+    ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px;color:var(--text3)">${e.date}<br><strong>${esc(e.piece)}</strong></td>`:''}
+    ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px"><span class="badge b-bl">${e.journal}</span></td>`:''}
+    <td style="font-size:11px">${l.compte} — ${esc(l.libelle||PLAN_COMPTABLE[l.compte]?.lbl||'')}</td>
+    <td style="text-align:right">${l.debit?fcfa(l.debit):''}</td>
+    <td style="text-align:right">${l.credit?fcfa(l.credit):''}</td>
+    ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px;color:var(--text3)">${esc(e.libelle)}</td>`:''}
+  </tr>`).join('')).join('');
+  el.innerHTML=`${comptaFiltreBar(false)}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div class="g4" style="flex:1"><div class="kpi kpi-b"><div class="kpi-lbl">Écritures</div><div class="kpi-val">${ecr.length}</div></div>
+    <div class="kpi kpi-g"><div class="kpi-lbl">Total débit</div><div class="kpi-val" style="font-size:14px">${fcfa(totDebit)}</div></div>
+    <div class="kpi kpi-r"><div class="kpi-lbl">Total crédit</div><div class="kpi-val" style="font-size:14px">${fcfa(totCredit)}</div></div>
+    <div class="kpi ${Math.abs(totDebit-totCredit)<2?'kpi-g':'kpi-r'}"><div class="kpi-lbl">Équilibre</div><div class="kpi-val" style="font-size:14px">${Math.abs(totDebit-totCredit)<2?'✓ OK':'⚠ Écart'}</div></div></div>
+  </div>
+  <div class="card"><div class="card-hd">Journal général (${dateMin} au ${dateMax})</div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>Date/Pièce</th><th>Journal</th><th>Compte</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th>Libellé</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Aucune écriture sur cette période</td></tr>'}</tbody></table></div></div>`;
+}
+
+// ── Grand Livre (par compte) ──
+async function renderComptaGrandLivre(el){
+  const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = comptaDateMax || new Date().toISOString().slice(0,10);
+  let corps='';
+  if(comptaCompteSel){
+    const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax);
+    const lignes=[];
+    ecr.forEach(e=>e.lignes.forEach(l=>{ if(l.compte===comptaCompteSel) lignes.push({date:e.date,piece:e.piece,libelle:l.libelle||e.libelle,debit:l.debit||0,credit:l.credit||0,tiersNom:l.tiersNom}); }));
+    lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+    let solde=0;
+    const rows=lignes.map(l=>{ solde+=l.debit-l.credit; return `<tr><td>${l.date}</td><td>${esc(l.piece)}</td><td style="font-size:11px">${esc(l.libelle)}${l.tiersNom?' — '+esc(l.tiersNom):''}</td><td style="text-align:right">${l.debit?fcfa(l.debit):''}</td><td style="text-align:right">${l.credit?fcfa(l.credit):''}</td><td style="text-align:right;font-weight:700">${fcfa(solde)}</td></tr>`; }).join('');
+    const totDebit=lignes.reduce((a,l)=>a+l.debit,0), totCredit=lignes.reduce((a,l)=>a+l.credit,0);
+    corps=`<div class="card"><div class="card-hd">${comptaCompteSel} — ${PLAN_COMPTABLE[comptaCompteSel]?.lbl||''} — Solde : <span style="color:${solde>=0?'var(--g2)':'var(--red)'}">${fcfa(solde)}</span></div><div class="card-bd tbl-wrap"><table class="tbl">
+      <thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th style="text-align:right">Solde progressif</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Aucun mouvement</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="3">TOTAL</td><td style="text-align:right">${fcfa(totDebit)}</td><td style="text-align:right">${fcfa(totCredit)}</td><td></td></tr></tfoot></table></div></div>`;
+  } else {
+    corps=`<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Sélectionnez un compte pour afficher son grand livre.</div></div>`;
+  }
+  el.innerHTML=`${comptaFiltreBar(true)}${corps}`;
+}
+
+// ── Balance générale ──
+async function renderComptaBalance(el){
+  const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = comptaDateMax || new Date().toISOString().slice(0,10);
+  const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax);
+  const parCompte={};
+  ecr.forEach(e=>e.lignes.forEach(l=>{
+    if(!parCompte[l.compte]) parCompte[l.compte]={debit:0,credit:0};
+    parCompte[l.compte].debit+=l.debit||0; parCompte[l.compte].credit+=l.credit||0;
+  }));
+  const comptes=Object.keys(parCompte).sort();
+  let totDebit=0,totCredit=0;
+  const rows=comptes.map(n=>{
+    const c=parCompte[n]; const solde=c.debit-c.credit;
+    totDebit+=c.debit; totCredit+=c.credit;
+    return `<tr><td>${n}</td><td>${PLAN_COMPTABLE[n]?.lbl||''}</td><td style="text-align:right">${fcfa(c.debit)}</td><td style="text-align:right">${fcfa(c.credit)}</td><td style="text-align:right;font-weight:700;color:${solde>=0?'var(--g2)':'var(--red)'}">${solde>=0?'':''}${fcfa(solde)}</td></tr>`;
+  }).join('');
+  el.innerHTML=`${comptaFiltreBar(false)}
+  <div class="card"><div class="card-hd" style="display:flex;justify-content:space-between"><span>Balance générale (${dateMin} au ${dateMax})</span><div style="display:flex;gap:6px"><button class="btn btn-gh btn-sm" onclick="apercuBalanceComptable()"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-gh btn-sm" onclick="imprimerBalanceComptable()"><i class="fas fa-print"></i> Imprimer</button></div></div><div class="card-bd tbl-wrap"><table class="tbl">
+    <thead><tr><th>Compte</th><th>Libellé</th><th style="text-align:right">Total débit</th><th style="text-align:right">Total crédit</th><th style="text-align:right">Solde</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Aucune écriture sur cette période</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="2">TOTAL</td><td style="text-align:right">${fcfa(totDebit)}</td><td style="text-align:right">${fcfa(totCredit)}</td><td></td></tr></tfoot></table></div></div>`;
+}
+async function buildBalanceComptableHtml(){
+  const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = comptaDateMax || new Date().toISOString().slice(0,10);
+  const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax);
+  const cfg=await getExploitationSettings();
+  const parCompte={};
+  ecr.forEach(e=>e.lignes.forEach(l=>{ if(!parCompte[l.compte]) parCompte[l.compte]={debit:0,credit:0}; parCompte[l.compte].debit+=l.debit||0; parCompte[l.compte].credit+=l.credit||0; }));
+  const comptes=Object.keys(parCompte).sort();
+  let totDebit=0,totCredit=0;
+  const rows=comptes.map(n=>{ const c=parCompte[n]; const solde=c.debit-c.credit; totDebit+=c.debit; totCredit+=c.credit;
+    return `<tr><td>${n}</td><td>${PLAN_COMPTABLE[n]?.lbl||''}</td><td style="text-align:right">${Math.round(c.debit).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(c.credit).toLocaleString('fr-FR')}</td><td style="text-align:right;font-weight:700">${Math.round(solde).toLocaleString('fr-FR')}</td></tr>`;
+  }).join('');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Balance générale</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:850px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:6px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:left}
+    th{background:#f9fafb} tfoot td{font-weight:800;background:#f9fafb}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc"><div class="hdr">${buildEmetteurHeader(cfg)}<div style="text-align:right"><div class="doc-type">BALANCE GÉNÉRALE</div><div style="font-size:10px;color:#888">${dateMin} au ${dateMax}</div></div></div>
+    <table><thead><tr><th>Compte</th><th>Libellé</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th style="text-align:right">Solde</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:#999">Aucune écriture</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="2">TOTAL</td><td style="text-align:right">${Math.round(totDebit).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(totCredit).toLocaleString('fr-FR')}</td><td></td></tr></tfoot></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'BALANCE-COMPTABLE',dateMin+'_'+dateMax,Math.round(totDebit),dateMax)}</div>
+  </div></body></html>`;
+}
+window.apercuBalanceComptable=async function(){
+  const html=await buildBalanceComptableHtml();
+  const w=window.open('','_blank','width=900,height=750'); if(!w){toast('Autoriser les pop-ups','err');return;}
+  w.document.write(html); w.document.close();
+};
+window.imprimerBalanceComptable=window.apercuBalanceComptable;
+
+// ── Export FEC (Fichier des Écritures Comptables) ──
+async function renderComptaFEC(el){
+  el.innerHTML=`${comptaFiltreBar(false)}
+  <div class="card"><div class="card-bd" style="text-align:center;padding:30px">
+    <i class="fas fa-file-export" style="font-size:36px;color:var(--g2);margin-bottom:12px;display:block"></i>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:16px">Export au format FEC (Fichier des Écritures Comptables) — toutes les écritures de la période sélectionnée, format tabulé standard.</p>
+    <button class="btn btn-p" onclick="exporterFEC()"><i class="fas fa-download"></i> Télécharger le FEC</button>
+  </div></div>`;
+}
+window.exporterFEC=async function(){
+  const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = comptaDateMax || new Date().toISOString().slice(0,10);
+  const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const cols=['JournalCode','JournalLib','EcritureNum','EcritureDate','CompteNum','CompteLib','CompAuxNum','CompAuxLib','PieceRef','PieceDate','EcritureLib','Debit','Credit'];
+  const rows=[cols.join('\t')];
+  ecr.forEach(e=>{
+    e.lignes.forEach(l=>{
+      rows.push([
+        e.journal, e.journal, e.piece, e.date.replace(/-/g,''),
+        l.compte, (PLAN_COMPTABLE[l.compte]?.lbl||'').replace(/\t/g,' '),
+        l.tiersId||'', (l.tiersNom||'').replace(/\t/g,' '),
+        e.piece, e.date.replace(/-/g,''), (l.libelle||e.libelle||'').replace(/\t/g,' '),
+        (l.debit||0).toFixed(2).replace('.',','), (l.credit||0).toFixed(2).replace('.',',')
+      ].join('\t'));
+    });
+  });
+  const cfg=await getExploitationSettings();
+  const nomFichier=(cfg.nomExploitation||'AviNest').replace(/[^a-zA-Z0-9]/g,'')+'_FEC_'+dateMin.replace(/-/g,'')+'_'+dateMax.replace(/-/g,'')+'.txt';
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/plain;charset=utf-8'})); a.download=nomFichier; a.click();
+  toast('✅ FEC exporté : '+nomFichier);
+};
+
 async function renderFinance(ca){
   Object.values(finCharts).forEach(function(c){try{c.destroy();}catch(e){}});
   finCharts={};
@@ -11569,7 +11897,9 @@ window.filtrerCharges=function(){
 window.deleteCharge=async function(id){
   const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);
   if(c && c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — supprimez plutôt les bulletins correspondants dans RH > Bulletins','err');return;}
-  if(!confirm('Supprimer ?')) return;await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
+  if(!confirm('Supprimer ?')) return;
+  try{ await annulerEcritures('CHARGE-'+id); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
+  await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
 };
 
 // ── État des dépenses imprimable — respecte les filtres lot/catégorie actifs à l'écran ──
@@ -11854,8 +12184,22 @@ window.saveChargeManuelle=async function(){
   var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0;
   if(!date||!montant||!lib){toast('Date, libelle et montant requis','err');return;}
   var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,operatorId:currentUser?.id||1,ts:Date.now()};
+  var chargeId=editId;
   if(editId) await updRec(S.CHARGES,editId,data);
-  else await addRec(S.CHARGES,data);
+  else chargeId=await addRec(S.CHARGES,data);
+  // ── Comptabilisation automatique : compte de charge (débit) / 521 Banque (crédit) ──
+  try{
+    const compte=COMPTE_PAR_CATEGORIE[cat]||'628';
+    await annulerEcritures('CHARGE-'+chargeId);
+    await passerEcriture({
+      date, journal:'OD', libelle:lib,
+      lignes:[
+        {compte, libelle:PLAN_COMPTABLE[compte]?.lbl||lib, debit:Math.round(montant), credit:0},
+        {compte:'521', libelle:'Décaissement', debit:0, credit:Math.round(montant)}
+      ],
+      refSource:'CHARGE-'+chargeId
+    });
+  }catch(e){ console.warn('Comptabilisation charge échouée :', e.message); }
   closeOverlay('ovChargeManuelle');toast(editId?'Charge modifiée : '+fcfa(montant):'Charge: '+fcfa(montant));
   await renderFinance(document.getElementById('contentArea'));
 };
@@ -13454,6 +13798,17 @@ window.savePayerBC=async function(){
   const paiements=(bc.paiements||[]).slice();
   paiements.push({date,montant,mode,ref,ts:Date.now(),auteur:currentUser?.nom||'Système'});
   await updRec(S.BCS,bcId,Object.assign({},bc,{paiements,ts:Date.now()}));
+  try{
+    const fourns=await getAll(S.FOURNISSEURS); const fourn=fourns.find(f=>f.id===bc.fournId);
+    await passerEcriture({
+      date, journal:'BQ', libelle:'Règlement fournisseur '+bc.ref+' — '+(fourn?.nom||''),
+      lignes:[
+        {compte:'401', libelle:fourn?.nom||'Fournisseur', debit:Math.round(montant), credit:0, tiersId:bc.fournId, tiersNom:fourn?.nom},
+        {compte:'521', libelle:'Décaissement '+mode, debit:0, credit:Math.round(montant)}
+      ],
+      refSource:'REGLFOURN-'+bcId+'-'+Date.now()
+    });
+  }catch(e){ console.warn('Comptabilisation règlement fournisseur échouée :', e.message); }
   closeOverlay('mPayerBC');toast('Règlement fournisseur enregistré');
   await renderFinTiers(document.getElementById('finTabContent')||document.getElementById('contentArea'));
 };
@@ -13516,6 +13871,20 @@ window.facturerVente = async function(id) {
     dateFacture:today, dateEcheance:dateEch,
     paiements: s.paiements || [], ts:Date.now()
   }));
+  // ── Comptabilisation automatique (SYSCOHADA) : 411 Client (débit) / 701 Ventes (crédit) ──
+  // Ne doit jamais bloquer la facturation en cas d'erreur — la vente reste prioritaire.
+  try{
+    const clients=await getAll(S.CLIENTS); const c=clients.find(x=>x.id===s.clientId);
+    await annulerEcritures('VENTE-'+s.id);
+    await passerEcriture({
+      date:today, journal:'VE', libelle:'Facture '+numFacture+' — '+(c?.nom||''),
+      lignes:[
+        {compte:'411', libelle:c?.nom||'Client', debit:Math.round(s.totalHT||0), credit:0, tiersId:s.clientId, tiersNom:c?.nom},
+        {compte:'701', libelle:'Ventes produits avicoles', debit:0, credit:Math.round(s.totalHT||0)}
+      ],
+      refSource:'VENTE-'+s.id
+    });
+  }catch(e){ console.warn('Comptabilisation facture échouée :', e.message); }
   toast('Facture ' + numFacture + ' emise' + (dateEch?' -- echeance '+dateEch:''));
   await renderCommandes(document.getElementById('contentArea'));
 };
@@ -13591,6 +13960,17 @@ window.saveEncaissement = async function() {
     libelle:'Encaissement ' + (s.numFacture||s.ref||'--') + ' -- ' + (client.nom||''),
     ref: s.numFacture||s.ref||'', ts:Date.now()
   });
+  // ── Comptabilisation automatique : 521 Banque (débit) / 411 Client (crédit) ──
+  try{
+    await passerEcriture({
+      date, journal:'BQ', libelle:'Règlement client '+(s.numFacture||s.ref||'')+' — '+(client.nom||''),
+      lignes:[
+        {compte:'521', libelle:'Encaissement '+mode, debit:Math.round(montant), credit:0},
+        {compte:'411', libelle:client.nom||'Client', debit:0, credit:Math.round(montant), tiersId:s.clientId, tiersNom:client.nom}
+      ],
+      refSource:'REGLCLIENT-'+saleId+'-'+Date.now()
+    });
+  }catch(e){ console.warn('Comptabilisation encaissement échouée :', e.message); }
   toast(newStatut==='paid' ? 'Facture soldee -- enregistre en tresorerie' : 'Paiement partiel : ' + Math.round(totalPaye/(s.totalHT||1)*100) + '% recu');
   closeOverlay('mEncaiss');
   await renderCommandes(document.getElementById('contentArea'));
