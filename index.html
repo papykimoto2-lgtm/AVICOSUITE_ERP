@@ -19958,7 +19958,8 @@ async function renderSimuBande(ca){
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="simuExportCSV()"><i class="fas fa-file-csv"></i> Export CSV</button>
-        <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="window.print()"><i class="fas fa-print"></i> Imprimer</button>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="apercuSimulation()"><i class="fas fa-eye"></i> Aperçu</button>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="imprimerSimulation()"><i class="fas fa-print"></i> Imprimer</button>
       </div>
     </div>
     <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:10px 14px;margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -20266,7 +20267,77 @@ window.simuAppliquerCommeBudget = async function(){
   }
   toast('✅ Budget du lot "'+(lot?.nom||'')+'" mis à jour depuis la simulation');
   await simuMajBoutonBudget();
+  if(confirm('Budget enregistré. Voulez-vous ouvrir l\'aperçu détaillé de la simulation à imprimer ?')){
+    apercuSimulation(lot);
+  }
 };
+
+// ── Aperçu / Impression détaillée de la simulation — entête officiel + QR, cohérent avec
+// le reste de l'app. Détail phase par phase (coûts directs/indirects, recette, marge). ──
+async function buildSimulationHtml(lotLie){
+  const result = window._simuLastResult;
+  if(!result) return null;
+  let savedP = {};
+  try{ savedP = JSON.parse(localStorage.getItem('avico_simu_params')||'{}'); }catch(e){}
+  const p = Object.assign({}, SIMU_DEFAULTS, savedP);
+  const cfg = await getExploitationSettings();
+  const phaseRows = (result.rows||[]).map(r=>`<tr>
+    <td>${r.ph.icon} ${esc(r.ph.label)}</td>
+    <td style="text-align:right">S${r.ph.semDeb}-S${r.ph.semFin}</td>
+    <td style="text-align:right">${r.vivantsDebut.toLocaleString('fr-FR')} → ${r.vivantsFin.toLocaleString('fr-FR')}</td>
+    <td style="text-align:right">${Math.round(r.totalFeedKg).toLocaleString('fr-FR')} kg</td>
+    <td style="text-align:right">${Math.round(r.coutDirectPhase).toLocaleString('fr-FR')}</td>
+    <td style="text-align:right">${Math.round(r.coutIndirectPhase).toLocaleString('fr-FR')}</td>
+    <td style="text-align:right">${Math.round(r.recettePhase).toLocaleString('fr-FR')}</td>
+    <td style="text-align:right;font-weight:700;color:${r.margePhase>=0?'#059669':'#c1121f'}">${r.margePhase>=0?'+':''}${Math.round(r.margePhase).toLocaleString('fr-FR')}</td>
+  </tr>`).join('');
+  const typeLbl = p.typeLot==='layer' ? 'Pondeuse 🥚' : 'Poulet de chair 🍗';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Simulation Déploiement de Bande</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:1000px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px}
+    th,td{padding:6px 8px;border:1px solid #e5e7eb;font-size:10px;text-align:left}
+    th{background:#f3f4f6}
+    tfoot td{font-weight:800;background:#f9fafb}
+    .kpis{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+    .kpi-box{flex:1;min-width:130px;border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px;text-align:center}
+    .kpi-val{font-size:15px;font-weight:800;color:#2d6a4f}
+    .section-title{font-size:11px;font-weight:800;color:#1a5c2a;text-transform:uppercase;border-left:3px solid #1a5c2a;padding-left:8px;margin:14px 0 8px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4 landscape}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr">${buildEmetteurHeader(cfg)}
+      <div style="text-align:right"><div class="doc-type">SIMULATION DÉPLOIEMENT DE BANDE</div><div style="font-size:10px;color:#888">${new Date().toLocaleDateString('fr-FR')}${lotLie?' · Lot lié : '+esc(lotLie.nom||''):''}</div></div></div>
+    <table><tr><th>Type de lot</th><td>${typeLbl}</td><th>Effectif</th><td>${p.nbBetes.toLocaleString('fr-FR')}</td><th>Mortalité prévue</th><td>${p.tauxMortalite}%</td></tr></table>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${Math.round(result.totalCout).toLocaleString('fr-FR')}</div>Coûts totaux (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(result.cumRecette).toLocaleString('fr-FR')}</div>Recettes totales (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:${result.margeBrute>=0?'#059669':'#c1121f'}">${Math.round(result.margeBrute).toLocaleString('fr-FR')}</div>Marge brute (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:${result.margeNette>=0?'#059669':'#c1121f'}">${Math.round(result.margeNette).toLocaleString('fr-FR')}</div>Marge nette (FCFA)</div>
+      <div class="kpi-box"><div class="kpi-val">${result.tauxMgNette}%</div>Taux marge nette</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(result.coutRevientTete).toLocaleString('fr-FR')}</div>Coût de revient/tête</div>
+    </div>
+    <div class="section-title">Détail phase par phase</div>
+    <table><thead><tr><th>Phase</th><th style="text-align:right">Semaines</th><th style="text-align:right">Effectif</th><th style="text-align:right">Aliment</th><th style="text-align:right">Coûts directs</th><th style="text-align:right">Coûts indirects</th><th style="text-align:right">Recette</th><th style="text-align:right">Marge</th></tr></thead>
+    <tbody>${phaseRows}</tbody>
+    <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${Math.round(result.cumCoutDirect).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(result.cumCoutIndirect).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(result.cumRecette).toLocaleString('fr-FR')}</td><td style="text-align:right;color:${result.margeNette>=0?'#059669':'#c1121f'}">${result.margeNette>=0?'+':''}${Math.round(result.margeNette).toLocaleString('fr-FR')}</td></tr></tfoot></table>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'SIMULATION',lotLie?lotLie.nom:'GENERIQUE',Math.round(result.totalCout),new Date().toISOString().slice(0,10))}</div>
+    <p style="font-size:9px;color:#888;margin-top:10px">Document de simulation — les montants réels peuvent différer selon les conditions d'élevage effectives. ${lotLie?'Ce document a été enregistré comme budget de référence pour le lot "'+esc(lotLie.nom||'')+'".':''}</p>
+  </div></body></html>`;
+}
+window.apercuSimulation = async function(lotLie){
+  const html = await buildSimulationHtml(lotLie && lotLie.nom ? lotLie : null);
+  if(!html){ toast('Aucun résultat de simulation à afficher','err'); return; }
+  const w=window.open('','_blank','width=1100,height=780');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+};
+window.imprimerSimulation = window.apercuSimulation;
 
 /* ─── Ligne de phase tableau ─── */
 function simuPhaseRow(r, i){
