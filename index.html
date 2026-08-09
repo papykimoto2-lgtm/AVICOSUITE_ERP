@@ -8894,6 +8894,7 @@ async function saveCond(){
 
   closeOverlay('mCond');
   toast((editId ? 'Session modifiée — ' : '') + plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
+  await recalculerCascadeCond(flockId);
 
   // Refresh selon le contexte
   if(flockId && curLotId === flockId && activeLotTab === 'cond'){
@@ -8933,6 +8934,82 @@ async function getResteEnAttente(flockId, excludeId){
   };
 }
 window.getResteEnAttente = getResteEnAttente;
+
+// ── Recalcul en cascade — traite le cas où éditer/supprimer une session change le reste
+// transmis aux sessions suivantes du même lot. Sans ça, une session déjà "complétée" par
+// le reste d'une session ensuite modifiée/supprimée gardait des cartons/mouvements de
+// stock devenus faux. Parcourt toutes les sessions du lot dans l'ordre chronologique,
+// recalcule cartons + reste pour chacune, et ne corrige QUE celles dont le résultat change
+// (mouvements de stock "entrée cartons" supprimés puis regénérés au bon montant).
+async function recalculerCascadeCond(flockId){
+  if(!flockId) return;
+  const prods = await getAll(S.PRODUITS);
+  const pCar         = findCondProduit(prods,'carton');
+  const pCarPetit    = prods.find(p=>p.ref==='CAL-CAR-P');
+  const pCarMoyen    = prods.find(p=>p.ref==='CAL-CAR-M');
+  const pCarGros     = prods.find(p=>p.ref==='CAL-CAR-G');
+  const pCarTresGros = prods.find(p=>p.ref==='CAL-CAR-TG');
+
+  const sessions = (await getAll(S.COND))
+    .filter(s=>s.flockId===flockId)
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||'')||((a.ts||0)-(b.ts||0)));
+
+  let resteGlobal=0, restePetit=0, resteMoyen=0, resteGros=0, resteTresGros=0;
+  let nbCorrigees=0;
+
+  for(const s of sessions){
+    const isCalibre = (s.cal_petit||0)+(s.cal_moyen||0)+(s.cal_gros||0)+(s.cal_tres_gros||0) > 0;
+    let newCartons, newResteGlobal=resteGlobal;
+    let newCarPetit=s.car_petit||0, newCarMoyen=s.car_moyen||0, newCarGros=s.car_gros||0, newCarTresGros=s.car_tres_gros||0;
+    let newRestePetit=restePetit, newResteMoyen=resteMoyen, newResteGros=resteGros, newResteTresGros=resteTresGros;
+
+    if(isCalibre){
+      const cumP  = (s.plt_petit||0)     + restePetit;
+      const cumM  = (s.plt_moyen||0)     + resteMoyen;
+      const cumG  = (s.plt_gros||0)      + resteGros;
+      const cumTG = (s.plt_tres_gros||0) + resteTresGros;
+      newCarPetit=Math.floor(cumP/12);     newRestePetit=cumP%12;
+      newCarMoyen=Math.floor(cumM/12);     newResteMoyen=cumM%12;
+      newCarGros=Math.floor(cumG/12);      newResteGros=cumG%12;
+      newCarTresGros=Math.floor(cumTG/12); newResteTresGros=cumTG%12;
+      newCartons = newCarPetit+newCarMoyen+newCarGros+newCarTresGros;
+    } else {
+      const cum = (s.plateaux||0) + resteGlobal;
+      newCartons = Math.floor(cum/12);
+      newResteGlobal = cum%12;
+    }
+
+    const ancienCartons = isCalibre ? ((s.car_petit||0)+(s.car_moyen||0)+(s.car_gros||0)+(s.car_tres_gros||0)) : (s.cartons||0);
+    const changed = ancienCartons !== (isCalibre ? newCartons : newCartons);
+
+    if(changed){
+      nbCorrigees++;
+      // 1. Retirer les anciens mouvements "entrée cartons" de cette session
+      const mvts = (await getAll(S.MVTS)).filter(m=>m.ref===s.ref && m.type==='entree' && /carton/i.test(m.motif||'') && !/vide/i.test(m.motif||''));
+      for(const m of mvts) await delRec(S.MVTS, m.id);
+      // 2. Recréer au bon montant
+      if(isCalibre){
+        if(newCarPetit>0 && pCarPetit)    await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarPetit.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarPetit,unite:'carton',prixUnit:CALIBRE_TARIFS.petit.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Petit) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newCarMoyen>0 && pCarMoyen)    await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarMoyen.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarMoyen,unite:'carton',prixUnit:CALIBRE_TARIFS.moyen.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Moyen) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newCarGros>0 && pCarGros)      await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarGros.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarGros,unite:'carton',prixUnit:CALIBRE_TARIFS.gros.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Gros) [reste reporté]',date:s.date,ts:Date.now()});
+        if(newCarTresGros>0 && pCarTresGros) await regMvt({cadre:'conditionnement',type:'entree',produitId:pCarTresGros.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCarTresGros,unite:'carton',prixUnit:CALIBRE_TARIFS.tresGros.prixCarton,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (cartons Tres Gros) [reste reporté]',date:s.date,ts:Date.now()});
+      } else if(newCartons>0 && pCar){
+        await regMvt({cadre:'conditionnement',type:'entree',produitId:pCar.id,depotSrcId:null,depotDestId:s.depotDestId,quantite:newCartons,unite:'carton',prixUnit:pCar.prix||0,fournId:null,ref:s.ref,motif:'Conditionnement '+s.ref+' (entree cartons) [reste reporté]',date:s.date,ts:Date.now()});
+      }
+      // 3. Mettre à jour la session
+      await updRec(S.COND, s.id, Object.assign({}, s, {
+        cartons: isCalibre ? newCartons : newCartons,
+        plt_restants_apres: isCalibre ? (s.plt_restants_apres||0) : newResteGlobal,
+        car_petit:newCarPetit, car_moyen:newCarMoyen, car_gros:newCarGros, car_tres_gros:newCarTresGros,
+        pltReste_petit:newRestePetit, pltReste_moyen:newResteMoyen, pltReste_gros:newResteGros, pltReste_tresGros:newResteTresGros
+      }));
+    }
+
+    resteGlobal=newResteGlobal; restePetit=newRestePetit; resteMoyen=newResteMoyen; resteGros=newResteGros; resteTresGros=newResteTresGros;
+  }
+  if(nbCorrigees>0) toast(`🔄 Cascade : ${nbCorrigees} session(s) suivante(s) recalculée(s) suite à la modification`);
+}
+window.recalculerCascadeCond = recalculerCascadeCond;
 // Affiche le reste en attente dans l'aperçu du formulaire dès qu'un lot est sélectionné.
 window.afficherResteCondLot = async function(){
   const flockId = parseInt(document.getElementById('condLot')?.value)||null;
@@ -8970,6 +9047,7 @@ window.delCond = async function(id){
   // par erreur une réalisation saisie ailleurs.
 
   await delRec(S.COND, id);
+  await recalculerCascadeCond(s.flockId);
   toast('Session de conditionnement annulée — stock et ponte ajustés');
   if(window._lot && window._lot.id === s.flockId){
     window._kpi = await computeKPIs(window._lot);
