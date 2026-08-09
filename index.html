@@ -7421,8 +7421,9 @@ async function invNumero(date){
 async function renderLivraisonsStock(el){
   const[sales,clients,prods,deps]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS),getAll(S.DEPOTS)]);
   const aTraiter=sales.filter(s=>s.statut==='pending'||s.statut==='confirmed').sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const nbConfirmees=aTraiter.filter(s=>s.statut==='confirmed').length;
   const recentes=sales.filter(s=>s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid').sort((a,b)=>(b.dateLiv||b.date||'').localeCompare(a.dateLiv||a.date||'')).slice(0,10);
-  const statutLbl={pending:'En attente',confirmed:'Confirmée — prête à préparer'};
+  const statutLbl={pending:'En attente',confirmed:'Confirmée — prête à enlever'};
   const statutCls={pending:'b-a',confirmed:'b-bl'};
   const cards=aTraiter.map(s=>{
     const c=clients.find(x=>x.id===s.clientId);
@@ -7431,26 +7432,103 @@ async function renderLivraisonsStock(el){
       const dep=p?deps.find(d=>d.id===p.depotAffecteId):null;
       return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px dashed var(--border)"><span>${esc(l.designation||'')}</span><span style="color:var(--text3)">${l.qte} ${esc(l.unite||'')}${dep?' · '+esc(dep.nom):(p?' · <span style=\"color:var(--red)\">⚠ aucun dépôt affecté</span>':'')}</span></div>`;
     }).join('');
-    return `<div class="card" style="margin-bottom:12px"><div class="card-hd"><span><strong>${esc(s.ref||'—')}</strong> — ${esc(c?c.nom:'—')}</span><span class="badge ${statutCls[s.statut]}">${statutLbl[s.statut]}</span></div>
+    return `<div class="card" style="margin-bottom:12px${s.statut==='confirmed'?';border-left:3px solid var(--g2)':''}"><div class="card-hd"><span>${s.statut==='confirmed'?`<input type="checkbox" class="tourneeChk" value="${s.id}" onchange="majBarreTournee()" style="margin-right:8px;width:16px;height:16px;vertical-align:middle">`:''}<strong>${esc(s.ref||'—')}</strong> — ${esc(c?c.nom:'—')}</span><span class="badge ${statutCls[s.statut]}">${statutLbl[s.statut]}</span></div>
       <div class="card-bd">
         <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Commande du ${s.date||'—'} ${s.dateLiv?'· Livraison prévue '+s.dateLiv:''}</div>
         ${lignesHtml||'<div style="color:var(--text3);font-size:11px">Aucune ligne</div>'}
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
           ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="confirmerCommandeStock(${s.id})"><i class="fas fa-check"></i> Confirmer</button>`:''}
-          ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerCommandeStock(${s.id})"><i class="fas fa-truck"></i> Préparer &amp; Livrer</button>`:''}
+          ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerCommandeStock(${s.id})"><i class="fas fa-truck"></i> Préparer &amp; Livrer (seule)</button>`:''}
         </div>
       </div></div>`;
   }).join('');
   const recRows=recentes.map(s=>{
     const c=clients.find(x=>x.id===s.clientId);
-    return `<tr><td>${s.dateLiv||s.date||'—'}</td><td><strong>${esc(s.ref||'—')}</strong></td><td>${esc(c?c.nom:'—')}</td><td>${(s.lignes||[]).length} ligne(s)</td><td><button class="btn btn-xs btn-gh" onclick="printBL(${s.id})" title="Réimprimer BL"><i class="fas fa-file-alt"></i></button></td></tr>`;
+    return `<tr><td>${s.dateLiv||s.date||'—'}</td><td><strong>${esc(s.ref||'—')}</strong>${s.tourneeRef?'<div style="font-size:9px;color:var(--g2);cursor:pointer" onclick="imprimerFeuilleTournee(\''+esc(s.tourneeRef)+'\')" title="Réimprimer la feuille de tournée"><i class="fas fa-truck-ramp-box"></i> '+esc(s.tourneeRef)+'</div>':''}</td><td>${esc(c?c.nom:'—')}</td><td>${(s.lignes||[]).length} ligne(s)</td><td><button class="btn btn-xs btn-gh" onclick="printBL(${s.id})" title="Réimprimer BL"><i class="fas fa-file-alt"></i></button></td></tr>`;
   }).join('');
   el.innerHTML=`<div class="page-header" style="padding:0 0 10px"><div style="font-weight:700;font-size:13px">📦 Commandes à traiter (${aTraiter.length})</div></div>
+    ${nbConfirmees>1?`<div class="card" style="margin-bottom:12px;border:1.5px solid var(--g2);background:linear-gradient(135deg,#f0fdf4,#fff)"><div class="card-bd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="font-size:12px"><i class="fas fa-truck-ramp-box" style="color:var(--g2)"></i> <strong>Tournée de livraison</strong> — un camion peut enlever plusieurs commandes confirmées en une fois. Cochez les commandes concernées ci-dessous.</div>
+      <div id="barreTourneeAction" style="display:flex;gap:8px;align-items:center">
+        <span id="tourneeCount" style="font-size:11px;color:var(--text3)">0 sélectionnée(s)</span>
+        <button class="btn btn-p btn-sm" id="btnLivrerTournee" disabled onclick="livrerTourneeStock()"><i class="fas fa-truck-fast"></i> Livrer la sélection</button>
+      </div>
+    </div></div>`:''}
     ${cards||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucune commande en attente de traitement.</div></div>'}
     <div style="font-weight:700;font-size:13px;margin:18px 0 8px">✅ Dernières livraisons</div>
     <div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Réf.</th><th>Client</th><th>Lignes</th><th></th></tr></thead>
     <tbody>${recRows||'<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucune livraison récente</td></tr>'}</tbody></table></div></div>`;
 }
+window.majBarreTournee=function(){
+  const n=document.querySelectorAll('.tourneeChk:checked').length;
+  const cnt=document.getElementById('tourneeCount'); if(cnt) cnt.textContent=n+' sélectionnée(s)';
+  const btn=document.getElementById('btnLivrerTournee'); if(btn) btn.disabled=(n<1);
+};
+// ── Tournée de livraison — un camion enlève plusieurs commandes CONFIRMÉES en une fois.
+// Chaque commande garde son propre bon de livraison (lié à sa propre commande, inchangé),
+// mais toutes partagent une référence de tournée commune pour la traçabilité et une feuille
+// de tournée groupée est imprimée pour le chauffeur (liste consolidée à charger).
+window.livrerTourneeStock=async function(){
+  const ids=Array.from(document.querySelectorAll('.tourneeChk:checked')).map(el=>parseInt(el.value));
+  if(!ids.length){ toast('Aucune commande sélectionnée','err'); return; }
+  if(!confirm(`Confirmer l'enlèvement de ${ids.length} commande(s) par le camion ?\nLe stock sera décrémenté pour chacune et un bon de livraison généré par commande.`)) return;
+  const tourneeRef = 'TOURNEE-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+String(Date.now()).slice(-4);
+  const problemes=[];
+  for(const id of ids){
+    const sansDepot = await livrerVente(id, tourneeRef, true);
+    if(sansDepot && sansDepot.length) problemes.push(...sansDepot);
+  }
+  toast(`✅ Tournée ${tourneeRef} — ${ids.length} commande(s) livrée(s)`+(problemes.length?` (⚠ ${problemes.length} article(s) sans dépôt)`:''));
+  await render();
+  await imprimerFeuilleTournee(tourneeRef);
+};
+async function imprimerFeuilleTournee(tourneeRef){
+  const[sales,clients,cfg]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getExploitationSettings()]);
+  const lot = sales.filter(s=>s.tourneeRef===tourneeRef);
+  if(!lot.length){ toast('Tournée introuvable','err'); return; }
+  const totCommandes = lot.length;
+  const totLignes = lot.reduce((a,s)=>a+(s.lignes||[]).length,0);
+  const totMontant = lot.reduce((a,s)=>a+(s.totalHT||0),0);
+  const sections = lot.map(s=>{
+    const c=clients.find(x=>x.id===s.clientId);
+    const rows=(s.lignes||[]).map(l=>`<tr><td>${esc(l.designation||'')}</td><td style="text-align:right">${l.qte} ${esc(l.unite||'')}</td></tr>`).join('');
+    return `<div style="margin-bottom:14px;page-break-inside:avoid"><div style="font-weight:700;font-size:12px;background:#f3f4f6;padding:6px 10px;border-radius:6px 6px 0 0">${esc(s.ref||'')} — ${esc(c?c.nom:'—')} ${c?.ville?'('+esc(c.ville)+')':''} — BL ${esc(s.numBL||'')}</div>
+      <table style="margin:0"><thead><tr><th>Article</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Feuille de tournée ${tourneeRef}</title><style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:20px}
+    .doc{max-width:800px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:5px 8px;border:1px solid #e5e7eb;font-size:11px;text-align:left}
+    th{background:#f9fafb}
+    .kpis{display:flex;gap:12px;margin-bottom:14px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800;color:#2d6a4f}
+    .sig{display:flex;justify-content:space-between;margin-top:40px}
+    .sig div{width:30%;text-align:center;border-top:1px solid #999;padding-top:6px;font-size:11px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr"><div><strong>${esc(cfg.nomExploitation||'AviNest Pro')}</strong><br>${esc(cfg.adresse||'')}</div>
+      <div style="text-align:right"><div class="doc-type">FEUILLE DE TOURNÉE</div><div style="font-size:10px;color:#888">${esc(tourneeRef)}</div></div></div>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${totCommandes}</div>Commandes</div>
+      <div class="kpi-box"><div class="kpi-val">${totLignes}</div>Lignes au total</div>
+      <div class="kpi-box"><div class="kpi-val">${Math.round(totMontant).toLocaleString('fr-FR')}</div>Valeur (FCFA)</div>
+    </div>
+    ${sections}
+    <div class="sig"><div>Chauffeur</div><div>Magasinier (chargement)</div><div>Contrôle départ</div></div>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=900,height=750');
+  if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
+  w.document.write(html); w.document.close();
+}
+window.imprimerFeuilleTournee=imprimerFeuilleTournee;
 window.confirmerCommandeStock=async function(id){
   await changeSaleStatut(id,'confirmed');
 };
@@ -7766,31 +7844,56 @@ async function renderBCs(ca){
   const statL={draft:'Brouillon',sent:'Envoyé',partial:'Partiel',done:'Réceptionné'};
   const statC={draft:'bc-draft',sent:'bc-sent',partial:'bc-partial',done:'bc-done'};
   const wait=bcs.filter(b=>b.statut==='sent'||b.statut==='partial').length;
-  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const resteBC=bc.statut==='done'?getResteAPayerBC(bc):0;const payBtn=(bc.statut==='done'&&resteBC>0)?`<button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openPayerBCModal(${bc.id})" title="Reste dû : ${resteBC.toLocaleString()} F"><i class="fas fa-money-bill-wave"></i> Payer</button> `:(bc.statut==='done'?`<span class="badge b-g" style="font-size:9px" title="Soldé">✓ Soldé</span> `:'');const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> `:''}${payBtn}<button class="btn btn-sm btn-gh" onclick="printBC(${bc.id})" title="Aperçu / Imprimer le bon de commande"><i class="fas fa-print"></i></button> ${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
+  const rows=bcs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(bc=>{const f=fourns.find(x=>x.id===bc.fournId);const resteBC=bc.statut==='done'?getResteAPayerBC(bc):0;const payBtn=(bc.statut==='done'&&resteBC>0)?`<button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openPayerBCModal(${bc.id})" title="Reste dû : ${resteBC.toLocaleString()} F"><i class="fas fa-money-bill-wave"></i> Payer</button> `:(bc.statut==='done'?`<span class="badge b-g" style="font-size:9px" title="Soldé">✓ Soldé</span> `:'');const fneBtn = (bc.statut==='done') ? (bc.fneReference ? `<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${bc.fneToken||''}','_blank')" title="Certifié FNE — ${bc.fneReference}"><i class="fas fa-check-double"></i></button> ` : `<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('purchase',${bc.id})" title="Télédéclarer FNE (bordereau agricole)"><i class="fas fa-stamp"></i></button> `) : '';return `<tr><td><strong>${bc.ref||'—'}</strong></td><td style="color:var(--text3)">${bc.date||'—'}</td><td>${f?f.nom:'—'}</td><td>${bc.lignes?.length||0} ligne(s)</td><td style="font-weight:700">${(bc.totalHT||0).toLocaleString()} F</td><td><span class="badge ${statC[bc.statut]||''}" style="padding:3px 8px;border-radius:20px;font-size:10px">${statL[bc.statut]||bc.statut}</span></td><td>${bc.statut==='sent'||bc.statut==='partial'?`<button class="btn btn-sm btn-a" onclick="openRecModal(${bc.id})"><i class="fas fa-boxes-stacked"></i> Réceptionner</button> `:''} ${bc.statut==='draft'?`<button class="btn btn-sm btn-p" onclick="markSent(${bc.id})"><i class="fas fa-paper-plane"></i> Envoyer</button> <button class="btn btn-sm btn-gh" onclick="openBCModal(null,${bc.id})" title="Modifier"><i class="fas fa-edit"></i></button> `:''}${payBtn}<button class="btn btn-sm btn-gh" onclick="printBC(${bc.id})" title="Aperçu / Imprimer le bon de commande"><i class="fas fa-print"></i></button> ${fneBtn}<button class="btn-del" onclick="delBC(${bc.id})"><i class="fas fa-trash"></i></button></td></tr>`;}).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-file-invoice" style="color:var(--g2)"></i> Bons de commande</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="goApproSub('receptions')"><i class="fas fa-truck-ramp-box"></i> Réceptions</button><button class="btn btn-p btn-sm" onclick="openBCModal()"><i class="fas fa-plus"></i> Nouveau BC</button></div></div><div class="stock-page">
     <div class="g4"><div class="kpi kpi-b"><div class="kpi-lbl">Total BC</div><div class="kpi-val">${bcs.length}</div></div><div class="kpi kpi-a"><div class="kpi-lbl">En attente</div><div class="kpi-val">${wait}</div></div><div class="kpi kpi-g"><div class="kpi-lbl">Réceptionnés</div><div class="kpi-val">${bcs.filter(b=>b.statut==='done').length}</div></div><div class="kpi kpi-b"><div class="kpi-lbl">Brouillons</div><div class="kpi-val">${bcs.filter(b=>b.statut==='draft').length}</div></div></div>
     <div class="card"><div class="card-hd">Bons de commande</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Référence</th><th>Date</th><th>Fournisseur</th><th>Lignes</th><th>Total HT</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun bon de commande</td></tr>'}</tbody></table></div></div>
   </div>`;
 }
-async function openBCModal(fournId=null){
+let bcEditId=null;
+async function openBCModal(fournId=null, editId=null){
   const[fourns,prods]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.PRODUITS)]);
-  bcLines=[];document.getElementById('bcFourn').innerHTML=fourns.map(f=>`<option value="${f.id}" ${f.id===fournId?'selected':''}>${f.nom}</option>`).join('');
-  document.getElementById('bcDate').value=new Date().toISOString().slice(0,10);const d=new Date();d.setDate(d.getDate()+7);document.getElementById('bcDateLiv').value=d.toISOString().slice(0,10);
-  document.getElementById('bcRef').value='BC-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4);document.getElementById('bcComment').value='';document.getElementById('bcLinesDiv').innerHTML='';document.getElementById('bcTotalDiv').textContent='Total : 0 FCFA';
-  addBCLine();openOverlay('mBC');
+  bcLines=[];bcEditId=editId;
+  let bc=null;
+  if(editId){
+    const bcs=await getAll(S.BCS);bc=bcs.find(x=>x.id===editId);
+    if(!bc){toast('Bon de commande introuvable','err');return;}
+    if(bc.statut!=='draft'){toast('⛔ Seul un BC en brouillon peut être modifié — celui-ci est '+({sent:'envoyé',partial:'partiellement reçu',done:'soldé'}[bc.statut]||bc.statut)+'.','err');return;}
+  }
+  document.getElementById('bcFourn').innerHTML=fourns.map(f=>`<option value="${f.id}" ${f.id===(bc?bc.fournId:fournId)?'selected':''}>${f.nom}</option>`).join('');
+  document.getElementById('mBCTitle') && (document.getElementById('mBCTitle').textContent = editId?'Modifier le bon de commande':'Nouveau bon de commande');
+  document.getElementById('bcDate').value=bc?bc.date:new Date().toISOString().slice(0,10);
+  if(bc) document.getElementById('bcDateLiv').value=bc.dateLiv||'';
+  else{const d=new Date();d.setDate(d.getDate()+7);document.getElementById('bcDateLiv').value=d.toISOString().slice(0,10);}
+  document.getElementById('bcRef').value=bc?bc.ref:('BC-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4));
+  document.getElementById('bcComment').value=bc?(bc.commentaire||''):'';
+  document.getElementById('bcLinesDiv').innerHTML='';
+  if(bc && bc.lignes && bc.lignes.length){
+    for(const l of bc.lignes) await addBCLine(l.produitId,l.qte,l.prixUnit);
+  } else {
+    document.getElementById('bcTotalDiv').textContent='Total : 0 FCFA';
+    addBCLine();
+  }
+  openOverlay('mBC');
 }
 window.openBCModal=openBCModal;
-async function addBCLine(){
+async function addBCLine(presetProdId,presetQte,presetPrix){
   const allProds=await getAll(S.PRODUITS);
   // Un bon de commande fournisseur porte sur des matières premières/consommables/encours —
   // pas sur les produits finis (plateaux, cartons, viande), qui sont des sorties de production
   // et n'ont rien à faire dans une liste d'achat. Même filtre que déjà appliqué aux ventes.
   const prods=allProds.filter(p=>p.stade!=='produit_fini');
   const prodsList=prods.length?prods:allProds;
-  const idx=bcLines.length;bcLines.push({produitId:prodsList[0]?.id,qte:0,prixUnit:prodsList[0]?.prix||0});
+  const defProd=presetProdId?(prodsList.find(p=>p.id===presetProdId)||prodsList[0]):prodsList[0];
+  const idx=bcLines.length;
+  const qte=presetQte!=null?presetQte:0;
+  const prix=presetPrix!=null?presetPrix:(defProd?.prix||0);
+  bcLines.push({produitId:defProd?.id,qte,prixUnit:prix});
   const div=document.createElement('div');div.id='bcL'+idx;div.style.cssText='display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)';
-  div.innerHTML=`<select onchange="bcUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" data-u="${p.unite}">${p.nom}</option>`).join('')}</select><input type="number" placeholder="Qté" onchange="bcUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix" onchange="bcUpd(${idx},'px',this)" value="${prodsList[0]?.prix||0}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="bcT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">0 F</div><button onclick="rmBCLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
+  div.innerHTML=`<select onchange="bcUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" data-u="${p.unite}" ${p.id===defProd?.id?'selected':''}>${p.nom}</option>`).join('')}</select><input type="number" placeholder="Qté" value="${qte||''}" onchange="bcUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix" onchange="bcUpd(${idx},'px',this)" value="${prix}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="bcT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">${Math.round(qte*prix).toLocaleString()} F</div><button onclick="rmBCLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
   document.getElementById('bcLinesDiv').appendChild(div);
+  const grand=bcLines.reduce((a,l)=>a+l.qte*(l.prixUnit||0),0);
+  const totEl=document.getElementById('bcTotalDiv'); if(totEl) totEl.textContent='Total : '+Math.round(grand).toLocaleString()+' FCFA';
 }
 window.addBCLine=addBCLine;
 function bcUpd(i,f,el){if(f==='p'){const o=el.options[el.selectedIndex];bcLines[i].produitId=parseInt(el.value);bcLines[i].prixUnit=parseFloat(o.dataset.px)||0;const pi=document.getElementById('bcL'+i)?.querySelectorAll('input')[1];if(pi) pi.value=bcLines[i].prixUnit;}else if(f==='q') bcLines[i].qte=parseFloat(el.value)||0;else bcLines[i].prixUnit=parseFloat(el.value)||0;const t=bcLines[i].qte*(bcLines[i].prixUnit||0);const te=document.getElementById('bcT'+i);if(te) te.textContent=Math.round(t).toLocaleString()+' F';const grand=bcLines.reduce((a,l)=>a+l.qte*(l.prixUnit||0),0);document.getElementById('bcTotalDiv').textContent='Total : '+Math.round(grand).toLocaleString()+' FCFA';}
@@ -7802,14 +7905,21 @@ async function saveBC(statut){
   const prods=await getAll(S.PRODUITS);const lignes=bcLines.filter(l=>!l.removed&&l.qte>0).map(l=>{const p=prods.find(x=>x.id===l.produitId);return{produitId:l.produitId,designation:p?.nom||'',qte:l.qte,unite:p?.unite||'',prixUnit:l.prixUnit,qteLivree:0};});
   if(!lignes.length){toast('Ajoutez au moins une ligne','err');return;}
   const totalHT=lignes.reduce((a,l)=>a+l.qte*l.prixUnit,0);
-  await addRec(S.BCS,{fournId,ref,date,dateLiv,statut,lignes,commentaire:comment,totalHT});
-  closeOverlay('mBC');toast(statut==='sent'?'BC envoyé':'Brouillon enregistré');await renderBCs(apCA());
+  if(bcEditId){
+    await updRec(S.BCS,bcEditId,{fournId,ref,date,dateLiv,statut,lignes,commentaire:comment,totalHT});
+    toast('✓ Bon de commande modifié');
+  } else {
+    await addRec(S.BCS,{fournId,ref,date,dateLiv,statut,lignes,commentaire:comment,totalHT});
+    toast(statut==='sent'?'BC envoyé':'Brouillon enregistré');
+  }
+  bcEditId=null;closeOverlay('mBC');await renderBCs(apCA());
 }
 window.saveBC=saveBC;
 window.markSent=async(id)=>{const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===id);if(bc){await updRec(S.BCS,id,{...bc,statut:'sent'});toast('BC envoyé');await renderBCs(apCA());}};
 window.delBC=async(id)=>{
   const bcs=await getAll(S.BCS);const bc=bcs.find(x=>x.id===id);
   if(!bc){toast('Bon de commande introuvable','err');return;}
+  if(bc.fneReference){toast('⛔ BC certifié FNE ('+bc.fneReference+') — suppression interdite (traçabilité fiscale DGI).','err');return;}
   if(bc.paiements&&bc.paiements.length){toast('⛔ Des règlements sont enregistrés sur ce BC — suppression interdite (historique comptable fournisseur)','err');return;}
   if(bc.statut==='done'||bc.statut==='partial'){toast('⛔ BC réceptionné (totalement ou partiellement) — suppression interdite. Les réceptions et mouvements de stock associés doivent être annulés depuis le module Réceptions.','err');return;}
   if(confirm('Supprimer ce bon de commande ?')){await delRec(S.BCS,id);toast('BC supprimé');await renderBCs(apCA());}
@@ -12754,7 +12864,7 @@ async function syncMvtsLivraisonVente(sale, prods){
   return sansDepot;
 }
 
-window.livrerVente = async function(id) {
+window.livrerVente = async function(id, tourneeRef, silent) {
   const lockKey='livraison:'+id;
   if(_saleActionsInFlight.has(lockKey)){ toast('Livraison déjà en cours…','err'); return; }
   _saleActionsInFlight.add(lockKey);
@@ -12764,12 +12874,17 @@ window.livrerVente = async function(id) {
     if (!s) return;
     var numBL = s.numBL || await genNumBL();
     var dateLiv = new Date().toISOString().slice(0,10);
-    var updated = Object.assign({},s,{statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()});
+    var patch = {statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()};
+    if(tourneeRef) patch.tourneeRef = tourneeRef;
+    var updated = Object.assign({},s,patch);
     await updRec(S.SALES, id, updated);
     var sansDepot = await syncMvtsLivraisonVente(updated);
-    if(sansDepot.length) toast('⚠ Livraison enregistrée — stock NON décrémenté pour : '+sansDepot.join(', ')+' (aucun dépôt d\'affectation défini)','err');
-    else toast('Livraison enregistree -- ' + numBL + ' — stock mis à jour');
-    await render();
+    if(!silent){
+      if(sansDepot.length) toast('⚠ Livraison enregistrée — stock NON décrémenté pour : '+sansDepot.join(', ')+' (aucun dépôt d\'affectation défini)','err');
+      else toast('Livraison enregistree -- ' + numBL + ' — stock mis à jour');
+      await render();
+    }
+    return sansDepot;
   } finally { _saleActionsInFlight.delete(lockKey); }
 };
 
@@ -13832,7 +13947,29 @@ window.renderCreances = async function(ca) {
             : '<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal(\'sale\','+s.id+')" title="Teledeclarer FNE"><i class="fas fa-stamp"></i></button>') : '')
         + '</td></tr>';
     }).join('');
+  var aVenir = creances.filter(function(s){
+    if(!s.dateEcheance) return false;
+    var j = joursRetard(s.dateEcheance);
+    return j<=0 && j>=-3; // échéance dans les 3 prochains jours, pas encore en retard
+  }).sort(function(a,b){return (a.dateEcheance||'').localeCompare(b.dateEcheance||'');});
+  var totalAVenir = aVenir.reduce(function(a,s){return a+getResteAPayer(s);}, 0);
+  var rowsAVenir = aVenir.map(function(s){
+    var c = clients.find(function(x){return x.id===s.clientId;}) || {};
+    var reste = getResteAPayer(s);
+    var j = joursRetard(s.dateEcheance);
+    var joursLbl = j===0 ? 'Échéance aujourd\'hui' : ('Échéance dans '+(-j)+' jour(s)');
+    var lastRel = (s.relances&&s.relances.length) ? s.relances[s.relances.length-1] : null;
+    var dejaRelance = lastRel && lastRel.date >= s.date; // relance déjà faite depuis l'émission
+    return '<div style="display:flex;justify-content:space-between;align-items:center;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:6px;flex-wrap:wrap;gap:8px">'
+      + '<div style="font-size:12px"><strong>'+esc(s.numFacture||s.ref||'--')+'</strong> — '+esc(c.nom||'--')+' <span style="color:#92400e">· '+joursLbl+'</span>'+(dejaRelance?' <span style="color:#059669;font-size:10px">✓ déjà relancé le '+lastRel.date+'</span>':'')+'</div>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + '<span style="font-weight:700;font-size:12px">'+reste.toLocaleString('fr-FR')+' F</span>'
+      + (c.tel?'<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="relancerClient('+s.id+',\'whatsapp\')" title="Rappel WhatsApp avant échéance"><i class="fab fa-whatsapp"></i></button>':'')
+      + (c.email?'<button class="btn btn-sm" style="background:#e0e7ff;color:#3730a3" onclick="relancerClient('+s.id+',\'email\')" title="Rappel Email avant échéance"><i class="fas fa-envelope"></i></button>':'')
+      + '</div></div>';
+  }).join('');
   ca.innerHTML = '<div class="page-header"><div class="page-header-title"><i class="fas fa-hourglass-half" style="color:#5b21b6"></i> Creances clients</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printBalanceAgee(\'client\',true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printBalanceAgee(\'client\')"><i class="fas fa-print"></i> Imprimer</button></div></div>'
+    + (aVenir.length ? '<div class="card" style="margin-bottom:14px;border:1.5px solid #f59e0b"><div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span style="color:#92400e">⏰ Échéances à venir (J-3) — '+aVenir.length+' facture(s), '+totalAVenir.toLocaleString('fr-FR')+' F</span></div><div class="card-bd">'+rowsAVenir+'<p style="font-size:10px;color:#92400e;margin-top:4px">Relancez avant échéance pour sécuriser l\'encaissement — évite le passage en retard.</p></div></div>' : '')
     + '<div class="g4" style="margin-bottom:14px">'
     + '<div class="kpi kpi-r"><div class="kpi-lbl">Total a encaisser</div><div class="kpi-val" style="font-size:16px;color:#dc2626">'+totalCreance.toLocaleString('fr-FR')+'</div><div class="kpi-sub">FCFA</div></div>'
     + '<div class="kpi kpi-a"><div class="kpi-lbl">En retard</div><div class="kpi-val" style="font-size:16px;color:#d97706">'+totalRetard.toLocaleString('fr-FR')+'</div><div class="kpi-sub">FCFA depassees</div></div>'
@@ -16403,11 +16540,16 @@ async function collectRapportData(type, customMin=null, customMax=null){
   // Tiers — soldes ouverts clients (créances) et fournisseurs (dettes), indépendants de la période
   // (un solde est une photo à l'instant T, pas un flux sur la période).
   let tiersClientDu = 0, tiersClientNb = 0, tiersFournDu = 0, tiersFournNb = 0;
+  let echeancesAVenirNb = 0, echeancesAVenirMontant = 0;
   try{
     const lc = typeof getBalanceAgeeLignes==='function' ? await getBalanceAgeeLignes('client') : [];
     tiersClientDu = lc.reduce((a,l)=>a+(l.reste||0),0); tiersClientNb = lc.length;
     const lf = typeof getBalanceAgeeLignes==='function' ? await getBalanceAgeeLignes('fournisseur') : [];
     tiersFournDu = lf.reduce((a,l)=>a+(l.reste||0),0); tiersFournNb = lf.length;
+    // Échéances à venir (J-3) — factures pas encore en retard mais dont l'échéance approche,
+    // pour permettre une relance proactive avant que la créance ne passe en retard.
+    const aVenir = lc.filter(l=>l.joursAge<=0 && l.joursAge>=-3);
+    echeancesAVenirNb = aVenir.length; echeancesAVenirMontant = aVenir.reduce((a,l)=>a+(l.reste||0),0);
   }catch(e){ /* balance âgée non disponible — rapport dégradé gracieusement */ }
 
   // Stocks critiques
@@ -16487,7 +16629,8 @@ async function collectRapportData(type, customMin=null, customMax=null){
     ventesDetail, oeufsByLot, stockDetail,
     cmdParStatut, nbLivraisons,
     condP, condBruts, condNets, condCartons, condPlateaux, condRendement, condValeur,
-    tiersClientDu, tiersClientNb, tiersFournDu, tiersFournNb
+    tiersClientDu, tiersClientNb, tiersFournDu, tiersFournNb,
+    echeancesAVenirNb, echeancesAVenirMontant
   };
 }
 
@@ -16764,6 +16907,9 @@ function genRapportTexte(d, format='whatsapp'){
   t += `${NL}👥 *COMPTES TIERS*${NL}`;
   t += `• Créances clients (411) : ${d.tiersClientNb} facture(s) — ${Math.round(d.tiersClientDu).toLocaleString('fr-FR')} FCFA dû${NL}`;
   t += `• Dettes fournisseurs (401) : ${d.tiersFournNb} BC — ${Math.round(d.tiersFournDu).toLocaleString('fr-FR')} FCFA dû${NL}`;
+  if(d.echeancesAVenirNb>0){
+    t += `• ⏰ Échéances à venir (J-3) : ${d.echeancesAVenirNb} facture(s) — ${Math.round(d.echeancesAVenirMontant).toLocaleString('fr-FR')} FCFA — relancez avant retard${NL}`;
+  }
   t += SEP + NL;
 
   // Finance
