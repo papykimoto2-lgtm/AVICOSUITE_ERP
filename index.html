@@ -3592,6 +3592,7 @@ async function renderSettings(ca){
     ['tarifs','fa-tags','Tarifs Cond.'],
     ['paie','fa-money-check-dollar','Paie (CNPS/ITS/CMU)'],
     ['finance','fa-chart-line','Finance'],
+    ['import','fa-file-import','Import de données'],
     ['data','fa-database','Données'],
     ['diagnostic','fa-stethoscope','Diagnostic'],
   ];
@@ -3626,6 +3627,7 @@ async function renderSettingsTab(tab, cfg, users, isAdmin, isSuperAdmin){
   if(tab==='tarifs')       return renderSettingsTarifs(isAdmin);
   if(tab==='paie')         return renderSettingsPaie(isAdmin);
   if(tab==='finance')      return renderSettingsFinance(isAdmin);
+  if(tab==='import')       return renderSettingsImport(isAdmin);
   if(tab==='data')         return renderSettingsData(isSuperAdmin);
   if(tab==='diagnostic')   return '<div id="diagContainer"><div style="padding:30px;text-align:center"><button class="btn btn-p" onclick="runDbDiagnostic()"><i class="fas fa-stethoscope"></i> Lancer le diagnostic</button></div></div>';
   return '';
@@ -3867,6 +3869,155 @@ function renderSettingsTarifs(isAdmin){
     <div class="form-grid">${rows}</div>
     ${isAdmin?'<button class="btn btn-p" style="margin-top:10px" onclick="saveCalibreTarifs()"><i class="fas fa-save"></i> Enregistrer</button>':'<p style="font-size:11px;color:var(--text3)">Réservé Admin/Manager.</p>'}`;
 }
+
+// ════════════════════════════════════════════════════════
+//  IMPORT DE DONNÉES — CSV générique, modèle téléchargeable, aperçu avant import
+// ════════════════════════════════════════════════════════
+const IMPORT_MODULES = {
+  clients: { storeKey:'CLIENTS', label:'Clients',
+    colonnes:[
+      {key:'nom',label:'Nom',required:true},
+      {key:'type',label:'Type (particulier/grossiste/detaillant/restaurant/hotel)'},
+      {key:'contact',label:'Contact'}, {key:'tel',label:'Téléphone'}, {key:'email',label:'Email'},
+      {key:'ville',label:'Ville'}, {key:'paie',label:'Paiement (comptant/credit15/credit30/credit60)'},
+    ],
+    exemple:{nom:'Superette Plateau',type:'detaillant',contact:'Mme Koné',tel:'+225 07 00 00 00',email:'',ville:'Abidjan',paie:'credit15'},
+    build:(row)=>({nom:row.nom, type:row.type||'particulier', contact:row.contact||'', tel:row.tel||'', email:row.email||'', ville:row.ville||'', paie:row.paie||'comptant'})
+  },
+  fournisseurs: { storeKey:'FOURNISSEURS', label:'Fournisseurs',
+    colonnes:[
+      {key:'nom',label:'Nom',required:true},
+      {key:'specialite',label:'Spécialité (aliment/medicament/poussin/materiel/general)'},
+      {key:'contact',label:'Contact'}, {key:'tel',label:'Téléphone'}, {key:'ville',label:'Ville'},
+      {key:'delai',label:'Délai livraison (jours)'},
+    ],
+    exemple:{nom:'Ivoire Aliments SARL',specialite:'aliment',contact:'M. Traoré',tel:'+225 05 00 00 00',ville:'Bouaké',delai:'5'},
+    build:(row)=>({nom:row.nom, specialite:row.specialite||'general', contact:row.contact||'', tel:row.tel||'', ville:row.ville||'', delai:parseInt(row.delai)||7})
+  },
+  produits: { storeKey:'PRODUITS', label:'Catalogue produits',
+    colonnes:[
+      {key:'nom',label:'Nom',required:true},
+      {key:'categorie',label:'Catégorie (aliment/medicament/oeuf/viande/materiel/intrant)'},
+      {key:'stade',label:'Stade (matiere_premiere/encours/produit_fini)'},
+      {key:'unite',label:'Unité'}, {key:'seuil',label:'Seuil alerte'}, {key:'prix',label:'Prix unitaire'},
+      {key:'depot',label:'Dépôt affecté (nom exact, optionnel)'}, {key:'fournisseur',label:'Fournisseur (nom exact, optionnel)'},
+    ],
+    exemple:{nom:'Aliment ponte 45%',categorie:'aliment',stade:'matiere_premiere',unite:'kg',seuil:'200',prix:'195',depot:'',fournisseur:''},
+    build:(row,lu)=>{
+      const dep = row.depot ? lu.deps.find(d=>(d.nom||'').toLowerCase()===row.depot.toLowerCase()) : null;
+      const fourn = row.fournisseur ? lu.fourns.find(f=>(f.nom||'').toLowerCase()===row.fournisseur.toLowerCase()) : null;
+      return {nom:row.nom, categorie:row.categorie||'intrant', stade:row.stade||'matiere_premiere', unite:row.unite||'unite', seuil:parseFloat(row.seuil)||0, prix:parseFloat(row.prix)||0, depotAffecteId:dep?dep.id:null, fournId:fourn?fourn.id:null};
+    }
+  },
+  personnel: { storeKey:'STAFF', label:'Personnel',
+    colonnes:[
+      {key:'nom',label:'Nom',required:true}, {key:'role',label:'Fonction'},
+      {key:'tel',label:'Téléphone'}, {key:'email',label:'Email'}, {key:'matricule',label:'Matricule'},
+      {key:'contrat',label:'Contrat (cdi/cdd/journalier/consultant/stagiaire)'},
+      {key:'salairebase',label:'Salaire de base'}, {key:'dateembauche',label:'Date embauche (AAAA-MM-JJ)'},
+    ],
+    exemple:{nom:'Jean Kouassi',role:'Éleveur',tel:'+225 01 00 00 00',email:'',matricule:'EMP-010',contrat:'cdi',salairebase:'100000',dateembauche:'2026-01-15'},
+    build:(row)=>({nom:row.nom, role:row.role||'Éleveur', tel:row.tel||'', email:row.email||'', matricule:row.matricule||'', contrat:row.contrat||'cdi', statut:'actif', salaireBase:parseFloat(row.salairebase)||0, dateEmbauche:row.dateembauche||new Date().toISOString().slice(0,10), cmuPersonnes:1, cmuActif:false, exonereITS:false})
+  }
+};
+// Parseur CSV auto-contenu (virgule ou point-virgule, guillemets, BOM) — pas de dépendance externe.
+function parseCSVSimple(text){
+  text = text.replace(/^\uFEFF/, '');
+  const lines = text.split(/\r\n|\n/).filter(l=>l.trim().length);
+  if(!lines.length) return {headers:[], rows:[]};
+  const sep = (lines[0].split(';').length > lines[0].split(',').length) ? ';' : ',';
+  function parseLine(line){
+    const out=[]; let cur=''; let inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){ if(inQ && line[i+1]==='"'){ cur+='"'; i++; } else inQ=!inQ; }
+      else if(c===sep && !inQ){ out.push(cur); cur=''; }
+      else cur+=c;
+    }
+    out.push(cur);
+    return out.map(s=>s.trim().replace(/^"|"$/g,''));
+  }
+  const headers = parseLine(lines[0]).map(h=>h.toLowerCase().trim());
+  const rows = lines.slice(1).map(l=>{
+    const vals = parseLine(l); const obj={};
+    headers.forEach((h,i)=>obj[h]=vals[i]!==undefined?vals[i]:'');
+    return obj;
+  });
+  return {headers, rows};
+}
+
+function renderSettingsImport(isAdmin){
+  const modOpts = Object.entries(IMPORT_MODULES).map(([k,m])=>`<option value="${k}">${m.label}</option>`).join('');
+  return `<div class="settings-section-title">📥 Import de données (CSV)</div>
+    <p style="font-size:11px;color:var(--text3);margin-bottom:14px">Import en masse pour Clients, Fournisseurs, Catalogue produits, Personnel. Téléchargez le modèle, remplissez-le, puis réimportez.</p>
+    <div class="form-grid" style="margin-bottom:12px">
+      <div class="fg"><label>Module à importer</label><select id="importModuleSel" onchange="importResetApercu()">${modOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn btn-gh" onclick="importTelechargerModele()"><i class="fas fa-download"></i> Télécharger le modèle CSV</button>
+      <label class="btn btn-gh" style="cursor:pointer;margin:0">
+        <input type="file" accept=".csv,text/csv" id="importFileInput" style="display:none" onchange="importFichierSelectionne(this)">
+        <i class="fas fa-upload"></i> Choisir un fichier CSV
+      </label>
+    </div>
+    <div id="importApercuZone"></div>`;
+}
+window.renderSettingsImport = renderSettingsImport;
+window.importResetApercu = function(){
+  const z=document.getElementById('importApercuZone'); if(z) z.innerHTML='';
+  window._importPending = null;
+  const fi=document.getElementById('importFileInput'); if(fi) fi.value='';
+};
+window.importTelechargerModele = function(){
+  const modKey = document.getElementById('importModuleSel').value;
+  const mod = IMPORT_MODULES[modKey];
+  const headers = mod.colonnes.map(c=>c.key);
+  const exempleLigne = headers.map(h=>mod.exemple[h]!==undefined?mod.exemple[h]:'').join(',');
+  const csv = headers.join(',')+'\n'+exempleLigne;
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'})); a.download='modele_'+modKey+'.csv'; a.click();
+  toast('Modèle téléchargé — remplissez-le puis réimportez');
+};
+window.importFichierSelectionne = function(input){
+  const file = input.files[0]; if(!file) return;
+  const modKey = document.getElementById('importModuleSel').value;
+  const mod = IMPORT_MODULES[modKey];
+  const reader = new FileReader();
+  reader.onload = e => {
+    const {headers, rows} = parseCSVSimple(e.target.result);
+    const colonnesRequises = mod.colonnes.filter(c=>c.required).map(c=>c.key);
+    const manquantes = colonnesRequises.filter(c=>!headers.includes(c));
+    if(manquantes.length){
+      document.getElementById('importApercuZone').innerHTML = `<div class="card" style="border:1.5px solid var(--red)"><div class="card-bd" style="color:var(--red);font-size:12px">⛔ Colonne(s) obligatoire(s) manquante(s) dans le fichier : <strong>${manquantes.join(', ')}</strong>. Téléchargez le modèle pour le format exact.</div></div>`;
+      window._importPending = null; return;
+    }
+    const validees = rows.filter(r=>colonnesRequises.every(c=>(r[c]||'').trim().length>0));
+    const erreurs = rows.length - validees.length;
+    window._importPending = {modKey, rows: validees};
+    const apercu = validees.slice(0,8);
+    document.getElementById('importApercuZone').innerHTML = `<div class="card"><div class="card-hd">Aperçu — ${validees.length} ligne(s) valide(s)${erreurs>0?', <span style="color:var(--red)">'+erreurs+' en erreur (colonne obligatoire vide)</span>':''}</div>
+      <div class="card-bd tbl-wrap"><table class="tbl"><thead><tr>${mod.colonnes.map(c=>`<th>${c.label}</th>`).join('')}</tr></thead>
+      <tbody>${apercu.map(r=>`<tr>${mod.colonnes.map(c=>`<td style="font-size:11px">${esc(r[c.key]||'—')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <div class="card-bd" style="padding-top:0"><button class="btn btn-p" ${validees.length?'':'disabled'} onclick="importConfirmer()"><i class="fas fa-check"></i> Importer ces ${validees.length} ligne(s)</button></div></div>`;
+  };
+  reader.onerror = () => toast('Erreur de lecture du fichier','err');
+  reader.readAsText(file, 'UTF-8');
+};
+window.importConfirmer = async function(){
+  const pending = window._importPending;
+  if(!pending || !pending.rows.length){ toast('Aucune ligne à importer','err'); return; }
+  const mod = IMPORT_MODULES[pending.modKey];
+  if(!confirm(`Importer ${pending.rows.length} ligne(s) dans ${mod.label} ?`)) return;
+  const lookups = { deps: await getAll(S.DEPOTS), fourns: await getAll(S.FOURNISSEURS) };
+  let n=0;
+  for(const row of pending.rows){
+    try{ await addRec(S[mod.storeKey], mod.build(row, lookups)); n++; }
+    catch(e){ console.warn('Import ligne échouée :', e.message); }
+  }
+  toast('✅ '+n+' '+mod.label.toLowerCase()+' importé(s)');
+  window._importPending = null;
+  document.getElementById('importApercuZone').innerHTML = `<div class="card"><div class="card-bd" style="text-align:center;color:var(--g2);padding:16px"><i class="fas fa-check-circle" style="font-size:24px"></i><br>${n} enregistrement(s) importé(s) avec succès.</div></div>`;
+  document.getElementById('importFileInput').value='';
+};
 
 function renderSettingsFinance(isAdmin){
   const ro = isAdmin ? '' : 'disabled';
@@ -11516,6 +11667,7 @@ async function renderCompta(ca){
     {id:'grandlivre', icon:'fa-book-open',     label:'Grand Livre'},
     {id:'balance',    icon:'fa-scale-balanced',label:'Balance'},
     {id:'fec',        icon:'fa-file-export',   label:'Export FEC'},
+    {id:'import',     icon:'fa-file-import',   label:'Import'},
   ];
   const tabNav=tabs.map(t=>`<button class="tab-btn ${comptaTab===t.id?'on':''}" onclick="switchComptaTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
   ca.innerHTML=`
@@ -11533,6 +11685,7 @@ async function renderComptaTab(){
   else if(comptaTab==='grandlivre') await renderComptaGrandLivre(el);
   else if(comptaTab==='balance') await renderComptaBalance(el);
   else if(comptaTab==='fec') await renderComptaFEC(el);
+  else if(comptaTab==='import') await renderComptaImport(el);
 }
 function comptaFiltreBar(showCompte){
   const dateMin = comptaDateMin || new Date().toISOString().slice(0,7)+'-01';
