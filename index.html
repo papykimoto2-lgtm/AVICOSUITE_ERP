@@ -10183,6 +10183,39 @@ window.appliquerCorrectionDepotsConso = async function(){
   await render();
 };
 
+// ── Mise à jour des conditionnements antérieurs — applique le report en cascade à
+// 2 niveaux (œufs→plateau, plateau→carton) introduit après coup à TOUT l'historique.
+// Les sessions créées avant ce correctif n'avaient pas bénéficié du report ; ce recalcul
+// les traite lot par lot, dans l'ordre chronologique, exactement comme le fait déjà
+// recalculerCascadeCond() pour une seule édition — ici appliqué à tous les lots d'un coup.
+window.recalculerTousLesConditionnements = async function(){
+  const sessions = await getAll(S.COND);
+  const flockIds = [...new Set(sessions.map(s=>s.flockId).filter(Boolean))];
+  if(!flockIds.length){ toast('Aucune session de conditionnement enregistrée','err'); return; }
+  const flocks = await getAll(S.FLOCKS);
+  const noms = flockIds.map(id=>flocks.find(f=>f.id===id)?.nom||('Lot #'+id));
+  const html = `<div class="card" style="max-width:560px;margin:0 auto">
+    <div class="card-hd">🔄 Mise à jour des conditionnements antérieurs</div>
+    <div class="card-bd">
+      <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Recalcule le report en cascade (œufs→plateau, plateau→carton) sur l'historique complet de <strong>${flockIds.length} lot(s)</strong> :</p>
+      <ul style="font-size:12px;color:var(--text2);margin:0 0 12px 18px;padding:0">${noms.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>
+      <p style="font-size:11px;color:var(--amber-d);background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 12px;margin-bottom:12px">⚠️ Les mouvements de stock "entrée plateaux/cartons" déjà enregistrés peuvent être supprimés et regénérés au bon montant si le recalcul change un résultat. Aucune autre donnée n'est touchée (œufs bruts/casses saisis restent inchangés).</p>
+      <div class="modal-footer"><button class="btn btn-s" onclick="closeOverlay('mMvtApercu')">Annuler</button><button class="btn btn-p" onclick="appliquerRecalculTousLesConditionnements()"><i class="fas fa-check"></i> Lancer la mise à jour</button></div>
+    </div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML=html;openOverlay('mMvtApercu');
+};
+window.appliquerRecalculTousLesConditionnements = async function(){
+  const sessions = await getAll(S.COND);
+  const flockIds = [...new Set(sessions.map(s=>s.flockId).filter(Boolean))];
+  closeOverlay('mMvtApercu');
+  toast('⏳ Recalcul en cours pour '+flockIds.length+' lot(s)…');
+  for(const flockId of flockIds){
+    await recalculerCascadeCond(flockId);
+  }
+  toast('✅ Mise à jour terminée — '+flockIds.length+' lot(s) traité(s)');
+  await render();
+};
+
 async function renderCond(ca){
   const [sessions, lots, prods, buildings, lines] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS), getAll(S.BUILDINGS), getAll(S.LINES)]);
   const stockTot = await getStockTotal();
@@ -10229,6 +10262,7 @@ async function renderCond(ca){
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-gh btn-sm" onclick="openCondBomListModal()"><i class="fas fa-puzzle-piece"></i> Nomenclatures (BOM)</button>
         <button class="btn btn-gh btn-sm" onclick="ouvrirCorrectionDepotsConso()"><i class="fas fa-wrench"></i> Corriger dépôts historiques</button>
+        <button class="btn btn-gh btn-sm" onclick="recalculerTousLesConditionnements()"><i class="fas fa-rotate"></i> Mettre à jour conditionnements antérieurs</button>
         <button class="btn btn-p btn-sm" onclick="openCondModal()"><i class="fas fa-plus"></i> Nouvelle session</button>
       </div>
     </div>
