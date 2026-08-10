@@ -6605,7 +6605,7 @@ function mortaliteHebdoRef(typeLot, semAge){
 // signal possible de stress thermique, maladie, ou problème d'accès à l'eau/l'aliment.
 const RATIO_EAU_ALIMENT_REF = {min:1.6, max:2.4};
 
-async function renderLotCopilote(lot,kpi,el){
+function genererConstatsCopilote(lot, kpi){
   const ageJours = getAge(lot.startDate);
   const ageSem = ageJours>0 ? +(ageJours/7).toFixed(1) : 0;
   const phases = simuGetPhases ? simuGetPhases(lot.type) : [];
@@ -6692,6 +6692,12 @@ async function renderLotCopilote(lot,kpi,el){
     detail: kpi.mortAujourdhui>0 ? `${kpi.mortAujourdhui} perte(s) aujourd'hui.` : 'Aucune perte aujourd\'hui.',
     suggestion: mortDepasse ? 'Rythme de mortalité nettement au-dessus de la référence — investiguer en priorité : autopsie sur sujets récents, vérifier eau/aliment, ambiance (température, ventilation), et statut vaccinal.' : (mortReelleHebdo>mortRefHebdo ? 'Mortalité légèrement au-dessus de la référence — à surveiller de près sur les prochains jours.' : null)});
 
+  return constats;
+}
+
+async function renderLotCopilote(lot,kpi,el){
+  const constats = genererConstatsCopilote(lot, kpi);
+
   // ── Rendu ──
   const statutCouleur = {ok:'#059669', attention:'#c99a45', critique:'#a3342b'};
   const statutBg = {ok:'#f0fdf4', attention:'var(--amber-bg)', critique:'var(--red-bg)'};
@@ -6701,7 +6707,7 @@ async function renderLotCopilote(lot,kpi,el){
   const suggestions = constats.filter(c=>c.suggestion).map(c=>c.suggestion);
 
   el.innerHTML = `
-    <div class="card" style="margin-bottom:14px;border:1.5px solid #7c3aed"><div class="card-hd" style="background:linear-gradient(135deg,#f3e8ff,#fff);color:#5b21b6">🤖 Copilote Élevage — Synthèse</div>
+    <div class="card" style="margin-bottom:14px;border:1.5px solid #7c3aed"><div class="card-hd" style="background:linear-gradient(135deg,#f3e8ff,#fff);color:#5b21b6;display:flex;justify-content:space-between;align-items:center">🤖 Copilote Élevage — Synthèse<button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="envoyerRapportCopiloteMessagerie()"><i class="fas fa-paper-plane"></i> Envoyer en messagerie</button></div>
       <div class="card-bd">
         <p style="font-size:11px;color:var(--text3);margin-bottom:10px">⚠️ Analyse basée sur des courbes de référence génériques (souche standard) — à interpréter avec ton expertise terrain, pas une décision automatique.</p>
         <div class="g4" style="margin-bottom:4px">
@@ -6729,6 +6735,63 @@ async function renderLotCopilote(lot,kpi,el){
   `;
 }
 window.renderLotCopilote = renderLotCopilote;
+
+// ── Rapport Copilote consolidé — scanne tous les lots actifs, ne détaille que les points
+// critiques/à surveiller (les lots sans souci n'apparaissent qu'en une ligne "RAS"), envoyé
+// en messagerie interne via le même canal que les rapports périodiques. ──
+async function genererRapportCopiloteTexte(){
+  const flocks = (await getAll(S.FLOCKS)).filter(f=>f.type==='layer'||f.type==='broiler');
+  const lignes = [];
+  let nbCritiqueTotal=0, nbAttentionTotal=0;
+  for(const lot of flocks){
+    const kpi = await computeKPIs(lot);
+    if(kpi.clos) continue; // lot terminé — hors périmètre du suivi Copilote
+    const constats = genererConstatsCopilote(lot, kpi);
+    const problemes = constats.filter(c=>c.statut!=='ok');
+    if(!problemes.length){
+      lignes.push(`✅ *${lot.nom}* — RAS, tout est nominal.`);
+      continue;
+    }
+    nbCritiqueTotal += problemes.filter(c=>c.statut==='critique').length;
+    nbAttentionTotal += problemes.filter(c=>c.statut==='attention').length;
+    const icone = problemes.some(c=>c.statut==='critique') ? '🔴' : '⚠️';
+    lignes.push(`${icone} *${lot.nom}* (${lot.type==='layer'?'pondeuse':'chair'})`);
+    problemes.forEach(c=>{
+      lignes.push(`   ${c.statut==='critique'?'🔴':'⚠️'} ${c.domaine} — ${c.titre}`);
+      if(c.suggestion) lignes.push(`      💡 ${c.suggestion}`);
+    });
+  }
+  const date = new Date().toLocaleDateString('fr-FR');
+  let t = `🤖 *RAPPORT COPILOTE ÉLEVAGE* — ${date}\n`;
+  t += `${nbCritiqueTotal} point(s) critique(s) · ${nbAttentionTotal} à surveiller sur ${flocks.length} lot(s)\n`;
+  t += '━━━━━━━━━━━━━━━━━━━\n\n';
+  t += lignes.join('\n');
+  t += '\n\n_Analyse générée automatiquement — courbes de référence génériques, à valider avec l\'expertise terrain._';
+  return t;
+}
+window.genererRapportCopiloteTexte = genererRapportCopiloteTexte;
+
+window.envoyerRapportCopiloteMessagerie = async function(){
+  toast('⏳ Analyse de tous les lots en cours…');
+  try{
+    const texte = await genererRapportCopiloteTexte();
+    const convId = await msgGetOrCreateRapportConversation();
+    await envoyerMessageInterne(convId, texte);
+    toast('✅ Rapport Copilote envoyé en messagerie interne');
+  }catch(e){ toast('⛔ Échec envoi : '+e.message,'err'); }
+};
+window.apercuRapportCopilote = async function(){
+  toast('⏳ Analyse en cours…');
+  const texte = await genererRapportCopiloteTexte();
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Rapport Copilote</title><style>
+    body{font-family:Arial,sans-serif;font-size:13px;color:#222;padding:20px;max-width:700px;margin:0 auto;white-space:pre-wrap;line-height:1.6}
+    .preview-bar{position:sticky;top:-20px;background:#7c3aed;color:#fff;padding:10px 16px;margin:-20px -20px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#7c3aed;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+  </style></head><body><div class="preview-bar"><span>🤖 Aperçu Rapport Copilote</span><button onclick="window.print()">🖨️ Imprimer</button></div>${esc(texte).replace(/\n/g,'<br>')}</body></html>`;
+  const w=window.open('','_blank','width=700,height=780');
+  if(!w){ toast('Autoriser les pop-ups','err'); return; }
+  w.document.write(html); w.document.close();
+};
 
 async function renderLotRenta(lot,kpi,el){
   const{coutPinit,coutAliment,totalCharges,totalRecettes,marge}=kpi;
@@ -18794,6 +18857,15 @@ async function renderRapports(ca){
               </div>
             </div>`).join('')}
         </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;border:1.5px solid #7c3aed">
+      <div class="card-hd" style="background:linear-gradient(135deg,#f3e8ff,#fff);color:#5b21b6"><span>🤖 Rapport Copilote Élevage</span></div>
+      <div class="card-bd">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:10px">Analyse tous les lots actifs (âge/prophylaxie/nutrition/courbe ponte-croissance/mortalité) — ne détaille que les points nécessitant attention.</p>
+        <button class="btn btn-p" style="background:#7c3aed" onclick="envoyerRapportCopiloteMessagerie()"><i class="fas fa-paper-plane"></i> Envoyer en messagerie interne</button>
+        <button class="btn btn-gh" onclick="apercuRapportCopilote()"><i class="fas fa-eye"></i> Aperçu</button>
       </div>
     </div>
 
