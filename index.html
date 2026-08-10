@@ -1718,9 +1718,11 @@ h1,h2,h3,.modal h3,.page-header-title,.lot-title,.app-logo h1{font-family:var(--
   </div>
   <div class="form-grid" style="margin-bottom:14px">
     <div class="fg fg-full"><label>🐔 Lot (pondeuses) *</label><select id="condLot" onchange="onCondLotChange();afficherResteCondLot()"></select></div>
+    <div class="fg fg-full" id="condEffectifBox" style="display:none;background:#eef3ec;border:1px solid #6b9c7e;border-radius:8px;padding:8px 12px;font-size:12px;color:#152e22;font-weight:600"></div>
     <div class="fg fg-full" id="condResteBox" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e"></div>
+    <div class="fg fg-full" id="condSaisieAlerteBox" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--red);font-weight:600"></div>
     <div class="fg"><label>Date *</label><input id="condDate" type="date"></div>
-    <div class="fg"><label>🥚 Œufs pondus / collectés aujourd'hui *</label><input id="condBruts" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
+    <div class="fg"><label>🥚 Œufs pondus / collectés aujourd'hui *</label><input id="condBruts" type="number" placeholder="0" min="0" oninput="calcCond();verifierPlausibiliteCond()"></div>
     <div class="fg"><label>Œufs cassés / non conformes</label><input id="condCasses" type="number" placeholder="0" min="0" oninput="calcCond()"></div>
     <div class="fg"><label>Dépôt de stockage œufs bruts</label><select id="condDepotSrc"></select></div>
     <div class="fg"><label>Dépôt destination (plateaux)</label><select id="condDepotDest" onchange="verifierDepotCartonCond()"></select></div>
@@ -10281,6 +10283,39 @@ window.onCondLotChange = function(){
   const flockId = parseInt(document.getElementById('condLot').value)||null;
   document.getElementById('condLotId').value = flockId||'';
   refreshCondProphyTasks(flockId);
+  afficherEffectifCondLot(flockId);
+};
+// Affiche l'effectif restant (vivants) du lot choisi — contexte immédiat pour éviter une
+// saisie d'œufs bruts totalement déconnectée de la taille réelle du cheptel.
+window._condVivantsActuel = null;
+window.afficherEffectifCondLot = async function(flockId){
+  const box = document.getElementById('condEffectifBox');
+  if(!box) return;
+  if(!flockId){ box.style.display='none'; window._condVivantsActuel=null; return; }
+  const flocks = await getAll(S.FLOCKS);
+  const lot = flocks.find(f=>f.id===flockId);
+  if(!lot){ box.style.display='none'; window._condVivantsActuel=null; return; }
+  const kpi = await computeKPIs(lot);
+  window._condVivantsActuel = kpi.vivants;
+  box.style.display='block';
+  box.innerHTML = `🐔 <strong>${kpi.vivants.toLocaleString('fr-FR')} sujet(s)</strong> restant(s) dans ce lot — capacité théorique max. ≈ <strong>${kpi.vivants.toLocaleString('fr-FR')} œufs/jour</strong> (1 œuf/poule/jour au plus).`;
+  verifierPlausibiliteCond();
+};
+// Alerte (sans bloquer) si les œufs bruts saisis dépassent nettement l'effectif du lot —
+// détecte typiquement une erreur de saisie (zéro en trop, mauvais lot sélectionné…).
+window.verifierPlausibiliteCond = function(){
+  const box = document.getElementById('condSaisieAlerteBox');
+  if(!box) return;
+  const vivants = window._condVivantsActuel;
+  const bruts = parseFloat(document.getElementById('condBruts')?.value)||0;
+  if(!vivants || bruts<=0){ box.style.display='none'; return; }
+  if(bruts > vivants){
+    box.style.display='block';
+    const ratio = (bruts/vivants*100).toFixed(0);
+    box.innerHTML = `⚠️ ${bruts.toLocaleString('fr-FR')} œufs saisis pour ${vivants.toLocaleString('fr-FR')} sujet(s) restant(s) — soit ${ratio}% de ponte, physiologiquement impossible (max. 100%). Vérifiez le nombre saisi ou le lot sélectionné.`;
+  } else {
+    box.style.display='none';
+  }
 };
 
 async function openCondModal(flockId){
@@ -10304,6 +10339,7 @@ async function openCondModal(flockId){
     layerLots.map(f => `<option value="${f.id}">${f.nom}</option>`).join('');
   condLotSel.value = flockId || '';
   document.getElementById('condLotId').value = flockId||'';
+  afficherEffectifCondLot(flockId||null);
 
   document.getElementById('condDate').value = new Date().toISOString().slice(0,10);
   document.getElementById('condBruts').value = '';
