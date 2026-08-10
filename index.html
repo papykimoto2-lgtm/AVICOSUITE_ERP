@@ -18628,6 +18628,7 @@ window.sauvegarderCfgRapport = function(){
     autoJour:    chk('cfgAutoJour'),    heureJour:    val('cfgHeureJour')    || cfg.heureJour    || '18:00',
     autoSemaine: chk('cfgAutoSemaine'), heureSemaine: val('cfgHeureSemaine') || cfg.heureSemaine || '07:00',
     autoMois:    chk('cfgAutoMois'),    heureMois:    val('cfgHeureMois')    || cfg.heureMois    || '07:00',
+    autoCopilote:chk('cfgAutoCopilote'),heureCopilote:val('cfgHeureCopilote')|| cfg.heureCopilote|| '06:00',
   };
   saveRapportConfig(next);
   toast('Configuration enregistrée');
@@ -18678,6 +18679,21 @@ function startRapportAuto(){
     // Rapport mensuel (1er du mois)
     if(cfg.autoMois && cfg.heureMois===hhmm && dom===1){
       typeToSend = 'mois';
+    }
+    // Rapport Copilote (quotidien) — traité séparément, texte différent, messagerie uniquement
+    let copiloteAEnvoyer = cfg.autoCopilote && cfg.heureCopilote===hhmm;
+
+    if(copiloteAEnvoyer){
+      localStorage.setItem('avico_rapport_last', keyNow);
+      try{
+        const texteCopilote = await genererRapportCopiloteTexte();
+        if(cfg.messagerieActif!==false){
+          const convId = await msgGetOrCreateRapportConversation();
+          await envoyerMessageInterne(convId, texteCopilote);
+        }
+        toast('🤖 Rapport Copilote envoyé !');
+      }catch(e){ console.warn('Envoi Copilote auto échoué :', e.message); }
+      return; // un seul type de rapport par minute
     }
 
     if(typeToSend){
@@ -18898,7 +18914,7 @@ async function renderRapports(ca){
           <i class="fas fa-info-circle"></i> Fonctionne tant que la page est ouverte. WhatsApp : une fenêtre s'ouvrira à l'heure définie.
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
-          ${[['autoJour','heureJour','18:00','📅 Journalier'],['autoSemaine','heureSemaine','07:00','📆 Hebdo (lundi)'],['autoMois','heureMois','07:00','🗓️ Mensuel (1er)']].map(([chk,heure,def,lbl])=>`
+          ${[['autoJour','heureJour','18:00','📅 Journalier'],['autoSemaine','heureSemaine','07:00','📆 Hebdo (lundi)'],['autoMois','heureMois','07:00','🗓️ Mensuel (1er)'],['autoCopilote','heureCopilote','06:00','🤖 Copilote (quotidien)']].map(([chk,heure,def,lbl])=>`
             <div style="border:1.5px solid var(--border);border-radius:10px;padding:12px">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                 <input type="checkbox" id="cfg${chk.charAt(0).toUpperCase()+chk.slice(1)}" ${cfg[chk]?'checked':''} style="width:14px;height:14px">
