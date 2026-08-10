@@ -3165,6 +3165,17 @@ const PLAN_COMPTABLE = {
   '6411':{lbl:'Charges sociales patronales',classe:6},
   '6813':{lbl:'Dotations aux amortissements',classe:6},
   '701':{lbl:'Ventes — produits avicoles',classe:7},
+  '758':{lbl:'Autres produits divers (subventions, primes)',classe:7},
+  '162':{lbl:'Emprunts',classe:1},
+  '101':{lbl:'Capital — apport',classe:1},
+  '622':{lbl:'Locations (loyer/bail)',classe:6},
+  '646':{lbl:'Impôts et taxes',classe:6},
+};
+// Suggestion de compte par défaut selon la catégorie de trésorerie manuelle (Papi peut corriger
+// avant de valider — c'est une proposition, pas une affectation automatique silencieuse).
+const COMPTE_SUGGERE_PAR_CAT_TRESO = {
+  vente:'701', subvention:'758', pret:'162', apport:'101',
+  achat:'601', salaire:'6410', loyer:'622', charge_fixe:'628', impot:'646', autre:'628'
 };
 // Catégorie de charge (module Finance/Charges, CAT_LABELS) → compte OHADA
 const COMPTE_PAR_CATEGORIE = {
@@ -11727,10 +11738,12 @@ async function computeFinanceGlobale(){
 let comptaTab='journal', comptaDateMin=null, comptaDateMax=null, comptaCompteSel='';
 function comptaCA(){ return document.getElementById('comptaTabContent') || document.getElementById('contentArea'); }
 async function renderCompta(ca){
+  const nbEnAttente = (await getTresorerieNonVentilee()).length;
   const tabs=[
     {id:'journal',    icon:'fa-list',          label:'Journal général'},
     {id:'grandlivre', icon:'fa-book-open',     label:'Grand Livre'},
     {id:'balance',    icon:'fa-scale-balanced',label:'Balance'},
+    {id:'ventilation',icon:'fa-inbox',         label:'Ventilations en attente'+(nbEnAttente?` (${nbEnAttente})`:'')},
     {id:'fec',        icon:'fa-file-export',   label:'Export FEC'},
   ];
   const tabNav=tabs.map(t=>`<button class="tab-btn ${comptaTab===t.id?'on':''}" onclick="switchComptaTab('${t.id}')"><i class="fas ${t.icon}"></i> ${t.label}</button>`).join('');
@@ -11752,6 +11765,7 @@ async function renderComptaTab(){
   if(comptaTab==='journal') await renderComptaJournal(el);
   else if(comptaTab==='grandlivre') await renderComptaGrandLivre(el);
   else if(comptaTab==='balance') await renderComptaBalance(el);
+  else if(comptaTab==='ventilation') await renderComptaVentilation(el);
   else if(comptaTab==='fec') await renderComptaFEC(el);
 }
 function comptaFiltreBar(showCompte){
@@ -11883,6 +11897,93 @@ window.apercuBalanceComptable=async function(){
 window.imprimerBalanceComptable=window.apercuBalanceComptable;
 
 // ── Export FEC (Fichier des Écritures Comptables) ──
+// ── Ventilations en attente — mouvements de trésorerie saisis manuellement (module
+// Trésorerie, hors ventes/achats/paie qui se comptabilisent déjà automatiquement) et
+// jamais affectés à un compte OHADA. Détecté par absence d'écriture référençant
+// 'TRESO-<id>' — pas de champ à maintenir, se déduit à chaque lecture.
+async function getTresorerieNonVentilee(){
+  const[treso,ecritures]=await Promise.all([getAll(S.TRESORERIE),getAll(S.ECRITURES)]);
+  const refsVentiles=new Set(ecritures.filter(e=>e.refSource&&e.refSource.startsWith('TRESO-')).map(e=>e.refSource));
+  return treso.filter(t=>!refsVentiles.has('TRESO-'+t.id)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+}
+const TRESO_CAT_LABEL={vente:'Vente produits',subvention:'Subvention/Prime',pret:'Emprunt/Prêt',apport:'Apport en capital',achat:'Achat matières',salaire:'Salaires',loyer:'Loyer/Bail',charge_fixe:'Charges fixes',impot:'Impôts/Taxes',autre:'Autre'};
+
+async function renderComptaVentilation(el){
+  const enAttente = await getTresorerieNonVentilee();
+  const total = enAttente.reduce((a,t)=>a+(t.montant||0),0);
+  const rows = enAttente.map(t=>{
+    const compteSuggere = COMPTE_PAR_CATEGORIE[t.categorie] || COMPTE_SUGGERE_PAR_CAT_TRESO[t.categorie] || '628';
+    const optsComptes = Object.entries(PLAN_COMPTABLE).map(([n,c])=>`<option value="${n}" ${n===compteSuggere?'selected':''}>${n} — ${c.lbl}</option>`).join('');
+    return `<tr id="ventRow${t.id}">
+      <td><input type="checkbox" class="ventChk" value="${t.id}"></td>
+      <td>${t.date||'—'}</td>
+      <td><span class="badge ${t.type==='entree'?'b-g':'b-r'}">${t.type==='entree'?'📥 Encaissement':'📤 Décaissement'}</span></td>
+      <td style="font-size:11px">${TRESO_CAT_LABEL[t.categorie]||t.categorie||'—'}</td>
+      <td style="font-size:11px">${esc(t.libelle||'—')}</td>
+      <td style="text-align:right;font-weight:700">${fcfa(t.montant)}</td>
+      <td><select id="ventCompte${t.id}" style="font-size:11px;max-width:220px">${optsComptes}</select></td>
+      <td><select id="ventMode${t.id}" style="font-size:11px"><option value="virement">Virement/Banque</option><option value="especes">Espèces (caisse)</option></select></td>
+      <td><button class="btn btn-xs btn-p" onclick="ventilerUnMouvement(${t.id})"><i class="fas fa-check"></i></button></td>
+    </tr>`;
+  }).join('');
+  el.innerHTML=`<div class="card" style="margin-bottom:14px;border:${enAttente.length?'1.5px solid var(--amber)':'1px solid var(--border)'}">
+    <div class="card-hd" style="background:${enAttente.length?'linear-gradient(135deg,var(--amber-bg),#fff)':''}">
+      <span>${enAttente.length?'⏳':'✅'} ${enAttente.length} mouvement(s) de trésorerie en attente de ventilation</span>
+      ${enAttente.length?`<span style="font-weight:700;color:var(--amber-d)">${fcfa(total)}</span>`:''}
+    </div>
+    <div class="card-bd">
+      <p style="font-size:11px;color:var(--text3);margin-bottom:10px">Mouvements saisis manuellement dans Trésorerie (hors ventes/achats/paie, déjà comptabilisés automatiquement) — choisissez le compte OHADA et le mode (banque/caisse) pour chacun, puis validez.</p>
+      ${enAttente.length?`<div style="margin-bottom:10px"><button class="btn btn-p btn-sm" onclick="ventilerSelection()"><i class="fas fa-check-double"></i> Ventiler la sélection</button></div>`:''}
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Date</th><th>Type</th><th>Catégorie</th><th>Libellé</th><th style="text-align:right">Montant</th><th>Compte OHADA</th><th>Mode</th><th></th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Rien en attente — tous les mouvements de trésorerie sont ventilés.</td></tr>'}</tbody>
+      </table></div>
+    </div></div>`;
+}
+window.renderComptaVentilation = renderComptaVentilation;
+
+async function ventilerMouvement(t, compte, mode){
+  const isEntree = t.type==='entree';
+  await passerEcriture({
+    date: t.date, journal:'OD', libelle: t.libelle || (TRESO_CAT_LABEL[t.categorie]||'Mouvement trésorerie'),
+    lignes: isEntree
+      ? [{compte:compteTresorerie(mode), libelle:'Encaissement '+mode, debit:Math.round(t.montant), credit:0},
+         {compte, libelle:PLAN_COMPTABLE[compte]?.lbl||compte, debit:0, credit:Math.round(t.montant)}]
+      : [{compte, libelle:PLAN_COMPTABLE[compte]?.lbl||compte, debit:Math.round(t.montant), credit:0},
+         {compte:compteTresorerie(mode), libelle:'Décaissement '+mode, debit:0, credit:Math.round(t.montant)}],
+    refSource: 'TRESO-'+t.id
+  });
+}
+window.ventilerUnMouvement = async function(id){
+  const treso = await getAll(S.TRESORERIE);
+  const t = treso.find(x=>x.id===id);
+  if(!t){ toast('Mouvement introuvable','err'); return; }
+  const compte = document.getElementById('ventCompte'+id)?.value;
+  const mode = document.getElementById('ventMode'+id)?.value || 'virement';
+  if(!compte){ toast('Choisissez un compte','err'); return; }
+  try{
+    await ventilerMouvement(t, compte, mode);
+    toast('✅ Mouvement ventilé sur '+compte);
+    await renderComptaVentilation(comptaCA());
+  }catch(e){ toast('⛔ Échec : '+e.message,'err'); }
+};
+window.ventilerSelection = async function(){
+  const ids = Array.from(document.querySelectorAll('.ventChk:checked')).map(el=>parseInt(el.value));
+  if(!ids.length){ toast('Aucun mouvement sélectionné','err'); return; }
+  if(!confirm(`Ventiler ${ids.length} mouvement(s) avec les comptes actuellement sélectionnés ?`)) return;
+  const treso = await getAll(S.TRESORERIE);
+  let n=0;
+  for(const id of ids){
+    const t = treso.find(x=>x.id===id); if(!t) continue;
+    const compte = document.getElementById('ventCompte'+id)?.value;
+    const mode = document.getElementById('ventMode'+id)?.value || 'virement';
+    if(!compte) continue;
+    try{ await ventilerMouvement(t, compte, mode); n++; }catch(e){ console.warn('Ventilation échouée pour', id, e.message); }
+  }
+  toast('✅ '+n+' mouvement(s) ventilé(s)');
+  await renderComptaVentilation(comptaCA());
+};
+
 async function renderComptaFEC(el){
   el.innerHTML=`${comptaFiltreBar(false)}
   <div class="card"><div class="card-bd" style="text-align:center;padding:30px">
@@ -12349,6 +12450,15 @@ window.switchFinControleLot=function(v){ finControleLot=v; renderFinControle(doc
 
 function renderFinBudget(el,fin){
   if(!fin.budgets.length){el.innerHTML='<div style="text-align:center;padding:60px;background:#fff;border-radius:12px;border:1px dashed var(--border)"><div style="font-size:36px;margin-bottom:12px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucun budget defini</div><div style="font-size:12px;color:var(--text3);margin-bottom:16px">Definissez vos objectifs par lot</div><button class="btn btn-p" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Creer un budget</button></div>';return;}
+  // ── Résumé global (tous lots, toutes catégories confondues) ──
+  var totBudgetG=0, totReelG=0;
+  fin.finLots.forEach(function(f){
+    fin.budgets.filter(function(b){return b.flockId===f.lot.id;}).forEach(function(b){
+      var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
+      totBudgetG+=b.montantBudget; totReelG+=r;
+    });
+  });
+  var ecartG=totReelG-totBudgetG, pcG=totBudgetG>0?(totReelG/totBudgetG*100):0;
   var cards=fin.finLots.map(function(f){
     var lb=fin.budgets.filter(function(b){return b.flockId===f.lot.id;});
     if(!lb.length) return '';
@@ -12358,12 +12468,20 @@ function renderFinBudget(el,fin){
       var fav=b.categorie==='recette'?r>=b.montantBudget:r<=b.montantBudget;
       var ecartPct=b.montantBudget>0?(ec/b.montantBudget*100):0;
       var enDerive=!fav && Math.abs(ecartPct)>=FINANCE_PARAMS.seuilAlerteDerive;
-      return '<tr'+(enDerive?' style="background:#fef2f2"':'')+'><td>'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+(enDerive?' <span class="badge b-r" style="font-size:9px">⚠ dérive</span>':'')+'</td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+'</td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>';
+      var rowId='budgRow'+b.id;
+      return '<tr'+(enDerive?' style="background:#fef2f2"':'')+'><td style="cursor:pointer" onclick="toggleBudgetDetail('+b.id+','+f.lot.id+',\''+b.categorie+'\')">'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+(enDerive?' <span class="badge b-r" style="font-size:9px">⚠ dérive</span>':'')+' <span style="font-size:9px;color:var(--text3)">▾ détail</span></td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+' <span style="font-size:10px;font-weight:400">('+(ecartPct>=0?'+':'')+ecartPct.toFixed(1)+'%)</span></td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="event.stopPropagation();openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="event.stopPropagation();delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>'
+        +'<tr id="'+rowId+'" style="display:none"><td colspan="6" style="background:#f9fbf9;padding:0"><div id="'+rowId+'Body" style="padding:10px 16px;font-size:11px;color:var(--text3)">Chargement…</div></td></tr>';
     }).join('');
     var issuSimu = lb.some(function(b){return b.source==='simulation';});
     return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center"><span>'+(f.lot.type==='layer'?'🥚':'🍗')+' '+esc(f.lot.nom||'Lot')+'</span>'+(issuSimu?'<span class="badge b-bl" style="font-size:9px" title="Budget issu du module Simulation Déploiement de Bande"><i class="fas fa-calculator"></i> Simulation</span>':'')+'</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Categorie</th><th>Budget</th><th>Reel</th><th>Ecart</th><th>% Consomme</th><th></th></tr></thead><tbody>'+brows+'</tbody></table></div></div>';
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📋 Budget vs Reel</div><div style="display:flex;gap:6px"><button class="btn btn-gh btn-sm" onclick="apercuBudget()"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-gh btn-sm" onclick="imprimerBudget()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-p btn-sm" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Budget</button></div></div>'
+    +'<div class="g4" style="margin-bottom:14px">'
+    +'<div class="kpi"><div class="kpi-lbl">Budget total (tous lots)</div><div class="kpi-val">'+fcfa(totBudgetG)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-lbl">Réel total</div><div class="kpi-val">'+fcfa(totReelG)+'</div></div>'
+    +'<div class="kpi ' +(ecartG<=0?'kpi-g':'kpi-r')+'"><div class="kpi-lbl">Écart global</div><div class="kpi-val" style="font-size:15px">'+(ecartG>=0?'+':'')+fcfa(ecartG)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-lbl">% consommé global</div><div class="kpi-val">'+pcG.toFixed(0)+'%</div></div>'
+    +'</div>'
     +cards
     +'<div class="card"><div class="card-hd">📊 Graphique Budget vs Reel</div><div class="card-bd" style="position:relative;height:200px"><canvas id="finChartBudget"></canvas></div></div>';
   window._finBudgetLastFin = fin; // conservé pour l'impression
@@ -12374,6 +12492,32 @@ function renderFinBudget(el,fin){
     if(lb.length) finCharts.budget=new Chart(ctxB,{type:'bar',data:{labels:lb,datasets:[{label:'Budget',data:bt,backgroundColor:'#1565c044',borderColor:'#1565c0',borderWidth:2},{label:'Reel',data:rt,backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (v/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
   }
 }
+// ── Détail dépliable : transactions réelles derrière le chiffre "Réel" d'une ligne budget ──
+window.toggleBudgetDetail = async function(budgetId, flockId, categorie){
+  const row = document.getElementById('budgRow'+budgetId);
+  if(!row) return;
+  if(row.style.display==='none'){
+    row.style.display='table-row';
+    const body = document.getElementById('budgRow'+budgetId+'Body');
+    if(body && body.dataset.loaded!=='1'){
+      body.dataset.loaded='1';
+      if(categorie==='recette'){
+        const sales = (await getAll(S.SALES)).filter(s=>s.flockId===flockId && s.statut!=='cancelled');
+        body.innerHTML = sales.length ? '<table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Réf.</th><th>Client</th><th style="text-align:right">Montant</th></tr></thead><tbody>'
+          +await Promise.all(sales.map(async s=>{const c=(await getAll(S.CLIENTS)).find(x=>x.id===s.clientId);return `<tr><td>${s.date||'—'}</td><td>${esc(s.ref||'')}</td><td>${esc(c?c.nom:'—')}</td><td style="text-align:right">${fcfa(s.totalHT||s.total||0)}</td></tr>`;})).then(r=>r.join(''))
+          +'</tbody></table>' : 'Aucune vente enregistrée pour ce lot.';
+      } else {
+        const charges = (await getAll(S.CHARGES)).filter(c=>c.flockId===flockId && (categorie==='total' || c.categorie===categorie));
+        body.innerHTML = charges.length ? '<table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th style="text-align:right">Montant</th></tr></thead><tbody>'
+          + charges.map(c=>`<tr><td>${c.date||'—'}</td><td>${CAT_LABELS[c.categorie]||c.categorie}</td><td>${esc(c.libelle||'')}${c.paieRef?' <span class="badge b-bl" style="font-size:9px">🔗 Paie</span>':''}</td><td style="text-align:right">${fcfa(c.montant)}</td></tr>`).join('')
+          + '</tbody></table>' + (categorie==='aliment'||categorie==='poussin' ? '<p style="margin-top:6px;font-style:italic">+ estimation automatique si aucune charge saisie manuellement (voir Paramétrage → Finance).</p>' : '')
+          : 'Aucune charge saisie manuellement pour cette catégorie — le montant "Réel" vient uniquement de l\'estimation automatique.';
+      }
+    }
+  } else {
+    row.style.display='none';
+  }
+};
 
 // ── MODALS ──
 async function openChargeManuelle(fid,editId){
