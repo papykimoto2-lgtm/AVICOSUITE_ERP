@@ -29,37 +29,41 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root{
-  --g1:#1a4731;--g2:#2d6a4f;--g3:#52b788;--g4:#d8f3dc;
-  --amber:#f4a261;--amber-bg:#fff3e0;--amber-d:#b45309;
-  --red:#c1121f;--red-bg:#ffebee;
-  --blue:#1565c0;--blue-bg:#e3f2fd;
-  --purple:#6a1b9a;--purple-bg:#f3e5f5;
-  --border:#dde8e0;--bg:#f0f4f0;--card:#fff;
-  --text:#1b2e22;--text2:#4a6659;--text3:#8aab98;
-  --r:12px;--sh:0 2px 10px rgba(0,0,0,.07);--sh2:0 4px 24px rgba(0,0,0,.12);
+  --g1:#152e22;--g2:#2b5f45;--g3:#6b9c7e;--g4:#eef3ec;
+  --accent:#b8863f;--accent-bg:#faf3e6;--accent-d:#8a6329;
+  --amber:#c99a45;--amber-bg:#faf3e6;--amber-d:#8a6329;
+  --red:#a3342b;--red-bg:#fbecea;
+  --blue:#2f5f8a;--blue-bg:#eaf1f7;
+  --purple:#5c4a7a;--purple-bg:#f1eef5;
+  --border:#e2ddd1;--bg:#f7f5ef;--card:#fffdf9;
+  --text:#20241f;--text2:#565248;--text3:#948e7c;
+  --r:10px;--sh:0 1px 3px rgba(21,46,34,.08),0 1px 2px rgba(21,46,34,.05);--sh2:0 8px 28px rgba(21,46,34,.16);
+  --font-display:ui-serif,Georgia,"Iowan Old Style","Times New Roman",serif;
+  --font-body:-apple-system,"Segoe UI",system-ui,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(--text);font-size:14px}
+body{background:var(--bg);font-family:var(--font-body);color:var(--text);font-size:14px}
+h1,h2,h3,.modal h3,.page-header-title,.lot-title,.app-logo h1{font-family:var(--font-display);font-weight:600;letter-spacing:-.01em}
 .app{display:flex;height:100vh;overflow:hidden}
 
 /* ── APP NAV SIDEBAR ── */
-.app-nav{width:210px;background:linear-gradient(180deg,#0a2818 0%,#0f3320 40%,#1a4731 100%);color:#fff;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.app-nav{width:210px;background:linear-gradient(180deg,#0d1f16 0%,#122a1f 40%,#152e22 100%);color:#fff;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
 .app-logo{padding:16px 14px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0;background:rgba(0,0,0,.18)}
-.app-logo h1{font-size:15px;font-weight:700}
+.app-logo h1{font-size:16px;font-weight:600}
 .app-logo p{font-size:10px;color:rgba(255,255,255,.45);margin-top:2px}
 .nav-section{padding:12px 14px 4px;font-size:9px;font-weight:700;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:.8px}
 .nav-item{display:flex;align-items:center;gap:9px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;border-left:3px solid transparent;color:rgba(255,255,255,.6);transition:.15s;white-space:nowrap}
 .nav-item i{width:16px;text-align:center;font-size:13px}
 .nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
-.nav-item.active{background:rgba(255,255,255,.12);border-left-color:var(--g3);color:#fff}
+.nav-item.active{background:rgba(184,134,63,.14);border-left-color:var(--accent);color:#fff}
 
 /* ── Modules métier (chaîne physique Repro→Finance) mis en avant vs modules transverses ── */
-.nav-group-biz{background:rgba(82,183,136,.06);border-left:3px solid var(--g3);margin:2px 0}
-.nav-section-biz{display:flex;align-items:center;gap:6px;color:var(--g3);font-weight:800;opacity:1}
-.nav-item-biz{color:rgba(255,255,255,.82);border-left-color:rgba(82,183,136,.3)}
-.nav-item-biz i{color:var(--g3)}
-.nav-item-biz:hover{border-left-color:rgba(82,183,136,.6)}
-.nav-item-biz.active{border-left-color:var(--g3);background:rgba(82,183,136,.18)}
+.nav-group-biz{background:rgba(184,134,63,.05);border-left:3px solid var(--accent);margin:2px 0}
+.nav-section-biz{display:flex;align-items:center;gap:6px;color:var(--accent);font-weight:800;opacity:1}
+.nav-item-biz{color:rgba(255,255,255,.82);border-left-color:rgba(184,134,63,.3)}
+.nav-item-biz i{color:var(--accent)}
+.nav-item-biz:hover{border-left-color:rgba(184,134,63,.6)}
+.nav-item-biz.active{border-left-color:var(--accent);background:rgba(184,134,63,.18)}
 
 /* ── MAIN AREA ── */
 .main{flex:1;display:flex;overflow:hidden}
@@ -158,12 +162,12 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
 .prog-fill{height:100%;border-radius:3px;transition:.5s}
 
 /* ── BUTTONS ── */
-.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:.15s;font-family:inherit}
-.btn-p{background:var(--g2);color:#fff}.btn-p:hover{background:var(--g1)}
-.btn-s{background:var(--border);color:var(--text)}.btn-s:hover{background:#c8d8cc}
-.btn-a{background:var(--amber);color:#fff}.btn-a:hover{filter:brightness(1.08)}
-.btn-r{background:var(--red);color:#fff}.btn-r:hover{filter:brightness(1.08)}
-.btn-gh{background:transparent;border:1.5px solid var(--border);color:var(--text2)}.btn-gh:hover{background:#f0f0f0}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:.18s ease;font-family:inherit}
+.btn-p{background:var(--g2);color:#fff;box-shadow:0 1px 2px rgba(21,46,34,.15)}.btn-p:hover{background:var(--g1);box-shadow:0 2px 6px rgba(21,46,34,.22)}
+.btn-s{background:var(--border);color:var(--text)}.btn-s:hover{background:#d4cdba}
+.btn-a{background:var(--accent);color:#fff}.btn-a:hover{background:var(--accent-d)}
+.btn-r{background:var(--red);color:#fff}.btn-r:hover{filter:brightness(1.1)}
+.btn-gh{background:transparent;border:1.5px solid var(--border);color:var(--text2)}.btn-gh:hover{background:var(--g4);border-color:var(--g3)}
 .btn-sm{padding:4px 10px;font-size:11px;border-radius:6px}
 .btn-del{background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px}
 
@@ -278,7 +282,7 @@ body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:var(
   padding:11px 14px;font-size:14px;font-family:inherit;color:var(--text);
   background:#fff;outline:none;transition:.2s;
 }
-.login-field input:focus{border-color:var(--g3);box-shadow:0 0 0 3px rgba(82,183,136,.12)}
+.login-field input:focus{border-color:var(--g3);box-shadow:0 0 0 3px rgba(107,156,126,.15)}
 .login-field input.err{border-color:var(--red)}
 .login-eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);
   cursor:pointer;color:var(--text3);font-size:14px;background:none;border:none;padding:4px}
@@ -2282,7 +2286,8 @@ const S={
   INVENTAIRES:'inventaires_stock',   // Sessions d'inventaire physique (théorique/compté/écarts)
   PAIE:'paie_bulletins',             // Bulletins de paie mensuels (RH)
   RESERVATIONS:'reservations',       // Réservations produits (stock futur avant commande ferme)
-  ECRITURES:'compta_ecritures'       // Écritures comptables SYSCOHADA (journal général)
+  ECRITURES:'compta_ecritures',       // Écritures comptables SYSCOHADA (journal général)
+  RAPPORT_CONFIG:'rapport_config'     // Config envoi auto rapports — lue par l'Edge Function cron serveur
 };
 
 const STORES_DEF=[
@@ -2324,6 +2329,7 @@ const STORES_DEF=[
   [S.INVENTAIRES,'depotId'],
   [S.PAIE,'staffId'],
   [S.RESERVATIONS,'clientId'],
+  [S.RAPPORT_CONFIG,null],
   [S.ECRITURES,'piece']
 ];
 
@@ -11610,6 +11616,14 @@ async function initAppAfterLogin(){
     await loadCalibreTarifsOverrides();
     await loadPaieParamsOverrides();
     await loadFinanceParamsOverrides();
+    // Relance l'envoi automatique des rapports si activé — sans cet appel, le scheduler
+    // (setInterval) ne redémarre jamais après fermeture/réouverture du navigateur ou
+    // redémarrage du PC, même avec la case "Activer" cochée dans Rapports & Envoi.
+    try{
+      const rapCfg = getRapportConfig();
+      if(rapCfg.autoActif) startRapportAuto();
+      if(Object.keys(rapCfg).length) syncRapportConfigToSupabase(rapCfg); // migration config pré-existante
+    }catch(e){ console.warn('Reprise envoi auto rapports échouée :', e.message); }
     await initDemo(); // idempotent (flags seed_*) — sans effet si l'org a déjà des données
     document.getElementById('lotsPanel').classList.remove('hidden');
     await renderLotSidebar();
@@ -17669,12 +17683,26 @@ window.partagerSauvegardeEmail=async function(){
 //  Rapport journalier / hebdo / mensuel → WhatsApp + Email
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── Paramètres sauvegardés en localStorage ──
+// ── Paramètres sauvegardés en localStorage (lecture rapide côté client) ──
 function getRapportConfig(){
   try{ return JSON.parse(localStorage.getItem('avico_rapport_cfg')||'{}'); }catch(e){return {};}
 }
 function saveRapportConfig(cfg){
   localStorage.setItem('avico_rapport_cfg', JSON.stringify(cfg));
+  syncRapportConfigToSupabase(cfg); // best-effort, ne bloque jamais l'UI
+}
+// Pousse la config vers Supabase (store rapport_config) — c'est cette copie que l'Edge
+// Function cron serveur lit pour envoyer les rapports même app fermée. Préserve toujours
+// les champs de suivi gérés par le serveur (dernierEnvoiJour/Semaine/Mois) en fusionnant
+// avec l'enregistrement existant plutôt que de l'écraser.
+async function syncRapportConfigToSupabase(cfg){
+  try{
+    const existants = await getAll(S.RAPPORT_CONFIG);
+    const mien = existants[0]; // un seul enregistrement de config par organisation
+    const fusion = Object.assign({}, mien||{}, cfg);
+    if(mien) await updRec(S.RAPPORT_CONFIG, mien.id, fusion);
+    else await addRec(S.RAPPORT_CONFIG, fusion);
+  }catch(e){ console.warn('Synchronisation config rapports échouée (sera retentée à la prochaine modification) :', e.message); }
 }
 
 // ── Collecte des données selon la période ──
