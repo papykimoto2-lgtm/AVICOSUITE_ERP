@@ -7241,7 +7241,16 @@ async function renderDepots(ca){
   const typeIcon={aliment:'🌾',medicament:'💊',produit_fini:'📦',materiel:'🔧',general:'🏪'};
   const vm = getViewMode('depots','grid');
   const depStats = deps.map(dep=>{
-    const depItems=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===dep.id&&(bal[k]||0)>0);
+    // Union : produits ayant un solde ≠0 dans ce dépôt (y compris négatif, anomalie à
+    // signaler) ET produits affectés à ce dépôt (depotAffecteId) même sans mouvement encore.
+    // Sans cette union, le compteur "X produit(s)" ne comptait que les soldes positifs —
+    // incohérent avec le panneau détail (déjà corrigé) qui affiche aussi les ruptures.
+    const idsAvecMvt = new Set(
+      Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===dep.id&&(bal[k]||0)!==0).map(([k])=>parseInt(k.split('_')[0]))
+    );
+    const idsAffectes = new Set(prods.filter(p=>p.depotAffecteId===dep.id).map(p=>p.id));
+    const allIds = new Set([...idsAvecMvt, ...idsAffectes]);
+    const depItems = Array.from(allIds).map(pid=>[`${pid}_${dep.id}`, bal[`${pid}_${dep.id}`]||0]);
     const nbProd=depItems.length;const val=depItems.reduce((a,[k,v])=>{const p=prods.find(x=>x.id===parseInt(k.split('_')[0]));return a+Math.max(0,v)*(p?.prix||0);},0);
     const depQ=depItems.reduce((a,[,v])=>a+Math.max(0,v),0);const pct=dep.capacite>0?Math.min(100,depQ/dep.capacite*100):0;
     return {dep, nbProd, val, depQ, pct};
