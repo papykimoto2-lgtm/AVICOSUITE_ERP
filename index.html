@@ -10455,7 +10455,7 @@ async function saveCond(){
 
   // Enregistrer la session avec calibres
   var bomId = parseInt(document.getElementById('condBomId')?.value) || null;
-  await addRec(S.COND, {
+  var newCondId = await addRec(S.COND, {
     flockId:flockId, date:date, oeufs_bruts: bruts, oeufs_casses: casses,
     oeufs_nets: nets, plateaux:plateaux, cartons:cartons, plt_restants: pltRestants,
     plt_restants_apres: pltRestantsApres, oeufsResteApres: oeufsResteApres,
@@ -10498,7 +10498,10 @@ async function saveCond(){
 
   // Ponte du jour du lot : la collecte et le conditionnement sont désormais une seule
   // opération saisie ici — plus besoin de la ressaisir dans "Saisie du jour".
-  if(flockId) await addRec(S.EGG_PROD,{flockId:flockId,date:date,eggCount:bruts,eggsBroken:casses,mortality:0,operatorId:opId});
+  // sourceCondId = lien explicite vers la session — remplace la correspondance approximative
+  // (lot+date+quantité) qui laissait des entrées orphelines dès qu'une session était modifiée
+  // ou que deux sessions du même jour avaient la même quantité par coïncidence.
+  if(flockId) await addRec(S.EGG_PROD,{flockId:flockId,date:date,eggCount:bruts,eggsBroken:casses,mortality:0,operatorId:opId,sourceCondId:newCondId});
 
   try{
   if(pBruts){
@@ -10802,10 +10805,14 @@ async function reverseCondSession(s){
     const mvtsADel = (await getAll(S.MVTS)).filter(m => m.ref === s.ref);
     for(const m of mvtsADel) await delRec(S.MVTS, m.id);
   }
-  // Ponte du jour générée par cette session : rapprochement par lot/date/quantité
-  // (EGG_PROD n'a pas de champ ref).
-  const eggRecs = (await getAll(S.EGG_PROD)).filter(e =>
-    e.flockId === s.flockId && e.date === s.date && e.eggCount === s.oeufs_bruts);
+  // Ponte du jour générée par cette session : priorité au lien explicite (sourceCondId),
+  // fiable à 100%. Repli sur la correspondance approximative (lot+date+quantité) uniquement
+  // pour les entrées historiques créées avant l'ajout de ce lien.
+  const allEgg = await getAll(S.EGG_PROD);
+  let eggRecs = allEgg.filter(e => e.sourceCondId === s.id);
+  if(!eggRecs.length){
+    eggRecs = allEgg.filter(e => e.sourceCondId==null && e.flockId === s.flockId && e.date === s.date && e.eggCount === s.oeufs_bruts);
+  }
   for(const e of eggRecs) await delRec(S.EGG_PROD, e.id);
 }
 
@@ -18437,7 +18444,11 @@ async function collectProdCondData(dateMin, dateMax, lotId='', batimentId='', li
     lg.lots.push(b);
     [bg,lg].forEach(g=>{ g.oeufs+=b.oeufs; g.morts+=b.morts; g.alimKg+=b.alimKg; g.eauL+=b.eauL; g.bruts+=b.bruts; g.casses+=b.casses; g.nets+=b.nets; g.plateaux+=b.plateaux; g.cartons+=b.cartons; g.valeurFCFA+=b.valeurFCFA; });
   });
-  const withRates = g => ({ ...g, tauxCond: g.oeufs>0?(g.nets/g.oeufs*100):0, tauxCasse: g.bruts>0?(g.casses/g.bruts*100):0 });
+  // Écart = œufs produits (ponte) − œufs entrés en conditionnement (bruts). Jusqu'ici calculé
+  // au niveau du lot mais jamais remonté ni affiché nulle part : un lot pouvait montrer un
+  // grand écart Œufs produits / Œufs nets sans que le rapport n'explique la part qui vient de
+  // la casse (visible) et celle qui vient de cet écart production/conditionnement (invisible).
+  const withRates = g => ({ ...g, ecart: g.oeufs-g.bruts, tauxCond: g.oeufs>0?(g.nets/g.oeufs*100):0, tauxCasse: g.bruts>0?(g.casses/g.bruts*100):0 });
   const batiments = Object.values(parBatiment).map(bg=>({
     ...withRates(bg),
     lignes: Object.values(bg.parLigne).map(withRates).sort((a,b)=>a.ligne.localeCompare(b.ligne))
@@ -18449,6 +18460,7 @@ async function collectProdCondData(dateMin, dateMax, lotId='', batimentId='', li
   }), {oeufs:0,morts:0,alimKg:0,eauL:0,bruts:0,casses:0,nets:0,plateaux:0,cartons:0,valeurFCFA:0});
   total.tauxCond = total.oeufs>0 ? (total.nets/total.oeufs*100) : 0;
   total.tauxCasse = total.bruts>0 ? (total.casses/total.bruts*100) : 0;
+  total.ecart = total.oeufs - total.bruts;
 
   return { dateMin, dateMax, batiments, total, nbLots: batLots.length };
 }
@@ -18460,6 +18472,7 @@ function buildCorpsProdCond(data, cfg){
       <tr>
         <td><strong>${esc(b.nom)}</strong></td>
         <td style="text-align:right;font-weight:700">${b.oeufs.toLocaleString('fr-FR')}</td>
+        <td style="text-align:right;color:${Math.abs(b.ecart)>b.oeufs*0.05?'#c1121f':'#888'}">${b.ecart>=0?'+':''}${b.ecart.toLocaleString('fr-FR')}</td>
         <td style="text-align:right;color:#c1121f">${b.morts}</td>
         <td style="text-align:right">${b.alimKg.toLocaleString('fr-FR')} kg</td>
         <td style="text-align:right">${b.eauL.toLocaleString('fr-FR')} L</td>
@@ -18474,6 +18487,7 @@ function buildCorpsProdCond(data, cfg){
       <tr class="total-row">
         <td>${label}</td>
         <td style="text-align:right">${g.oeufs.toLocaleString('fr-FR')}</td>
+        <td style="text-align:right">${g.ecart>=0?'+':''}${g.ecart.toLocaleString('fr-FR')}</td>
         <td style="text-align:right">${g.morts}</td>
         <td style="text-align:right">${g.alimKg.toLocaleString('fr-FR')} kg</td>
         <td style="text-align:right">${g.eauL.toLocaleString('fr-FR')} L</td>
@@ -18485,7 +18499,7 @@ function buildCorpsProdCond(data, cfg){
         <td style="text-align:right;color:#166534">${Math.round(g.valeurFCFA).toLocaleString('fr-FR')}</td>
       </tr>`;
   const theadHtml = `<thead><tr>
-        <th>Lot</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Mortalité</th>
+        <th>Lot</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Écart</th><th style="text-align:right">Mortalité</th>
         <th style="text-align:right">Aliment</th><th style="text-align:right">Eau</th>
         <th style="text-align:right">Œufs cond.</th><th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th>
         <th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th><th style="text-align:right">Valeur (FCFA)</th>
@@ -18508,6 +18522,7 @@ function buildCorpsProdCond(data, cfg){
   return `
   <div class="kpis">
     <div class="kpi-box"><div class="kpi-val">${t.oeufs.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Œufs produits</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:${Math.abs(t.ecart)>t.oeufs*0.05?'#c1121f':'#888'}">${t.ecart>=0?'+':''}${t.ecart.toLocaleString('fr-FR')}</div><div class="kpi-lbl">⚠️ Écart prod./cond.</div></div>
     <div class="kpi-box"><div class="kpi-val">${t.nets.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Œufs conditionnés</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCond>=90?'#1a5c2a':t.tauxCond>=70?'#92400e':'#c1121f'}">${t.tauxCond.toFixed(0)}%</div><div class="kpi-lbl">Taux conditionné</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${t.tauxCasse>5?'#c1121f':'#1a5c2a'}">${t.tauxCasse.toFixed(1)}%</div><div class="kpi-lbl">Taux de casse</div></div>
@@ -19157,6 +19172,7 @@ async function renderRapports(ca){
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-p" onclick="refreshCondGlobalDashboard()"><i class="fas fa-sync"></i> Actualiser</button>
+          <button class="btn btn-gh" onclick="corrigerSynchronisationPonteCond()"><i class="fas fa-wrench"></i> Corriger la synchronisation (toute la base)</button>
           <button class="btn btn-gh" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer le détail</button>
         </div>
       </div>
@@ -19544,6 +19560,100 @@ window.clearCondPresetButtons = function(){
   document.querySelectorAll('[id^="condpreset-"]').forEach(b=>b.classList.remove('active'));
 };
 
+// ── Diagnostic de l'écart Production/Conditionnement — identifie précisément quelles
+// entrées "Ponte" (EGG_PROD) composent l'écart affiché, lot par lot et jour par jour :
+// entrée orpheline (aucune session de conditionnement à cette date pour ce lot — résidu
+// historique ou double saisie) vs décalage simple (conditionné un autre jour). ──
+// ── Correction globale — rattache rétroactivement le lien explicite (sourceCondId) sur
+// TOUTES les sessions déjà en base (pas seulement la période affichée à l'écran), pour que
+// toute future modification/suppression soit fiable même sur l'historique. Non destructif :
+// ne fait que compléter le lien manquant. Identifie ensuite les entrées Ponte réellement
+// orphelines (aucune session correspondante, ni par lien ni par correspondance approximative). ──
+window.corrigerSynchronisationPonteCond = async function(){
+  toast('⏳ Analyse de toute la base en cours…');
+  const [allCond, allEgg] = await Promise.all([getAll(S.COND), getAll(S.EGG_PROD)]);
+  let rattachees = 0;
+  const eggSansLien = allEgg.filter(e=>e.sourceCondId==null);
+  for(const s of allCond){
+    // Déjà correctement lié (créé après le correctif, ou déjà rattaché lors d'un passage précédent) ?
+    if(allEgg.some(e=>e.sourceCondId===s.id)) continue;
+    const match = eggSansLien.find(e=>e.flockId===s.flockId && e.date===s.date && e.eggCount===s.oeufs_bruts && e.sourceCondId==null);
+    if(match){
+      await updRec(S.EGG_PROD, match.id, Object.assign({}, match, {sourceCondId:s.id}));
+      match.sourceCondId = s.id; // reflète localement pour éviter un double-rattachement dans cette même passe
+      rattachees++;
+    }
+  }
+  // Après rattachement : toute entrée encore sans lien ET sans correspondance approximative
+  // possible est réellement orpheline (résidu historique, double saisie, ou suppression
+  // manuelle d'une session sans passer par "Annuler").
+  const [allCond2, allEgg2] = await Promise.all([getAll(S.COND), getAll(S.EGG_PROD)]);
+  const orphelines = allEgg2.filter(e=>{
+    if(e.sourceCondId!=null) return false;
+    return !allCond2.some(s=>s.flockId===e.flockId && s.date===e.date && s.oeufs_bruts===e.eggCount);
+  });
+  const flocks = await getAll(S.FLOCKS);
+  const rowsOrph = orphelines.map(e=>{
+    const lot = flocks.find(f=>f.id===e.flockId);
+    return `<tr id="orphRow${e.id}"><td><input type="checkbox" class="orphChk" value="${e.id}"></td><td>${esc(lot?lot.nom:'Lot #'+e.flockId)}</td><td>${e.date}</td><td style="text-align:right;font-weight:700">${(e.eggCount||0).toLocaleString('fr-FR')}</td></tr>`;
+  }).join('');
+  const html = `<div class="card" style="max-width:750px;margin:0 auto">
+    <div class="card-hd">🔧 Correction globale Ponte ↔ Conditionnement</div>
+    <div class="card-bd">
+      <p style="font-size:12px;color:var(--g2);background:#f0fdf4;border-radius:8px;padding:8px 12px;margin-bottom:10px">✅ ${rattachees} entrée(s) rattachée(s) rétroactivement à leur session (lien fiabilisé — n'affecte aucune donnée, complète juste le suivi).</p>
+      ${orphelines.length ? `
+        <p style="font-size:12px;color:var(--red);margin-bottom:10px">⚠️ ${orphelines.length} entrée(s) "Ponte" restent orphelines — aucune session de conditionnement correspondante, sur toute la base. Elles gonflent artificiellement "Œufs produits" dans tous les rapports. Sélectionnez celles à supprimer après vérification (résidu historique ou double saisie confirmée) :</p>
+        <div class="tbl-wrap" style="max-height:320px;overflow-y:auto"><table class="tbl"><thead><tr><th></th><th>Lot</th><th>Date</th><th style="text-align:right">Œufs</th></tr></thead><tbody>${rowsOrph}</tbody></table></div>
+        <div class="modal-footer" style="margin-top:12px"><button class="btn btn-s" onclick="closeOverlay('mMvtApercu')">Fermer</button><button class="btn btn-r" onclick="supprimerOrphelinesSelectionnees()"><i class="fas fa-trash"></i> Supprimer la sélection</button></div>
+      ` : '<p style="text-align:center;color:var(--g2);font-weight:700;padding:16px">✅ Aucune entrée orpheline restante — synchronisation Ponte ↔ Conditionnement propre sur toute la base.</p>'}
+    </div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML = html; openOverlay('mMvtApercu');
+};
+window.supprimerOrphelinesSelectionnees = async function(){
+  const ids = Array.from(document.querySelectorAll('.orphChk:checked')).map(el=>parseInt(el.value));
+  if(!ids.length){ toast('Aucune ligne sélectionnée','err'); return; }
+  if(!confirm(`Supprimer définitivement ${ids.length} entrée(s) "Ponte" orpheline(s) ? Cette action ne peut pas être annulée.`)) return;
+  for(const id of ids) await delRec(S.EGG_PROD, id);
+  toast('✅ '+ids.length+' entrée(s) orpheline(s) supprimée(s)');
+  closeOverlay('mMvtApercu');
+};
+
+window.diagnostiquerEcartProdCond = async function(dateMin, dateMax){
+  toast('⏳ Diagnostic en cours…');
+  const [flocks, eggProd, cond] = await Promise.all([getAll(S.FLOCKS), getAll(S.EGG_PROD), getAll(S.COND)]);
+  const lots = flocks.filter(f=>f.type==='layer');
+  const lignes = [];
+  for(const lot of lots){
+    const eggs = eggProd.filter(e=>e.flockId===lot.id && e.date>=dateMin && e.date<=dateMax);
+    const condLot = cond.filter(c=>c.flockId===lot.id);
+    for(const e of eggs){
+      // Une entrée Ponte "normale" (issue du flux Conditionnement intégré) a une session
+      // de conditionnement à LA MÊME date pour LE MÊME lot avec oeufs_bruts === eggCount.
+      const sessionCorrespondante = condLot.find(c=>c.date===e.date && (c.oeufs_bruts||0)===(e.eggCount||0));
+      if(!sessionCorrespondante){
+        const sessionMemeJour = condLot.find(c=>c.date===e.date);
+        lignes.push({
+          lot: lot.nom, date: e.date, eggCount: e.eggCount||0,
+          type: sessionMemeJour ? 'Quantité différente de la session du même jour' : 'Aucune session de conditionnement ce jour-là (orpheline)',
+          bruts: sessionMemeJour ? sessionMemeJour.oeufs_bruts : null
+        });
+      }
+    }
+  }
+  if(!lignes.length){
+    toast('✅ Aucune entrée orpheline trouvée — l\'écart vient uniquement du décalage temporel normal (stock en attente d\'un jour à l\'autre)');
+    return;
+  }
+  const html = `<div class="card" style="max-width:800px;margin:0 auto">
+    <div class="card-hd">🔎 Diagnostic — ${lignes.length} entrée(s) "Ponte" sans session de conditionnement correspondante exacte</div>
+    <div class="card-bd">
+      <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Chaque session de conditionnement doit créer automatiquement une entrée Ponte identique (même date, même quantité). Une entrée qui ne correspond à aucune session est soit un résidu historique (avant l'adoption du flux intégré), soit une saisie manuelle parallèle (page "Saisie du jour" ou Workflow Simplifié) — à vérifier et corriger dans Suivi de lot → Historique.</p>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Lot</th><th>Date</th><th style="text-align:right">Œufs (Ponte)</th><th>Explication</th></tr></thead>
+      <tbody>${lignes.map(l=>`<tr><td>${esc(l.lot)}</td><td>${l.date}</td><td style="text-align:right;font-weight:700">${l.eggCount.toLocaleString('fr-FR')}</td><td style="font-size:11px;color:var(--red)">${l.type}${l.bruts!=null?' (session : '+l.bruts+' œufs)':''}</td></tr>`).join('')}</tbody></table></div>
+    </div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML=html; openOverlay('mMvtApercu');
+};
+
 window.refreshCondGlobalDashboard = async function(){
   const dMin = document.getElementById('condDateMin')?.value;
   const dMax = document.getElementById('condDateMax')?.value;
@@ -19557,12 +19667,14 @@ window.refreshCondGlobalDashboard = async function(){
     kpiWrap.innerHTML = `
       <div class="kpi kpi-g"><div class="kpi-lbl">Œufs produits</div><div class="kpi-val">${t.oeufs.toLocaleString('fr-FR')}</div><div class="kpi-sub">période sélectionnée</div></div>
       <div class="kpi kpi-b"><div class="kpi-lbl">Œufs entrés cond.</div><div class="kpi-val">${t.bruts.toLocaleString('fr-FR')}</div><div class="kpi-sub">bruts collectés</div></div>
+      <div class="kpi ${Math.abs(t.ecart)>t.oeufs*0.05?'kpi-r':''}"><div class="kpi-lbl">⚠️ Écart prod./cond.</div><div class="kpi-val">${t.ecart>=0?'+':''}${t.ecart.toLocaleString('fr-FR')}</div><div class="kpi-sub">produits non (encore) conditionnés</div></div>
       <div class="kpi ${t.tauxCasse>5?'kpi-r':'kpi-g'}"><div class="kpi-lbl">Taux de casse</div><div class="kpi-val">${t.tauxCasse.toFixed(1)}%</div><div class="kpi-sub">${t.casses.toLocaleString('fr-FR')} œufs cassés</div></div>
       <div class="kpi ${t.tauxCond>=90?'kpi-g':t.tauxCond>=70?'kpi-a':'kpi-r'}"><div class="kpi-lbl">Taux conditionné</div><div class="kpi-val">${t.tauxCond.toFixed(0)}%</div><div class="kpi-sub">${t.nets.toLocaleString('fr-FR')} œufs nets</div></div>
       <div class="kpi kpi-a"><div class="kpi-lbl">Plateaux</div><div class="kpi-val">${t.plateaux.toLocaleString('fr-FR')}</div><div class="kpi-sub">30 œufs / plateau</div></div>
       <div class="kpi kpi-b"><div class="kpi-lbl">Cartons</div><div class="kpi-val">${t.cartons.toLocaleString('fr-FR')}</div><div class="kpi-sub">12 plateaux / carton</div></div>
       <div class="kpi ${t.morts>0?'kpi-r':'kpi-g'}"><div class="kpi-lbl">Mortalité</div><div class="kpi-val">${t.morts.toLocaleString('fr-FR')}</div><div class="kpi-sub">sur la période</div></div>
       <div class="kpi kpi-b"><div class="kpi-lbl">Aliment / Eau</div><div class="kpi-val" style="font-size:15px">${t.alimKg.toLocaleString('fr-FR')}kg</div><div class="kpi-sub">${t.eauL.toLocaleString('fr-FR')} L d'eau</div></div>
+      ${Math.abs(t.ecart)>t.oeufs*0.05?`<div style="grid-column:1/-1"><button class="btn btn-gh btn-sm" onclick="diagnostiquerEcartProdCond('${dMin}','${dMax}')"><i class="fas fa-magnifying-glass"></i> Diagnostiquer l'écart production/conditionnement</button></div>`:''}
     `;
   }
 
@@ -19594,7 +19706,7 @@ window.refreshCondGlobalDashboard = async function(){
           <div class="card-bd tbl-wrap" style="padding:0;overflow-x:auto">
             <table class="tbl" style="min-width:640px">
               <thead><tr>
-                <th>Ligne</th><th>Lots</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Œufs nets</th>
+                <th>Ligne</th><th>Lots</th><th style="text-align:right">Œufs produits</th><th style="text-align:right">Écart</th><th style="text-align:right">Œufs nets</th>
                 <th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons</th><th style="text-align:right">Taux casse</th><th style="text-align:right">Taux cond.</th>
               </tr></thead>
               <tbody>
@@ -19602,6 +19714,7 @@ window.refreshCondGlobalDashboard = async function(){
                   <td style="font-weight:600">${esc(lg.ligne)}</td>
                   <td>${lg.lots.length}</td>
                   <td style="text-align:right">${lg.oeufs.toLocaleString('fr-FR')}</td>
+                  <td style="text-align:right;color:${Math.abs(lg.ecart)>lg.oeufs*0.05?'var(--red)':'var(--text3)'}">${lg.ecart>=0?'+':''}${lg.ecart.toLocaleString('fr-FR')}</td>
                   <td style="text-align:right;font-weight:700">${lg.nets.toLocaleString('fr-FR')}</td>
                   <td style="text-align:right">${lg.plateaux}</td>
                   <td style="text-align:right">${lg.cartons}</td>
@@ -19611,6 +19724,7 @@ window.refreshCondGlobalDashboard = async function(){
                 <tr style="background:#f0fdfa;font-weight:700">
                   <td colspan="2">TOTAL BÂTIMENT</td>
                   <td style="text-align:right">${bg.oeufs.toLocaleString('fr-FR')}</td>
+                  <td style="text-align:right;color:${Math.abs(bg.ecart)>bg.oeufs*0.05?'var(--red)':'inherit'}">${bg.ecart>=0?'+':''}${bg.ecart.toLocaleString('fr-FR')}</td>
                   <td style="text-align:right">${bg.nets.toLocaleString('fr-FR')}</td>
                   <td style="text-align:right">${bg.plateaux}</td>
                   <td style="text-align:right">${bg.cartons}</td>
