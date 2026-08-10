@@ -20514,12 +20514,20 @@ function simuCalcBande(p){
   const coutUnitInitial = p.typeLot === 'layer' ? (p.coutPoussineLayer || p.coutPoussin) : p.coutPoussin;
   const coutPinit = vivants * coutUnitInitial;
 
+  // Remise à l'échelle de la mortalité par phase — les % fixes ci-dessus (mortalitePhasePct)
+  // servent de PROFIL relatif entre phases, mais leur somme ne correspondait jamais au
+  // paramètre "Taux mortalité" saisi par l'utilisateur (qui n'était d'ailleurs jamais lu
+  // nulle part). Le facteur ci-dessous fait correspondre le total réel du cycle à la saisie,
+  // en conservant la répartition relative entre phases (mortalité plus forte en jeune âge).
+  const mortaliteProfilTotal = phases.reduce((s,ph)=>s+ph.mortalitePhasePct, 0);
+  const mortaliteFacteur = (p.tauxMortalite && mortaliteProfilTotal>0) ? (p.tauxMortalite / mortaliteProfilTotal) : 1;
+
   phases.forEach((ph, idx) => {
     const nbSem = ph.semFin - ph.semDeb + 1;
     const nbJours = nbSem * 7;
 
-    // Mortalité phase (mortalitePhasePct = % cumulé sur toute la phase)
-    const mortPhase = Math.round(vivants * ph.mortalitePhasePct / 100);
+    // Mortalité phase (mortalitePhasePct = % cumulé sur toute la phase, remis à l'échelle)
+    const mortPhase = Math.round(vivants * (ph.mortalitePhasePct * mortaliteFacteur) / 100);
     const vivantsDebut = vivants;
     const vivantsFin = Math.max(0, vivants - mortPhase);
 
@@ -20534,8 +20542,13 @@ function simuCalcBande(p){
 
     const coutAlimentPhase = totalFeedKg * pxAlim;
 
-    // Vaccins & médicaments (concentrés sur phases jeunes)
-    const coutVaccPhase = (ph.id==='demarrage'||ph.id==='poulette') ? vivants * p.coutVacc : vivants * (p.coutVacc * 0.1);
+    // Vaccins & médicaments (concentrés sur phases jeunes) — poids normalisés pour que le
+    // TOTAL réparti sur tout le cycle égale exactement p.coutVacc (paramètre = coût total/tête,
+    // pas un coût par phase). Sans cette normalisation, le vrai total dépassait le montant
+    // saisi de 30% (chair) à 140% (pondeuse) selon le nombre de phases.
+    const poidsVaccPhase = (ph.id==='demarrage'||ph.id==='poulette') ? 1 : 0.1;
+    const totalPoidsVacc = phases.reduce((s,ph2)=>s+((ph2.id==='demarrage'||ph2.id==='poulette')?1:0.1), 0);
+    const coutVaccPhase = vivants * p.coutVacc * (poidsVaccPhase / totalPoidsVacc);
     const coutMedPhase  = vivants * p.coutMed * (nbSem / (p.typeLot==='broiler'?6:60));
     const coutEauPhase  = vivantsDebut * p.coutEau * (nbSem / (p.typeLot==='broiler'?6:60));
     const coutLitierePhase = ph.id==='demarrage' ? vivants * p.coutLitiere : 0;
@@ -20551,7 +20564,16 @@ function simuCalcBande(p){
     const coutMainPhase    = p.coutMain * nbMoisPhase;
     const coutEnergiePhase = p.coutEnergie * nbMoisPhase;
     const coutAmortPhase   = p.coutAmort * nbMoisPhase;
-    const coutTransportPhase = (ph.id==='abattage'||ph.id==='reforme') ? p.coutTransport : p.coutTransport * ratioSem * 0.3;
+    // Transport : gros volume en phase finale (abattage/réforme) + incidents mineurs
+    // (livraisons aliment, etc.) réparties sur le reste du cycle. Poids normalisés pour que
+    // le TOTAL sur tout le cycle égale exactement p.coutTransport (coût total/lot saisi) —
+    // sans normalisation, le vrai total dépassait le montant saisi de 25 à 28%.
+    const poidsTransportPhase = (ph.id==='abattage'||ph.id==='reforme') ? 1 : (ratioSem * 0.3);
+    const totalPoidsTransport = phases.reduce((s,ph2)=>{
+      const r2 = (ph2.semFin-ph2.semDeb+1) / dureeLotsem;
+      return s + ((ph2.id==='abattage'||ph2.id==='reforme') ? 1 : (r2*0.3));
+    }, 0);
+    const coutTransportPhase = p.coutTransport * (poidsTransportPhase / totalPoidsTransport);
     const coutDiversPhase  = p.coutDivers * ratioSem;
     const coutIndirectPhase = coutMainPhase + coutEnergiePhase + coutAmortPhase + coutTransportPhase + coutDiversPhase;
 
@@ -20811,6 +20833,11 @@ async function renderSimuBande(ca){
       <div class="fg">
         <div class="sbl">Rendement carcasse (%)</div>
         <input type="number" id="sp_rendCarcasse" value="${p.rendCarcasse}" min="60" max="85" step="0.5" oninput="simuRecalc()">
+      </div>
+      <div class="fg">
+        <div class="sbl">Taux mortalité cycle complet (%)</div>
+        <input type="number" id="sp_tauxMortalite" value="${p.tauxMortalite}" min="0" max="50" step="0.1" oninput="simuRecalc()">
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">Remet à l'échelle la mortalité par phase pour atteindre ce total sur le cycle</div>
       </div>
       ${p.typeLot==='layer'?`
       <div style="grid-column:1/-1;font-size:11px;font-weight:700;color:#7c3aed;padding:8px 0 2px;border-bottom:1px solid var(--border);margin-bottom:4px">🔄 Réforme pondeuse</div>
@@ -21778,6 +21805,7 @@ function simuGetCurrentParams(){
     tauxPonteMoy:      read('sp_tauxPonteMoy'),
     poidsMoyenVif:     read('sp_poidsMoyenVif'),
     rendCarcasse:      read('sp_rendCarcasse'),
+    tauxMortalite:     read('sp_tauxMortalite'),
     coutPoussin:       read('sp_coutPoussin'),
     coutPoussineLayer: read('sp_coutPoussineLayer'),
     poidsReformeKg:    read('sp_poidsReformeKg'),
