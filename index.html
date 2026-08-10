@@ -4991,6 +4991,7 @@ async function renderLotView(ca){
         <button class="tab-btn ${activeLotTab==='cond'?'on':''}" data-tab="cond" onclick="switchLotTab('cond')">${lot.type==='layer'?'📦 Conditionnement':'📦 Conditionnement'}</button>
         <button class="tab-btn ${activeLotTab==='reforme'?'on':''}" data-tab="reforme" onclick="switchLotTab('reforme')" style="${lot.type==='layer'?'color:#7c3aed':'color:var(--red)'}">${lot.type==='layer'?'🔄 Réforme':'🏁 Sortie lot'}</button>
         <button class="tab-btn ${activeLotTab==='renta'?'on':''}" data-tab="renta" onclick="switchLotTab('renta')">💰 Rentabilité</button>
+        <button class="tab-btn ${activeLotTab==='copilote'?'on':''}" data-tab="copilote" onclick="switchLotTab('copilote')" style="color:#7c3aed">🤖 Copilote</button>
       </div>
       <div class="alerts-bar">${alertsHtml}</div>
       <div class="kpi-grid" style="padding:12px 16px 0">${kpiHtml}</div>
@@ -5016,6 +5017,7 @@ async function renderLotTab(){
   else if(activeLotTab==='cond') await renderLotCond(lot,kpi,el);
   else if(activeLotTab==='reforme') await renderLotReforme(lot,kpi,el);
   else if(activeLotTab==='renta') await renderLotRenta(lot,kpi,el);
+  else if(activeLotTab==='copilote') await renderLotCopilote(lot,kpi,el);
 }
 
 async function computeKPIs(lot){
@@ -6572,6 +6574,162 @@ async function renderLotHistory(lot,kpi,el){
 window.setHPage=async(p)=>{window._hPage=p;await renderLotTab();};
 
 // ── RENTABILITÉ ──
+// ════════════════════════════════════════════════════════
+//  COPILOTE ÉLEVAGE — module décisionnel : analyse âge/prophylaxie/nutrition/
+//  courbe ponte-croissance/mortalité vs références standard, avec interprétation
+//  et suggestions concrètes. ⚠️ Courbes de référence génériques (souche ISA Brown-like
+//  pour pondeuses, standard chair) — à ajuster selon la souche réelle si différente.
+// ════════════════════════════════════════════════════════
+
+// Courbe de ponte standard (%) par semaine d'âge — montée, pic, plateau, déclin.
+function pontesStandardPct(semAge){
+  if(semAge<17) return 0;
+  if(semAge<19) return 5+(semAge-17)*22.5;      // 5% → 50%
+  if(semAge<22) return 50+(semAge-19)*11.7;     // 50% → 85%
+  if(semAge<28) return 85+(semAge-22)*1.7;      // 85% → 95% (pic)
+  if(semAge<45) return 95-(semAge-28)*0.35;     // plateau, léger déclin → ~89%
+  if(semAge<=60) return Math.max(65, 89-(semAge-45)*1.3); // déclin progressif → ~65%
+  return 60;
+}
+// Poids vif standard (g) par semaine d'âge — souche chair standard.
+function poidsStandardG(semAge){
+  const table={1:180,2:450,3:850,4:1300,5:1800,6:2300,7:2700,8:3000};
+  return table[Math.round(semAge)] || (semAge<1?100:3000+(semAge-8)*300);
+}
+// Mortalité hebdomadaire acceptable (%) selon phase — au-delà = signal d'alerte.
+function mortaliteHebdoRef(typeLot, semAge){
+  if(typeLot==='broiler') return semAge<=1?1.0:semAge<=3?0.5:0.35;
+  return semAge<=2?0.8:semAge<=18?0.3:0.2; // pondeuse : démarrage puis ponte
+}
+// Ratio eau/aliment (poids) attendu — hors forte chaleur. En dehors de [1.6–2.4],
+// signal possible de stress thermique, maladie, ou problème d'accès à l'eau/l'aliment.
+const RATIO_EAU_ALIMENT_REF = {min:1.6, max:2.4};
+
+async function renderLotCopilote(lot,kpi,el){
+  const ageJours = getAge(lot.startDate);
+  const ageSem = ageJours>0 ? +(ageJours/7).toFixed(1) : 0;
+  const phases = simuGetPhases ? simuGetPhases(lot.type) : [];
+  const phaseActuelle = phases.find(ph=>ageSem>=ph.semDeb && ageSem<=ph.semFin) || phases[phases.length-1];
+
+  const constats = []; // {domaine, statut:'ok'|'attention'|'critique', icone, titre, detail, suggestion}
+
+  // ── 1. ÂGE & PHASE DU CYCLE ──
+  if(phaseActuelle){
+    const semRestantes = phaseActuelle.semFin - ageSem;
+    constats.push({domaine:'Âge & phase', statut:'ok', icone:phaseActuelle.icon||'📅',
+      titre:`${ageJours} jour(s) — ${ageSem} semaine(s) — Phase "${phaseActuelle.label}"`,
+      detail:`Phase en cours : semaine ${phaseActuelle.semDeb} à ${phaseActuelle.semFin}. ${semRestantes<=1?'Transition de phase imminente — anticiper le changement d\'aliment/programme.':'Encore '+Math.max(0,Math.round(semRestantes))+' semaine(s) dans cette phase.'}`,
+      suggestion: semRestantes<=1 ? 'Préparer la transition : ajuster formule aliment et programme lumineux/prophylaxie pour la phase suivante.' : null});
+  }
+
+  // ── 2. PROPHYLAXIE ──
+  const nbRetard = kpi.vaccEnRetard.length;
+  const prochain = kpi.vaccAVenir.sort((a,b)=>a.plannedDate.localeCompare(b.plannedDate))[0];
+  if(nbRetard>0){
+    constats.push({domaine:'Prophylaxie', statut:'critique', icone:'💊',
+      titre:`${nbRetard} intervention(s) en retard`,
+      detail:kpi.vaccEnRetard.slice(0,3).map(t=>`${t.action} (prévu ${t.plannedDate})`).join(', ')+(nbRetard>3?` +${nbRetard-3} autre(s)`:''),
+      suggestion:'Rattraper les vaccinations/traitements en retard en priorité — un retard prolongé augmente le risque sanitaire et peut expliquer une baisse de ponte ou une mortalité anormale.'});
+  } else if(prochain){
+    const joursAvant = Math.round((new Date(prochain.plannedDate)-new Date())/86400000);
+    constats.push({domaine:'Prophylaxie', statut: joursAvant<=3?'attention':'ok', icone:'💊',
+      titre:`À jour — prochaine intervention : ${prochain.action}`,
+      detail:`Prévue le ${prochain.plannedDate} (dans ${joursAvant} jour(s)).`,
+      suggestion: joursAvant<=3 ? 'Préparer le matériel/produit pour l\'intervention à venir.' : null});
+  } else {
+    constats.push({domaine:'Prophylaxie', statut:'ok', icone:'💊', titre:'Aucune intervention programmée', detail:'Pas de tâche de prophylaxie en attente pour ce lot.', suggestion:null});
+  }
+
+  // ── 3. NUTRITION (aliment & eau) ──
+  const totalWaterL = (kpi.waters||[]).reduce((a,w)=>a+(w.quantityL||0),0);
+  const ratioEauAliment = kpi.totalFeedKg>0 ? +(totalWaterL/kpi.totalFeedKg).toFixed(2) : null;
+  if(ratioEauAliment!==null){
+    const horsPlage = ratioEauAliment<RATIO_EAU_ALIMENT_REF.min || ratioEauAliment>RATIO_EAU_ALIMENT_REF.max;
+    constats.push({domaine:'Nutrition (eau/aliment)', statut: horsPlage?'attention':'ok', icone:'💧',
+      titre:`Ratio eau/aliment : ${ratioEauAliment} (référence ${RATIO_EAU_ALIMENT_REF.min}–${RATIO_EAU_ALIMENT_REF.max})`,
+      detail: ratioEauAliment>RATIO_EAU_ALIMENT_REF.max ? 'Consommation d\'eau anormalement élevée par rapport à l\'aliment.' : ratioEauAliment<RATIO_EAU_ALIMENT_REF.min ? 'Consommation d\'eau anormalement basse par rapport à l\'aliment.' : 'Ratio dans la plage normale.',
+      suggestion: ratioEauAliment>RATIO_EAU_ALIMENT_REF.max ? 'Vérifier température ambiante (stress thermique), qualité de l\'aliment, ou signe précoce de maladie digestive.' : ratioEauAliment<RATIO_EAU_ALIMENT_REF.min ? 'Vérifier l\'accès aux abreuvoirs (débit, hauteur, nombre) — un manque d\'eau réduit directement la ponte/croissance.' : null});
+  }
+  if(lot.type==='broiler' && kpi.IC!==null){
+    const icRef = 1.8;
+    constats.push({domaine:'Nutrition (indice de consommation)', statut: kpi.IC>icRef+0.3?'attention':'ok', icone:'🌾',
+      titre:`IC actuel : ${kpi.IC.toFixed(2)} (référence ≈ ${icRef})`,
+      detail: kpi.IC>icRef+0.3 ? 'Consommation d\'aliment élevée par kg de poids produit — efficacité alimentaire dégradée.' : 'Efficacité alimentaire correcte.',
+      suggestion: kpi.IC>icRef+0.3 ? 'Vérifier qualité/formule aliment, gaspillage aux mangeoires, ou charge sanitaire limitant la croissance.' : null});
+  }
+  if(lot.type==='layer' && kpi.alimentParOeuf!==null){
+    const refGOeuf = 130; // g aliment/œuf, référence indicative
+    constats.push({domaine:'Nutrition (aliment/œuf)', statut: kpi.alimentParOeuf>refGOeuf*1.15?'attention':'ok', icone:'🌾',
+      titre:`${kpi.alimentParOeuf.toFixed(0)} g aliment/œuf (référence ≈ ${refGOeuf} g)`,
+      detail: kpi.alimentParOeuf>refGOeuf*1.15 ? 'Coût aliment par œuf élevé — rendement de conversion sous la référence.' : 'Conversion aliment/œuf correcte.',
+      suggestion: kpi.alimentParOeuf>refGOeuf*1.15 ? 'Vérifier formule/qualité aliment et taux de ponte réel (une ponte faible dilue l\'aliment sur moins d\'œufs).' : null});
+  }
+
+  // ── 4. COURBE DE PONTE / CROISSANCE vs référence ──
+  if(lot.type==='layer' && kpi.tauxPonte7!==null && ageSem>=17){
+    const ponteRef = pontesStandardPct(ageSem);
+    const ecart = kpi.tauxPonte7 - ponteRef;
+    constats.push({domaine:'Courbe de ponte', statut: ecart<-8?'critique':ecart<-4?'attention':'ok', icone:'🥚',
+      titre:`Ponte réelle 7j : ${kpi.tauxPonte7.toFixed(1)}% — référence à ${ageSem} sem. : ${ponteRef.toFixed(1)}%`,
+      detail: `Écart : ${ecart>=0?'+':''}${ecart.toFixed(1)} point(s) vs courbe standard.`,
+      suggestion: ecart<-4 ? 'Ponte sous la courbe standard — vérifier programme lumineux, densité, stress (chaleur/bruit/transport), qualité aliment ponte, et statut sanitaire (Newcastle/Bronchite notamment).' : null});
+  }
+  if(lot.type==='broiler' && kpi.poidsActuel!==null){
+    const poidsRef = poidsStandardG(ageSem);
+    const ecartPct = poidsRef>0 ? ((kpi.poidsActuel-poidsRef)/poidsRef*100) : 0;
+    constats.push({domaine:'Courbe de croissance', statut: ecartPct<-10?'critique':ecartPct<-5?'attention':'ok', icone:'📈',
+      titre:`Poids actuel : ${kpi.poidsActuel} g — référence à ${ageSem} sem. : ${poidsRef} g`,
+      detail:`Écart : ${ecartPct>=0?'+':''}${ecartPct.toFixed(1)}% vs courbe standard.`,
+      suggestion: ecartPct<-5 ? 'Croissance sous la référence — vérifier accès aliment/eau (densité, nombre de points), température du bâtiment, et absence de maladie limitant la prise de poids.' : null});
+  }
+
+  // ── 5. MORTALITÉ vs référence ──
+  const mortRefHebdo = mortaliteHebdoRef(lot.type, ageSem);
+  const mortReelleHebdo = kpi.mortMoy7*7 / Math.max(1,kpi.vivants) * 100; // % hebdo approx sur effectif actuel
+  const mortDepasse = mortReelleHebdo > mortRefHebdo*1.5;
+  constats.push({domaine:'Mortalité', statut: mortDepasse?'critique':(mortReelleHebdo>mortRefHebdo?'attention':'ok'), icone:'⚠️',
+    titre:`Mortalité cumulée : ${kpi.mortPct.toFixed(1)}% — rythme récent ≈ ${mortReelleHebdo.toFixed(2)}%/semaine (référence ≈ ${mortRefHebdo}%/sem.)`,
+    detail: kpi.mortAujourdhui>0 ? `${kpi.mortAujourdhui} perte(s) aujourd'hui.` : 'Aucune perte aujourd\'hui.',
+    suggestion: mortDepasse ? 'Rythme de mortalité nettement au-dessus de la référence — investiguer en priorité : autopsie sur sujets récents, vérifier eau/aliment, ambiance (température, ventilation), et statut vaccinal.' : (mortReelleHebdo>mortRefHebdo ? 'Mortalité légèrement au-dessus de la référence — à surveiller de près sur les prochains jours.' : null)});
+
+  // ── Rendu ──
+  const statutCouleur = {ok:'#059669', attention:'#c99a45', critique:'#a3342b'};
+  const statutBg = {ok:'#f0fdf4', attention:'var(--amber-bg)', critique:'var(--red-bg)'};
+  const statutLabel = {ok:'✅ Nominal', attention:'⚠️ À surveiller', critique:'🔴 Action requise'};
+  const nbCritique = constats.filter(c=>c.statut==='critique').length;
+  const nbAttention = constats.filter(c=>c.statut==='attention').length;
+  const suggestions = constats.filter(c=>c.suggestion).map(c=>c.suggestion);
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:14px;border:1.5px solid #7c3aed"><div class="card-hd" style="background:linear-gradient(135deg,#f3e8ff,#fff);color:#5b21b6">🤖 Copilote Élevage — Synthèse</div>
+      <div class="card-bd">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:10px">⚠️ Analyse basée sur des courbes de référence génériques (souche standard) — à interpréter avec ton expertise terrain, pas une décision automatique.</p>
+        <div class="g4" style="margin-bottom:4px">
+          <div class="kpi ${nbCritique?'kpi-r':''}"><div class="kpi-lbl">Points critiques</div><div class="kpi-val">${nbCritique}</div></div>
+          <div class="kpi ${nbAttention?'kpi-a':''}"><div class="kpi-lbl">À surveiller</div><div class="kpi-val">${nbAttention}</div></div>
+          <div class="kpi kpi-g"><div class="kpi-lbl">Nominal</div><div class="kpi-val">${constats.length-nbCritique-nbAttention}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Score global</div><div class="kpi-val">${kpi.score}/100</div></div>
+        </div>
+      </div></div>
+
+    ${constats.map(c=>`
+      <div class="card" style="margin-bottom:10px;border-left:4px solid ${statutCouleur[c.statut]}">
+        <div class="card-bd" style="padding:12px 16px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:.4px">${c.icone} ${c.domaine}</div>
+            <span class="badge" style="background:${statutBg[c.statut]};color:${statutCouleur[c.statut]};font-weight:700">${statutLabel[c.statut]}</span>
+          </div>
+          <div style="font-weight:700;font-size:13px;margin:4px 0 2px">${c.titre}</div>
+          <div style="font-size:12px;color:var(--text2)">${c.detail}</div>
+          ${c.suggestion ? `<div style="margin-top:8px;background:#f3e8ff;border-radius:8px;padding:8px 12px;font-size:11px;color:#5b21b6"><strong>💡 Suggestion :</strong> ${c.suggestion}</div>` : ''}
+        </div>
+      </div>`).join('')}
+
+    ${suggestions.length>1 ? `<div class="card" style="border:1px solid var(--amber)"><div class="card-hd">📝 Récapitulatif des actions suggérées</div><div class="card-bd"><ol style="margin:0 0 0 18px;font-size:12px;color:var(--text2)">${suggestions.map(s=>`<li style="margin-bottom:6px">${s}</li>`).join('')}</ol></div></div>` : ''}
+  `;
+}
+window.renderLotCopilote = renderLotCopilote;
+
 async function renderLotRenta(lot,kpi,el){
   const{coutPinit,coutAliment,totalCharges,totalRecettes,marge}=kpi;
   const vivants=kpi.vivants;const margePct=totalCharges>0?(marge/totalCharges*100):0;
