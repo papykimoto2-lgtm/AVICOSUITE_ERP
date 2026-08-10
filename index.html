@@ -2395,8 +2395,15 @@ async function flushPendingOps(){
       if(op.op==='add'){
         const {data,error}=await supa.from('avico_records').insert({store:op.store,org_id:SUPA_ORG,data:op.data}).select('id').single();
         if(error) throw error;
-        // Remap best-effort du tempId vers le vrai id dans les opérations encore en attente (clés étrangères type flockId, clientId…)
-        for(const other of q){ if(other.data){ for(const k in other.data){ if(other.data[k]===op.tempId) other.data[k]=data.id; } } }
+        // Remap best-effort du tempId vers le vrai id dans les opérations encore en attente :
+        // à la fois les clés étrangères (flockId, clientId…) ET l'id de l'opération elle-même
+        // (une modification/suppression faite hors-ligne sur ce même enregistrement, avant
+        // resynchronisation) — sans ce second remap, l'update/delete ciblait un id qui n'a
+        // jamais existé côté serveur, ne touchait 0 ligne, et échouait silencieusement.
+        for(const other of q){
+          if(other.data){ for(const k in other.data){ if(other.data[k]===op.tempId) other.data[k]=data.id; } }
+          if(other.id===op.tempId) other.id=data.id;
+        }
       }else if(op.op==='upd'){
         const {error}=await supa.from('avico_records').update({data:op.data,updated_at:new Date().toISOString()}).eq('id',op.id).eq('store',op.store).eq('org_id',SUPA_ORG);
         if(error) throw error;
