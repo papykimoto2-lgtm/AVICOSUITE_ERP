@@ -19180,6 +19180,79 @@ async function renderRapports(ca){
 
     <div id="condGlobalKpis" class="kpi-grid"></div>
 
+    <div class="card" style="margin-bottom:14px;border:1.5px solid var(--g3)">
+      <div class="card-hd" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="document.getElementById('condFluxSchema').style.display=document.getElementById('condFluxSchema').style.display==='none'?'block':'none'">
+        <span>🔀 Comprendre l'écart — schéma de flux Ponte ↔ Conditionnement</span>
+        <span style="font-size:11px;color:var(--text3)">▾ cliquer pour replier/déplier</span>
+      </div>
+      <div class="card-bd" id="condFluxSchema" style="overflow-x:auto">
+        <svg viewBox="0 0 900 400" style="width:100%;max-width:900px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">
+          <!-- Colonne 1 : Session de Conditionnement = SOURCE DE VÉRITÉ -->
+          <rect x="20" y="60" width="220" height="140" rx="10" fill="#eef3ec" stroke="#2b5f45" stroke-width="2"/>
+          <text x="130" y="85" text-anchor="middle" font-size="12" font-weight="700" fill="#152e22">Session Conditionnement</text>
+          <text x="130" y="100" text-anchor="middle" font-size="9" fill="#2b5f45" font-style="italic">source de vérité (saisie directe)</text>
+          <text x="130" y="125" text-anchor="middle" font-size="11" fill="#20241f">🥚 Œufs bruts</text>
+          <text x="130" y="145" text-anchor="middle" font-size="11" fill="#a3342b">− Œufs cassés</text>
+          <line x1="60" y1="152" x2="200" y2="152" stroke="#152e22" stroke-width="1"/>
+          <text x="130" y="170" text-anchor="middle" font-size="12" font-weight="700" fill="#059669">= Œufs nets</text>
+          <text x="130" y="188" text-anchor="middle" font-size="9" fill="#948e7c">(entrent en plateaux/cartons)</text>
+
+          <!-- Flèche auto-génération -->
+          <path d="M 240 100 L 320 100" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow)"/>
+          <text x="280" y="90" text-anchor="middle" font-size="9" fill="#7c3aed" font-weight="700">génère auto.</text>
+
+          <!-- Colonne 2 : Entrée Ponte = DONNÉE DÉRIVÉE -->
+          <rect x="330" y="60" width="200" height="80" rx="10" fill="#f3e8ff" stroke="#7c3aed" stroke-width="2"/>
+          <text x="430" y="85" text-anchor="middle" font-size="12" font-weight="700" fill="#5b21b6">Entrée "Ponte"</text>
+          <text x="430" y="100" text-anchor="middle" font-size="9" fill="#7c3aed" font-style="italic">donnée dérivée (miroir)</text>
+          <text x="430" y="122" text-anchor="middle" font-size="11" fill="#20241f">eggCount = Œufs bruts</text>
+
+          <!-- Flèche vers Œufs produits -->
+          <path d="M 430 140 L 430 200" stroke="#152e22" stroke-width="2" marker-end="url(#arrow)"/>
+
+          <!-- Colonne 3 : Résultats dans les rapports -->
+          <rect x="330" y="210" width="200" height="60" rx="8" fill="#fff" stroke="#e2ddd1" stroke-width="1.5"/>
+          <text x="430" y="235" text-anchor="middle" font-size="12" font-weight="700" fill="#20241f">📊 "Œufs produits"</text>
+          <text x="430" y="252" text-anchor="middle" font-size="9" fill="#948e7c">Σ entrées Ponte de la période</text>
+
+          <path d="M 130 200 L 130 240 L 320 240" stroke="#152e22" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+          <rect x="330" y="280" width="200" height="60" rx="8" fill="#fff" stroke="#e2ddd1" stroke-width="1.5"/>
+          <text x="430" y="305" text-anchor="middle" font-size="12" font-weight="700" fill="#20241f">📊 "Œufs nets"</text>
+          <text x="430" y="322" text-anchor="middle" font-size="9" fill="#948e7c">Σ nets des sessions de la période</text>
+          <path d="M 130 200 L 130 310 L 320 310" stroke="#152e22" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+          <!-- Zone : sources d'écart -->
+          <rect x="570" y="55" width="310" height="320" rx="10" fill="#fbecea" stroke="#a3342b" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="725" y="78" text-anchor="middle" font-size="12" font-weight="800" fill="#a3342b">⚠️ D'où vient l'écart ?</text>
+
+          <text x="585" y="105" font-size="10" font-weight="700" fill="#20241f">1. Casse (normal, toujours présent)</text>
+          <text x="585" y="120" font-size="9" fill="#948e7c">Œufs bruts − Œufs nets = casses.</text>
+          <text x="585" y="132" font-size="9" fill="#948e7c">Visible dans "Taux de casse".</text>
+
+          <text x="585" y="158" font-size="10" font-weight="700" fill="#a3342b">2. Décalage temporel</text>
+          <text x="585" y="173" font-size="9" fill="#948e7c">Session qui conditionne un stock</text>
+          <text x="585" y="185" font-size="9" fill="#948e7c">collecté un autre jour (écart</text>
+          <text x="585" y="197" font-size="9" fill="#948e7c">négatif ou positif normal).</text>
+
+          <text x="585" y="223" font-size="10" font-weight="700" fill="#a3342b">3. Entrée Ponte orpheline (bug)</text>
+          <text x="585" y="238" font-size="9" fill="#948e7c">Entrée "Ponte" sans session</text>
+          <text x="585" y="250" font-size="9" fill="#948e7c">correspondante → gonfle "Œufs</text>
+          <text x="585" y="262" font-size="9" fill="#948e7c">produits" sans base réelle.</text>
+          <text x="585" y="277" font-size="9" fill="#7c3aed" font-weight="700">→ bouton "Corriger la synchro"</text>
+
+          <text x="585" y="303" font-size="10" font-weight="700" fill="#a3342b">4. Double saisie manuelle</text>
+          <text x="585" y="318" font-size="9" fill="#948e7c">Ponte saisie séparément (Saisie</text>
+          <text x="585" y="330" font-size="9" fill="#948e7c">du jour) en plus de la session</text>
+          <text x="585" y="342" font-size="9" fill="#948e7c">Conditionnement — à éviter.</text>
+
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#152e22"/></marker>
+          </defs>
+        </svg>
+        <p style="font-size:10px;color:var(--text3);text-align:center;margin-top:8px">Le point 1 (casse) est normal et attendu. Les points 2-3-4 nécessitent vérification si l'écart dépasse quelques %.</p>
+      </div>
+    </div>
+
     <div class="card" style="margin-bottom:14px">
       <div class="card-hd"><span>📊 Production vs Conditionnement — par bâtiment</span></div>
       <div class="card-bd" style="position:relative;height:260px"><canvas id="condGlobalChart"></canvas></div>
