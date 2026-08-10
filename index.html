@@ -7796,8 +7796,21 @@ async function renderStocks(ca){
 
 // ══ MOUVEMENTS ══
 let mvtEditId=null;
-let mvtFilters={dateMin:'',dateMax:'',depotId:'',produitId:'',categorie:'',type:'',cadre:''};
+let mvtFilters={dateMin:'',dateMax:'',depotId:'',produitId:'',categorie:'',type:'',cadre:'',typeArticle:''};
 const CATEGORIE_LBL={aliment:'Aliment',medicament:'Médicaments',oeuf:'Œufs',viande:'Viande',materiel:'Matériel',intrant:'Intrants'};
+// Classification par grande famille d'article — le modèle produit n'a qu'un champ "stade"
+// (matiere_premiere/encours/produit_fini) sans bucket "consommable" dédié : les consommables
+// d'emballage (alvéoles, cartons vides, ficelle) sont reconnus par catégorie "matériel" ou par
+// leur nom, quel que soit leur stade déclaré.
+const TYPE_ARTICLE_LBL={produit_fini:'🥚 Produits finis',matiere_premiere:'🌾 Matière première',encours:'⚙️ Encours',consommable:'📦 Consommables',autre:'❓ Autres'};
+function classifierArticle(p){
+  if(!p) return 'autre';
+  if(p.categorie==='materiel' || /alv[ée]ole|carton|ficelle|emballage/i.test(p.nom||'')) return 'consommable';
+  if(p.stade==='produit_fini') return 'produit_fini';
+  if(p.stade==='encours') return 'encours';
+  if(p.stade==='matiere_premiere') return 'matiere_premiere';
+  return 'autre';
+}
 function applyMvtFilters(mvts,prods){
   return mvts.filter(m=>{
     if(mvtFilters.dateMin && m.date<mvtFilters.dateMin) return false;
@@ -7807,6 +7820,7 @@ function applyMvtFilters(mvts,prods){
     if(mvtFilters.type && m.type!==mvtFilters.type) return false;
     if(mvtFilters.cadre && m.cadre!==mvtFilters.cadre) return false;
     if(mvtFilters.categorie){ const p=prods.find(x=>x.id===m.produitId); if(!p||p.categorie!==mvtFilters.categorie) return false; }
+    if(mvtFilters.typeArticle){ const p=prods.find(x=>x.id===m.produitId); if(classifierArticle(p)!==mvtFilters.typeArticle) return false; }
     return true;
   });
 }
@@ -7817,17 +7831,20 @@ async function renderMvts(ca,p=1){
   const slice=sorted.slice((p-1)*PAGE,p*PAGE);
   const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
   const typeCls={entree:'b-g',sortie:'b-r',transfert:'b-bl',inventaire:'b-gr'};
-  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> ${canDelete('stock')?`<button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}`:''}</td></tr>`;}).join('');
+  const typeArtIconShort={produit_fini:'🥚',matiere_premiere:'🌾',encours:'⚙️',consommable:'📦',autre:'❓'};
+  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><span title="${TYPE_ARTICLE_LBL[classifierArticle(pr)]||''}">${typeArtIconShort[classifierArticle(pr)]||''}</span> <strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> ${canDelete('stock')?`<button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}`:''}</td></tr>`;}).join('');
   const pagerBtns=[`<button ${p<=1?'disabled':''} onclick="mvtPage=${p-1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p-1})">‹</button>`,...Array.from({length:Math.min(pages,5)},(_,i)=>Math.max(1,p-2)+i).filter(n=>n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="mvtPage=${n};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${n})">${n}</button>`),`<button ${p>=pages?'disabled':''} onclick="mvtPage=${p+1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p+1})">›</button>`].join('');
   const depOpts='<option value="">Tous dépôts</option>'+deps.map(d=>`<option value="${d.id}" ${mvtFilters.depotId==String(d.id)?'selected':''}>${esc(d.nom)}</option>`).join('');
   const prodOpts='<option value="">Tous produits</option>'+prods.map(pr=>`<option value="${pr.id}" ${mvtFilters.produitId==String(pr.id)?'selected':''}>${esc(pr.nom)}</option>`).join('');
   const catOpts='<option value="">Toutes familles</option>'+Object.entries(CATEGORIE_LBL).map(([k,l])=>`<option value="${k}" ${mvtFilters.categorie===k?'selected':''}>${l}</option>`).join('');
+  const typeArtOpts='<option value="">Tous types d\'article</option>'+Object.entries(TYPE_ARTICLE_LBL).map(([k,l])=>`<option value="${k}" ${mvtFilters.typeArticle===k?'selected':''}>${l}</option>`).join('');
   const typeOpts=['entree','sortie','transfert','inventaire'].map(t=>`<option value="${t}" ${mvtFilters.type===t?'selected':''}>${typeLbl[t]}</option>`).join('');
   const filterBar=`<div class="card" style="margin-bottom:12px"><div class="card-hd">🔎 Filtres — journal de mouvements</div><div class="card-bd" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
     <div class="fg"><label>Du</label><input type="date" id="mfDateMin" value="${mvtFilters.dateMin}"></div>
     <div class="fg"><label>Au</label><input type="date" id="mfDateMax" value="${mvtFilters.dateMax}"></div>
     <div class="fg"><label>Dépôt</label><select id="mfDepot">${depOpts}</select></div>
     <div class="fg"><label>Produit</label><select id="mfProduit">${prodOpts}</select></div>
+    <div class="fg"><label>Type d'article</label><select id="mfTypeArticle">${typeArtOpts}</select></div>
     <div class="fg"><label>Famille</label><select id="mfCategorie">${catOpts}</select></div>
     <div class="fg"><label>Type</label><select id="mfType"><option value="">Tous types</option>${typeOpts}</select></div>
     <div style="display:flex;gap:6px"><button class="btn btn-p btn-sm" onclick="applyMvtFilterForm()"><i class="fas fa-filter"></i> Filtrer</button><button class="btn btn-gh btn-sm" onclick="resetMvtFilters()">Réinit.</button></div>
@@ -7839,12 +7856,13 @@ window.applyMvtFilterForm=function(){
   mvtFilters={
     dateMin:document.getElementById('mfDateMin').value,dateMax:document.getElementById('mfDateMax').value,
     depotId:document.getElementById('mfDepot').value,produitId:document.getElementById('mfProduit').value,
-    categorie:document.getElementById('mfCategorie').value,type:document.getElementById('mfType').value,cadre:''
+    categorie:document.getElementById('mfCategorie').value,type:document.getElementById('mfType').value,cadre:'',
+    typeArticle:document.getElementById('mfTypeArticle').value
   };
   mvtPage=1;renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),1);
 };
 window.resetMvtFilters=function(){
-  mvtFilters={dateMin:'',dateMax:'',depotId:'',produitId:'',categorie:'',type:'',cadre:''};
+  mvtFilters={dateMin:'',dateMax:'',depotId:'',produitId:'',categorie:'',type:'',cadre:'',typeArticle:''};
   mvtPage=1;renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),1);
 };
 
@@ -8014,6 +8032,10 @@ async function buildMvtJournalHtml(preview){
     m=>m.depotDestId||m.depotSrcId||null,
     m=>{const d=deps.find(x=>x.id===(m.depotDestId||m.depotSrcId));return d?d.nom:'—';}
   );
+  const parTypeArticle=grouper(
+    m=>{const p=prods.find(x=>x.id===m.produitId);return classifierArticle(p);},
+    m=>{const p=prods.find(x=>x.id===m.produitId);return TYPE_ARTICLE_LBL[classifierArticle(p)];}
+  );
   const parFamille=grouper(
     m=>{const p=prods.find(x=>x.id===m.produitId);return p?p.categorie:null;},
     m=>{const p=prods.find(x=>x.id===m.produitId);return CATEGORIE_LBL[p?.categorie]||p?.categorie||'—';}
@@ -8028,9 +8050,12 @@ async function buildMvtJournalHtml(preview){
   </div>`;
   const recapHtml=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
     ${buildRecapTable('📦 Par dépôt',parDepot)}
-    ${buildRecapTable('🏷️ Par famille',parFamille)}
+    ${buildRecapTable('🗂️ Par type d\'article',parTypeArticle)}
   </div>
-  ${buildRecapTable('🔖 Par produit',parProduit)}`;
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    ${buildRecapTable('🏷️ Par famille',parFamille)}
+    ${buildRecapTable('🔖 Par produit',parProduit)}
+  </div>`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Journal des mouvements</title><style>
     body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
     .doc{max-width:1000px;margin:0 auto}
@@ -10521,11 +10546,11 @@ async function saveCond(){
     await regMvt({cadre:'conditionnement',type:'sortie',produitId:alvCouvSel.id,depotSrcId:depotConso(alvCouvSel),depotDestId:null,
       quantite:cartonsProduits*alvCouvQte,unite:'unite',prixUnit:alvCouvSel.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie alveoles de couverture)',date:date,ts:mvtTs++});
 
-  if(pCartonVide && bom.cartonQte > 0 && cartonsProduits > 0)
+  if(pCartonVide && bom && bom.cartonQte > 0 && cartonsProduits > 0)
     await regMvt({cadre:'conditionnement',type:'sortie',produitId:pCartonVide.id,depotSrcId:depotConso(pCartonVide),depotDestId:null,
       quantite:cartonsProduits*bom.cartonQte,unite:'unite',prixUnit:pCartonVide.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie cartons vides - BOM)',date:date,ts:mvtTs++});
 
-  if(pFicelle && bom.ficelleQte > 0 && cartonsProduits > 0)
+  if(pFicelle && bom && bom.ficelleQte > 0 && cartonsProduits > 0)
     await regMvt({cadre:'conditionnement',type:'sortie',produitId:pFicelle.id,depotSrcId:depotConso(pFicelle),depotDestId:null,
       quantite:cartonsProduits*bom.ficelleQte,unite:'unite',prixUnit:pFicelle.prix||0,fournId:null,ref:ref,motif:motifBase+' (sortie ficelles - BOM)',date:date,ts:mvtTs++});
 
