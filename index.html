@@ -2230,7 +2230,11 @@ const COND_PRODUIT_NOMS = {
 function findCondProduit(prods, key){
   const noms = COND_PRODUIT_NOMS[key]||[];
   for(let i=0;i<noms.length;i++){ const p=prods.find(function(x){return x.nom===noms[i];}); if(p) return p; }
-  if(key==='bruts')   return prods.find(function(p){return p.categorie==='oeuf'&&p.stade==='matiere_premiere';}) || prods.find(function(p){return p.categorie==='oeuf';}) || null;
+  // ⚠️ Le repli "bruts" exige impérativement stade=matiere_premiere — sans ce garde-fou,
+  // un catalogue sans produit "Œufs bruts" dédié faisait retomber la collecte quotidienne
+  // sur N'IMPORTE QUEL produit de catégorie "œuf", y compris le produit fini (cartons),
+  // mélangeant les unités (œufs vs plateaux vs cartons) sur le même solde de stock.
+  if(key==='bruts')   return prods.find(function(p){return p.categorie==='oeuf'&&p.stade==='matiere_premiere';}) || null;
   if(key==='alveole') return prods.find(function(p){return p.categorie==='consommable'&&/alv/i.test(p.nom||'');}) || null;
   if(key==='plateau') return prods.find(function(p){return p.stade==='produit_fini'&&/plateau/i.test(p.nom||'')&&!/carton/i.test(p.nom||'');}) || null;
   if(key==='carton')  return prods.find(function(p){return p.stade==='produit_fini'&&/carton/i.test(p.nom||'')&&!/vide/i.test(p.nom||'');}) || null;
@@ -7805,9 +7809,13 @@ const CATEGORIE_LBL={aliment:'Aliment',medicament:'Médicaments',oeuf:'Œufs',vi
 const TYPE_ARTICLE_LBL={produit_fini:'🥚 Produits finis',matiere_premiere:'🌾 Matière première',encours:'⚙️ Encours',consommable:'📦 Consommables',autre:'❓ Autres'};
 function classifierArticle(p){
   if(!p) return 'autre';
-  if(p.categorie==='materiel' || /alv[ée]ole|carton|ficelle|emballage/i.test(p.nom||'')) return 'consommable';
+  // Le stade déclaré prime toujours — un produit fini nommé "Carton 12 plateaux" ne doit
+  // jamais être pris pour un consommable d'emballage ("carton vide") juste à cause du mot
+  // "carton" dans son nom. La détection par nom ne s'applique qu'aux produits SANS stade
+  // produit_fini/encours (donc de la matière première ou non catégorisés).
   if(p.stade==='produit_fini') return 'produit_fini';
   if(p.stade==='encours') return 'encours';
+  if(p.categorie==='materiel' || /alv[ée]ole|carton|ficelle|emballage/i.test(p.nom||'')) return 'consommable';
   if(p.stade==='matiere_premiere') return 'matiere_premiere';
   return 'autre';
 }
@@ -10580,6 +10588,9 @@ async function saveCond(){
   }
   if(consoDepotWarn.length){
     toast('⚠ Dépôt non affecté pour : '+consoDepotWarn.join(', ')+' — sortie enregistrée dans le dépôt œufs bruts par défaut. Configurez leur "Dépôt affecté" dans Catalogue produits.','err');
+  }
+  if(!pBruts){
+    toast('⚠ Aucun produit "Œufs bruts" (catégorie œuf, stade matière première) trouvé — la collecte du jour n\'est pas tracée en mouvement de stock. Créez ce produit dans Catalogue produits pour activer le suivi.','err');
   }
 
   // ── Alimentation du jour (optionnelle) ──
