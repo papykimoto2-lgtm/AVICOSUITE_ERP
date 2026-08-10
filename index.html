@@ -5670,6 +5670,12 @@ window.saveWsSaisie=async function(type){
     var eggs=parseInt(document.getElementById('wsEggs').value)||0;
     var casses=parseInt(document.getElementById('wsCasses').value)||0;
     if(!date||eggs<0){toast('Date et oeufs requis','err');return;}
+    // ⚠️ Même garde-fou anti double-comptage que "Saisie du jour" — voir savePonte().
+    var sessionExistanteWs = (await getAll(S.COND)).find(c=>c.flockId===lot.id && c.date===date);
+    if(sessionExistanteWs){
+      toast('⛔ Une session de Conditionnement existe déjà pour ce lot le '+date+' — ponte déjà enregistrée automatiquement. Ne pas ressaisir ici.','err');
+      return;
+    }
     var allDeps=await getAll(S.DEPOTS);
     var defDep=allDeps.find(function(d){return d.type==='matiere_premiere';})||allDeps.find(function(d){return d.type==='produit_fini';})||allDeps[0];
     await addRec(S.EGG_PROD,{flockId:lot.id,date,eggCount:eggs,eggsBroken:casses,mortality:0,operatorId:getWsResponsableId()});
@@ -5677,6 +5683,7 @@ window.saveWsSaisie=async function(type){
       var prods=await getAll(S.PRODUITS);
       var pBruts=findCondProduit(prods,'bruts');
       if(pBruts) await regMvt({cadre:'collecte',type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:defDep.id,quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,fournId:null,ref:'AUTO',motif:'Collecte S'+getSemaineNum(lot.startDate,date)+' - '+lot.nom,date,ts:Date.now()});
+      else toast('⚠ Aucun produit "Œufs bruts" configuré — collecte non tracée en stock.','err');
     }
     var nbSem=getSemaineNum(lot.startDate,date);
     toast('Ponte S'+nbSem+' - '+eggs+' oeufs ('+date+')');
@@ -5891,6 +5898,15 @@ window.savePonte=async function(){
   var cassesColl=parseInt(document.getElementById('sCassesColl')?.value)||0;
   var depotDestId=parseInt(document.getElementById('sDepotDest')?.value)||0;
   if(!date||eggs<0){toast('Date et oeufs requis','err');return;}
+  // ⚠️ Anti double-comptage : si une session de Conditionnement existe déjà pour ce lot à
+  // cette date, elle a DÉJÀ créé sa propre entrée Ponte automatiquement (flux intégré).
+  // Saisir ici en plus créerait deux entrées "Œufs produits" pour la même collecte réelle —
+  // exactement le bug identifié via l'export du journal de mouvements (écarts massifs).
+  var sessionExistante = (await getAll(S.COND)).find(c=>c.flockId===lot.id && c.date===date);
+  if(sessionExistante){
+    toast('⛔ Une session de Conditionnement existe déjà pour ce lot le '+date+' (ref '+(sessionExistante.ref||'')+') — elle a déjà enregistré la ponte automatiquement. Ne pas ressaisir ici (double comptage).','err');
+    return;
+  }
   await addRec(S.EGG_PROD,{flockId:lot.id,date:date,eggCount:eggs,eggsBroken:cassesColl,mortality:0,operatorId:getSjResponsableId()});
   // Entree stock oeufs bruts dans le depot selectionne
   if(eggs>0&&depotDestId){
@@ -5899,6 +5915,7 @@ window.savePonte=async function(){
     if(pBruts) await regMvt({cadre:'collecte',type:'entree',produitId:pBruts.id,depotSrcId:null,depotDestId:depotDestId,
       quantite:eggs,unite:pBruts.unite||'unite',prixUnit:pBruts.prix||0,
       fournId:null,ref:'AUTO',motif:'Collecte lot '+lot.nom,date:date,ts:Date.now()});
+    else toast('⚠ Aucun produit "Œufs bruts" configuré — la collecte n\'est pas tracée en stock. Créez ce produit dans Catalogue produits.','err');
   }
   toast('Ponte enregistree - '+eggs+' oeufs');
   await refreshLot();
@@ -19209,6 +19226,7 @@ async function renderRapports(ca){
         <div style="display:flex;gap:8px">
           <button class="btn btn-p" onclick="refreshCondGlobalDashboard()"><i class="fas fa-sync"></i> Actualiser</button>
           <button class="btn btn-gh" onclick="corrigerSynchronisationPonteCond()"><i class="fas fa-wrench"></i> Corriger la synchronisation (toute la base)</button>
+          <button class="btn btn-gh" style="color:var(--red);border-color:var(--red)" onclick="nettoyerCollecteMalClassee()"><i class="fas fa-broom"></i> Nettoyer collecte mal classée (produit fini)</button>
           <button class="btn btn-gh" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer le détail</button>
         </div>
       </div>
@@ -19678,6 +19696,54 @@ window.clearCondPresetButtons = function(){
 // toute future modification/suppression soit fiable même sur l'historique. Non destructif :
 // ne fait que compléter le lien manquant. Identifie ensuite les entrées Ponte réellement
 // orphelines (aucune session correspondante, ni par lien ni par correspondance approximative). ──
+// ── Nettoyage des mouvements de collecte mal classés (résidu du bug findCondProduit 'bruts')
+// — mouvements créés par "Saisie du jour" ou "Workflow Simplifié" (ref:'AUTO', motif
+// commençant par "Collecte") qui se sont retrouvés sur le produit fini (Cartons) faute de
+// produit "Œufs bruts" dédié. Ils comptent des ŒUFS comme s'ils étaient des CARTONS. ──
+window.nettoyerCollecteMalClassee = async function(){
+  toast('⏳ Analyse en cours…');
+  const [allMvts, prods, deps] = await Promise.all([getAll(S.MVTS), getAll(S.PRODUITS), getAll(S.DEPOTS)]);
+  const pBrutsCorrect = findCondProduit(prods, 'bruts');
+  const suspects = allMvts.filter(m =>
+    m.ref==='AUTO' && /^Collecte/.test(m.motif||'') &&
+    (!pBrutsCorrect || m.produitId !== pBrutsCorrect.id) &&
+    prods.find(p=>p.id===m.produitId && p.stade==='produit_fini')
+  );
+  if(!suspects.length){
+    toast('✅ Aucun mouvement de collecte mal classé trouvé.');
+    return;
+  }
+  const rows = suspects.map(m=>{
+    const p = prods.find(x=>x.id===m.produitId);
+    const d = deps.find(x=>x.id===m.depotDestId);
+    return `<tr id="collRow${m.id}"><td><input type="checkbox" class="collChk" value="${m.id}" checked></td><td>${m.date||'—'}</td><td>${esc(p?p.nom:'—')}</td><td style="text-align:right;font-weight:700;color:var(--red)">+${m.quantite} ${m.unite||''}</td><td style="font-size:10px">${esc(m.motif||'')}</td><td style="font-size:10px">${esc(d?d.nom:'—')}</td></tr>`;
+  }).join('');
+  const html = `<div class="card" style="max-width:820px;margin:0 auto">
+    <div class="card-hd">🧹 Nettoyage — mouvements de collecte mal classés</div>
+    <div class="card-bd">
+      <p style="font-size:12px;color:var(--red);background:var(--red-bg);border-radius:8px;padding:8px 12px;margin-bottom:10px">⚠️ ${suspects.length} mouvement(s) créé(s) par "Saisie du jour"/"Workflow Simplifié" sont comptés en <strong>œufs</strong> sur le stock d'un <strong>produit fini</strong> (ex: Cartons) — ils faussent le solde de ce produit. Ils viennent du bug déjà corrigé dans le code (aucun produit "Œufs bruts" n'existait).</p>
+      ${pBrutsCorrect ? `<p style="font-size:11px;color:var(--g2);margin-bottom:10px">Un produit "Œufs bruts" existe maintenant (${esc(pBrutsCorrect.nom)}) — les mouvements sélectionnés seront <strong>réaffectés</strong> vers ce produit plutôt que supprimés, pour ne perdre aucune trace de la collecte réelle.</p>` : `<p style="font-size:11px;color:var(--amber-d);margin-bottom:10px">⚠️ Aucun produit "Œufs bruts" n'existe encore — les mouvements sélectionnés seront <strong>supprimés</strong> (créez d'abord ce produit dans Catalogue produits si tu veux les réaffecter au lieu de les supprimer).</p>`}
+      <div class="tbl-wrap" style="max-height:340px;overflow-y:auto"><table class="tbl"><thead><tr><th></th><th>Date</th><th>Produit (erroné)</th><th style="text-align:right">Quantité</th><th>Motif</th><th>Dépôt</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="modal-footer" style="margin-top:12px"><button class="btn btn-s" onclick="closeOverlay('mMvtApercu')">Annuler</button><button class="btn btn-p" onclick="appliquerNettoyageCollecte(${pBrutsCorrect?pBrutsCorrect.id:'null'})"><i class="fas fa-check"></i> ${pBrutsCorrect?'Réaffecter':'Supprimer'} la sélection</button></div>
+    </div></div>`;
+  document.getElementById('mMvtApercuBody').innerHTML = html; openOverlay('mMvtApercu');
+};
+window.appliquerNettoyageCollecte = async function(pBrutsId){
+  const ids = Array.from(document.querySelectorAll('.collChk:checked')).map(el=>parseInt(el.value));
+  if(!ids.length){ toast('Aucune ligne sélectionnée','err'); return; }
+  const action = pBrutsId ? 'réaffecter' : 'supprimer définitivement';
+  if(!confirm(`Confirmer : ${action} ${ids.length} mouvement(s) ? Le stock du produit fini concerné sera recalculé automatiquement.`)) return;
+  const allMvts = await getAll(S.MVTS);
+  for(const id of ids){
+    const m = allMvts.find(x=>x.id===id); if(!m) continue;
+    if(pBrutsId) await updRec(S.MVTS, id, Object.assign({}, m, {produitId: pBrutsId}));
+    else await delRec(S.MVTS, id);
+  }
+  toast('✅ '+ids.length+' mouvement(s) '+(pBrutsId?'réaffecté(s)':'supprimé(s)'));
+  closeOverlay('mMvtApercu');
+  await render();
+};
+
 window.corrigerSynchronisationPonteCond = async function(){
   toast('⏳ Analyse de toute la base en cours…');
   const [allCond, allEgg] = await Promise.all([getAll(S.COND), getAll(S.EGG_PROD)]);
