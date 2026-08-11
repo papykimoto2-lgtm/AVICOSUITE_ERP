@@ -10475,13 +10475,16 @@ async function saveCond(){
   var nets = Math.max(0, bruts - casses);
   if(sommeCal > nets){ toast('Erreur: total calibres ('+sommeCal+') superieur aux oeufs nets ('+nets+')','err'); return; }
 
-  // ── Report du reste de la collecte précédente du même lot (2 niveaux) ──
-  // Niveau 1 — œufs : un lot qui ne pond que 15 œufs un jour ne forme aucun plateau seul
-  // (min. 30) ; ces œufs ne sont plus perdus/bloqués, ils se cumulent avec la collecte
-  // suivante jusqu'à former un plateau complet.
+  // ── Report du reste de la session précédente (2 niveaux, GLOBAL tous lots confondus) ──
+  // Reflète la pratique réelle : le reste d'une ligne complète la ligne suivante traitée,
+  // peu importe le lot, et continue de circuler d'un jour à l'autre.
+  // Niveau 1 — œufs : une collecte de 15 œufs ne forme aucun plateau seule (min. 30) ; ces
+  // œufs ne sont plus perdus/bloqués, ils se cumulent avec la prochaine session (n'importe
+  // quel lot) jusqu'à former un plateau complet.
   // Niveau 2 — plateaux : un déficit de plateaux (ex: 9, pas assez pour un carton) se
-  // combine avec les plateaux de la session suivante pour former de nouveaux cartons.
-  var reste = await getResteEnAttente(flockId, editId);
+  // combine avec les plateaux de la session suivante (n'importe quel lot) pour former de
+  // nouveaux cartons.
+  var reste = await getResteEnAttente(editId);
   var cumNets = nets + reste.oeufsGlobal;
   var plateaux = Math.floor(cumNets / 30);
   var oeufsResteApres = cumNets % 30;
@@ -10548,8 +10551,12 @@ async function saveCond(){
     }
   }
 
-  var ts = Date.now();
-  var ref = 'COND-' + date.replace(/-/g,'') + '-' + String(ts).slice(-4);
+  // ⚠️ Le ts détermine l'ordre chronologique du report global (cascade) entre sessions
+  // d'un même jour. En édition, on préserve le ts D'ORIGINE de la session — sinon modifier
+  // une ancienne session (même juste une note) la faisait basculer en dernière position
+  // parmi les sessions du même jour, corrompant l'ordre réel de traitement des lignes.
+  var ts = (editId && oldS) ? oldS.ts : Date.now();
+  var ref = 'COND-' + date.replace(/-/g,'') + '-' + String(Date.now()).slice(-4);
 
   // Enregistrer la session avec calibres
   var bomId = parseInt(document.getElementById('condBomId')?.value) || null;
@@ -10702,7 +10709,7 @@ async function saveCond(){
 
   closeOverlay('mCond');
   toast((editId ? 'Session modifiée — ' : '') + plateaux+' plateaux - '+cartons+' cartons - stock mis a jour');
-  await recalculerCascadeCond(flockId);
+  await recalculerCascadeCond();
 
   // Refresh selon le contexte
   if(flockId && curLotId === flockId && activeLotTab === 'cond'){
@@ -10726,13 +10733,17 @@ window.saveCond = saveCond;
 // récente vers la suivante. Sans ce report, un déficit (ex: 9 plateaux, pas assez pour
 // un carton) restait bloqué indéfiniment au lieu d'être complété par l'excédent de la
 // collecte suivante du même lot.
-async function getResteEnAttente(flockId, excludeId){
-  if(!flockId) return {global:0, petit:0, moyen:0, gros:0, tresGros:0, oeufsGlobal:0, oeufsPetit:0, oeufsMoyen:0, oeufsGros:0, oeufsTresGros:0};
+// Report GLOBAL séquentiel — le reste circule d'une session à l'autre dans l'ordre
+// chronologique de saisie, TOUS LOTS CONFONDUS (pas seulement au sein du même lot).
+// Reflète la pratique réelle : le reste de la Ligne 1 complète la Ligne 2 traitée juste
+// après, quel que soit le lot, et continue de circuler d'un jour à l'autre.
+async function getResteEnAttente(excludeId){
+  const vide = {global:0, petit:0, moyen:0, gros:0, tresGros:0, oeufsGlobal:0, oeufsPetit:0, oeufsMoyen:0, oeufsGros:0, oeufsTresGros:0};
   const sessions = (await getAll(S.COND))
-    .filter(s=>s.flockId===flockId && s.id!==excludeId)
+    .filter(s=>s.id!==excludeId)
     .sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.ts||0)-(a.ts||0)));
   const last = sessions[0];
-  if(!last) return {global:0, petit:0, moyen:0, gros:0, tresGros:0, oeufsGlobal:0, oeufsPetit:0, oeufsMoyen:0, oeufsGros:0, oeufsTresGros:0};
+  if(!last) return vide;
   return {
     global:  last.plt_restants_apres  ?? last.plt_restants  ?? 0,
     petit:   last.pltReste_petit      ?? 0,
@@ -10741,7 +10752,7 @@ async function getResteEnAttente(flockId, excludeId){
     tresGros:last.pltReste_tresGros   ?? 0,
     // Reste en œufs (avant même de former 1 plateau, cad < 30 œufs) — reporté séparément
     // du reste en plateaux (avant de former 1 carton, < 12 plateaux). Les deux niveaux
-    // de report se cumulent d'une session à l'autre du même lot.
+    // de report se cumulent d'une session à l'autre, tous lots confondus.
     oeufsGlobal:  last.oeufsResteApres    ?? 0,
     oeufsPetit:   last.oeufsReste_petit   ?? 0,
     oeufsMoyen:   last.oeufsReste_moyen   ?? 0,
@@ -10751,14 +10762,12 @@ async function getResteEnAttente(flockId, excludeId){
 }
 window.getResteEnAttente = getResteEnAttente;
 
-// ── Recalcul en cascade — traite le cas où éditer/supprimer une session change le reste
-// transmis aux sessions suivantes du même lot. Sans ça, une session déjà "complétée" par
-// le reste d'une session ensuite modifiée/supprimée gardait des cartons/mouvements de
-// stock devenus faux. Parcourt toutes les sessions du lot dans l'ordre chronologique,
-// recalcule cartons + reste pour chacune, et ne corrige QUE celles dont le résultat change
-// (mouvements de stock "entrée cartons" supprimés puis regénérés au bon montant).
-async function recalculerCascadeCond(flockId){
-  if(!flockId) return;
+// ── Recalcul en cascade GLOBAL — traite le cas où éditer/supprimer une session change le
+// reste transmis aux sessions suivantes. Parcourt TOUTES les sessions de TOUS les lots dans
+// l'ordre chronologique de saisie, recalcule cartons + reste pour chacune, et ne corrige QUE
+// celles dont le résultat change (mouvements de stock "entrée cartons/plateaux" supprimés
+// puis regénérés au bon montant).
+async function recalculerCascadeCond(){
   const prods = await getAll(S.PRODUITS);
   const pCar         = findCondProduit(prods,'carton');
   const pPlt         = findCondProduit(prods,'plateau');
@@ -10772,7 +10781,6 @@ async function recalculerCascadeCond(flockId){
   const pPltTresGros = prods.find(p=>p.ref==='CAL-PLT-TG');
 
   const sessions = (await getAll(S.COND))
-    .filter(s=>s.flockId===flockId)
     .sort((a,b)=>(a.date||'').localeCompare(b.date||'')||((a.ts||0)-(b.ts||0)));
 
   // Niveau 1 (œufs→plateau) et niveau 2 (plateau→carton) — chaînes indépendantes.
@@ -10886,11 +10894,9 @@ window.verifierDepotCartonCond = async function(){
 };
 
 window.afficherResteCondLot = async function(){
-  const flockId = parseInt(document.getElementById('condLot')?.value)||null;
   const box = document.getElementById('condResteBox');
   if(!box) return;
-  if(!flockId){ box.style.display='none'; return; }
-  const r = await getResteEnAttente(flockId, parseInt(document.getElementById('condEditId')?.value)||null);
+  const r = await getResteEnAttente(parseInt(document.getElementById('condEditId')?.value)||null);
   const totalPlt = r.global + r.petit + r.moyen + r.gros + r.tresGros;
   const totalOeufs = r.oeufsGlobal + r.oeufsPetit + r.oeufsMoyen + r.oeufsGros + r.oeufsTresGros;
   if(totalPlt<=0 && totalOeufs<=0){ box.style.display='none'; return; }
@@ -10898,7 +10904,7 @@ window.afficherResteCondLot = async function(){
   const parts=[];
   if(totalOeufs>0) parts.push(`<strong>${totalOeufs} œuf(s)</strong> en attente (pas encore un plateau complet)`);
   if(totalPlt>0) parts.push(`<strong>${totalPlt} plateau(x)</strong> en attente (pas encore un carton complet)`);
-  box.innerHTML = `⏳ ${parts.join(' · ')} de la collecte précédente de ce lot — complétés automatiquement avec cette session.`;
+  box.innerHTML = `⏳ ${parts.join(' · ')} de la dernière session de conditionnement (tous lots) — complétés automatiquement avec celle-ci.`;
 };
 
 async function reverseCondSession(s){
@@ -10930,7 +10936,7 @@ window.delCond = async function(id){
   // par erreur une réalisation saisie ailleurs.
 
   await delRec(S.COND, id);
-  await recalculerCascadeCond(s.flockId);
+  await recalculerCascadeCond();
   toast('Session de conditionnement annulée — stock et ponte ajustés');
   if(window._lot && window._lot.id === s.flockId){
     window._kpi = await computeKPIs(window._lot);
@@ -11439,15 +11445,11 @@ window.appliquerCorrectionDepotsConso = async function(){
 // recalculerCascadeCond() pour une seule édition — ici appliqué à tous les lots d'un coup.
 window.recalculerTousLesConditionnements = async function(){
   const sessions = await getAll(S.COND);
-  const flockIds = [...new Set(sessions.map(s=>s.flockId).filter(Boolean))];
-  if(!flockIds.length){ toast('Aucune session de conditionnement enregistrée','err'); return; }
-  const flocks = await getAll(S.FLOCKS);
-  const noms = flockIds.map(id=>flocks.find(f=>f.id===id)?.nom||('Lot #'+id));
+  if(!sessions.length){ toast('Aucune session de conditionnement enregistrée','err'); return; }
   const html = `<div class="card" style="max-width:560px;margin:0 auto">
     <div class="card-hd">🔄 Mise à jour des conditionnements antérieurs</div>
     <div class="card-bd">
-      <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Recalcule le report en cascade (œufs→plateau, plateau→carton) sur l'historique complet de <strong>${flockIds.length} lot(s)</strong> :</p>
-      <ul style="font-size:12px;color:var(--text2);margin:0 0 12px 18px;padding:0">${noms.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Recalcule le report en cascade (œufs→plateau, plateau→carton) sur l'historique complet — <strong>${sessions.length} session(s)</strong>, tous lots confondus, dans l'ordre chronologique réel de saisie (le reste d'une ligne complète la suivante, peu importe le lot).</p>
       <p style="font-size:11px;color:var(--amber-d);background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 12px;margin-bottom:12px">⚠️ Les mouvements de stock "entrée plateaux/cartons" déjà enregistrés peuvent être supprimés et regénérés au bon montant si le recalcul change un résultat. Aucune autre donnée n'est touchée (œufs bruts/casses saisis restent inchangés).</p>
       <div class="modal-footer"><button class="btn btn-s" onclick="closeOverlay('mMvtApercu')">Annuler</button><button class="btn btn-p" onclick="appliquerRecalculTousLesConditionnements()"><i class="fas fa-check"></i> Lancer la mise à jour</button></div>
     </div></div>`;
@@ -11455,13 +11457,10 @@ window.recalculerTousLesConditionnements = async function(){
 };
 window.appliquerRecalculTousLesConditionnements = async function(){
   const sessions = await getAll(S.COND);
-  const flockIds = [...new Set(sessions.map(s=>s.flockId).filter(Boolean))];
   closeOverlay('mMvtApercu');
-  toast('⏳ Recalcul en cours pour '+flockIds.length+' lot(s)…');
-  for(const flockId of flockIds){
-    await recalculerCascadeCond(flockId);
-  }
-  toast('✅ Mise à jour terminée — '+flockIds.length+' lot(s) traité(s)');
+  toast('⏳ Recalcul global en cours pour '+sessions.length+' session(s)…');
+  await recalculerCascadeCond();
+  toast('✅ Mise à jour terminée — '+sessions.length+' session(s) traitée(s)');
   await render();
 };
 
