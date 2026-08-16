@@ -8927,7 +8927,8 @@ async function renderProds(ca){
   }).join('');
 
   const bodyHtml = vm==='grid' ? (cardsGrid||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit.</div></div>') : (tables||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit. Créez-en un dans le catalogue.</div></div>');
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><div style="display:flex;gap:8px;align-items:center">${viewToggleHtml('prods',vm)}<button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div></div><div class="stock-page">${kpiBar}${bodyHtml}</div>`;
+  const nbDup=await countProdDuplicates();
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><div style="display:flex;gap:8px;align-items:center">${nbDup?`<button class="btn btn-a btn-sm" onclick="fusionnerDoublonsProds()"><i class="fas fa-code-merge"></i> Fusionner doublons (${nbDup})</button>`:''}${viewToggleHtml('prods',vm)}<button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div></div><div class="stock-page">${kpiBar}${bodyHtml}</div>`;
 }
 async function openProdModal(id=null){
   const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
@@ -8945,11 +8946,45 @@ async function saveProd(){
   const data={nom:document.getElementById('prodNom').value.trim(),categorie:document.getElementById('prodCat').value,stade:stade,depotAffecteId:depotAffecteId,unite:document.getElementById('prodUnite').value,prix:parseFloat(document.getElementById('prodPrix').value)||0,seuil:parseFloat(document.getElementById('prodSeuil').value)||0,fournId:document.getElementById('prodFourn').value?parseInt(document.getElementById('prodFourn').value):null,ref:document.getElementById('prodRef').value.trim(),description:document.getElementById('prodDesc').value.trim(),alerteDesactivee:document.getElementById('prodAlerteOff').checked};
   if(!data.nom){toast('Nom requis','err');return;}
   if(!depotAffecteId){toast('Dépôt d\'affectation requis','err');return;}
+  const allProds=await getAll(S.PRODUITS);
+  const dup=allProds.find(p=>p.id!==(id?parseInt(id):null)&&p.nom.trim().toLowerCase()===data.nom.toLowerCase());
+  if(dup){toast(`Produit déjà existant : "${dup.nom}" (dépôt: ${(await getAll(S.DEPOTS)).find(d=>d.id===dup.depotAffecteId)?.nom||'—'})`,'err');return;}
   if(id) await updRec(S.PRODUITS,parseInt(id),data);else await addRec(S.PRODUITS,data);
   closeOverlay('mProd');toast(id?'Produit mis à jour':'Produit créé');await renderProds(apCA());
 }
 window.saveProd=saveProd;
 window.delProd=async(id)=>{if(!canDelete('prods')){toast('⛔ Votre rôle ne permet pas de supprimer des produits','err');return;}if(confirm('Supprimer ?')){await delRec(S.PRODUITS,id);toast('Produit supprimé');await renderProds(apCA());}};
+
+// ── Doublons produits : détection par nom (trim+lowercase), même produit créé sous plusieurs dépôts ──
+function groupProdDuplicates(prods){
+  const groups={};
+  for(const p of prods){const k=p.nom.trim().toLowerCase();(groups[k]=groups[k]||[]).push(p);}
+  return Object.values(groups).filter(g=>g.length>1);
+}
+async function countProdDuplicates(){
+  const prods=await getAll(S.PRODUITS);
+  return groupProdDuplicates(prods).reduce((n,g)=>n+g.length-1,0);
+}
+window.fusionnerDoublonsProds=async function(){
+  if(!canDelete('prods')){toast('⛔ Votre rôle ne permet pas de fusionner des produits','err');return;}
+  const[prods,deps,mvts]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.MVTS)]);
+  const groups=groupProdDuplicates(prods);
+  if(!groups.length){toast('Aucun doublon détecté');return;}
+  const detail=groups.map(g=>`• ${g[0].nom} → ${g.length} fiches (dépôts: ${g.map(p=>deps.find(d=>d.id===p.depotAffecteId)?.nom||'—').join(', ')})`).join('\n');
+  if(!confirm(`${groups.length} produit(s) en doublon détecté(s) :\n\n${detail}\n\nFusionner ? Conserve la fiche la plus ancienne (id le plus bas), réaffecte tous les mouvements de stock des autres fiches vers celle-ci, puis supprime les doublons. Irréversible.`)) return;
+  let mvtCount=0,prodCount=0;
+  for(const g of groups){
+    const keep=g.slice().sort((a,b)=>a.id-b.id)[0];
+    const doublons=g.filter(p=>p.id!==keep.id);
+    for(const d of doublons){
+      const concernes=mvts.filter(m=>m.produitId===d.id);
+      for(const m of concernes){await modMvt(m.id,{produitId:keep.id});mvtCount++;}
+      await delRec(S.PRODUITS,d.id);prodCount++;
+    }
+  }
+  toast(`${prodCount} fiche(s) doublon fusionnée(s), ${mvtCount} mouvement(s) réaffecté(s)`);
+  await renderProds(apCA());
+};
 
 // ══ PERSONNEL ══
 // ══ RH & PAIE — module unifié à onglets ══
