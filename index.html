@@ -1622,6 +1622,9 @@ h1,h2,h3,.modal h3,.page-header-title,.lot-title,.app-logo h1{font-family:var(--
     <span style="font-weight:700;font-size:13px">Produits réservés</span>
     <button class="btn btn-sm btn-gh" onclick="addResaLine()"><i class="fas fa-plus"></i> Ligne</button>
   </div>
+  <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr auto;gap:6px;font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;padding:0 0 4px">
+    <div>Produit</div><div>Calibre</div><div>Qté</div><div>Prix estimé</div><div>Total</div><div></div>
+  </div>
   <div id="resaLinesDiv"></div>
   <div style="text-align:right;font-weight:700;font-size:14px;margin-top:10px" id="resaTotalDiv">Total estimé : 0 FCFA</div>
   <div class="modal-footer">
@@ -9409,7 +9412,7 @@ async function renderReservations(ca){
   const rows = sorted.map(r=>{
     const c=clients.find(x=>x.id===r.clientId);
     const total=(r.lignes||[]).reduce((s,l)=>s+l.qte*(l.prixUnit||0),0);
-    const lignesTxt=(r.lignes||[]).map(l=>`${l.designation} ×${l.qte}`).join(', ');
+    const lignesTxt=(r.lignes||[]).map(l=>`${l.designation}${l.calibre&&CALIBRE_TARIFS[l.calibre]?' ('+CALIBRE_TARIFS[l.calibre].label+')':''} ×${l.qte}`).join(', ');
     const bientot = r.statutEff==='active' && r.dateExpiration && r.dateExpiration<=new Date(Date.now()+3*86400000).toISOString().slice(0,10);
     return `<tr>
       <td><strong>${esc(r.ref||'—')}</strong><div style="font-size:10px;color:var(--text3)">${r.date||'—'}</div></td>
@@ -9443,7 +9446,7 @@ async function renderReservations(ca){
 window.renderReservations = renderReservations;
 
 let resaLines=[];
-window.addResaLine = async function(presetProdId,presetQte,presetPrix){
+window.addResaLine = async function(presetProdId,presetQte,presetPrix,presetCalibre){
   const allProds = await getAll(S.PRODUITS);
   // Une réservation porte sur des produits finis vendables (œufs conditionnés, volailles) —
   // même filtre que les commandes.
@@ -9453,15 +9456,18 @@ window.addResaLine = async function(presetProdId,presetQte,presetPrix){
   const idx = resaLines.length;
   const qte = presetQte!=null?presetQte:0;
   const prix = presetPrix!=null?presetPrix:(defProd?.prix||0);
-  resaLines.push({produitId:defProd?.id,qte,prixUnit:prix});
-  const div=document.createElement('div');div.id='resaL'+idx;div.style.cssText='display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)';
-  div.innerHTML=`<select onchange="resaUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" ${p.id===defProd?.id?'selected':''}>${p.nom}</option>`).join('')}</select><input type="number" placeholder="Qté" value="${qte||''}" onchange="resaUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix estimé" onchange="resaUpd(${idx},'px',this)" value="${prix}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="resaT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">${Math.round(qte*prix).toLocaleString()} F</div><button onclick="rmResaLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
+  const calibre = presetCalibre||'';
+  resaLines.push({produitId:defProd?.id,qte,prixUnit:prix,calibre});
+  const calOpts='<option value="">—</option>'+Object.keys(CALIBRE_TARIFS).map(k=>`<option value="${k}" ${k===calibre?'selected':''}>${CALIBRE_TARIFS[k].label}</option>`).join('');
+  const div=document.createElement('div');div.id='resaL'+idx;div.style.cssText='display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)';
+  div.innerHTML=`<select onchange="resaUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" ${p.id===defProd?.id?'selected':''}>${p.nom}</option>`).join('')}</select><select onchange="resaUpd(${idx},'c',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${calOpts}</select><input type="number" placeholder="Qté" value="${qte||''}" onchange="resaUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix estimé" onchange="resaUpd(${idx},'px',this)" value="${prix}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="resaT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">${Math.round(qte*prix).toLocaleString()} F</div><button onclick="rmResaLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
   document.getElementById('resaLinesDiv').appendChild(div);
   const grand=resaLines.reduce((a,l)=>a+(l.removed?0:l.qte*(l.prixUnit||0)),0);
   document.getElementById('resaTotalDiv').textContent='Total estimé : '+Math.round(grand).toLocaleString()+' FCFA';
 };
 window.resaUpd = function(i,f,el){
   if(f==='p'){const o=el.options[el.selectedIndex];resaLines[i].produitId=parseInt(el.value);resaLines[i].prixUnit=parseFloat(o.dataset.px)||0;const pi=document.getElementById('resaL'+i)?.querySelectorAll('input')[1];if(pi) pi.value=resaLines[i].prixUnit;}
+  else if(f==='c') resaLines[i].calibre=el.value;
   else if(f==='q') resaLines[i].qte=parseFloat(el.value)||0;
   else resaLines[i].prixUnit=parseFloat(el.value)||0;
   const t=resaLines[i].qte*(resaLines[i].prixUnit||0);const te=document.getElementById('resaT'+i);if(te) te.textContent=Math.round(t).toLocaleString()+' F';
@@ -9487,7 +9493,7 @@ window.openReservationModal = async function(id=null){
   document.getElementById('resaRef').value=r?r.ref:('RESA-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4));
   document.getElementById('resaNotes').value=r?(r.notes||''):'';
   document.getElementById('resaLinesDiv').innerHTML='';
-  if(r && r.lignes && r.lignes.length){ for(const l of r.lignes) await addResaLine(l.produitId,l.qte,l.prixUnit); }
+  if(r && r.lignes && r.lignes.length){ for(const l of r.lignes) await addResaLine(l.produitId,l.qte,l.prixUnit,l.calibre); }
   else { document.getElementById('resaTotalDiv').textContent='Total estimé : 0 FCFA'; addResaLine(); }
   openOverlay('mResa');
 };
@@ -9501,7 +9507,7 @@ window.saveReservation = async function(){
   if(!clientId){toast('Client requis','err');return;}
   if(!dateExpiration){toast('Date de validité requise','err');return;}
   const prods=await getAll(S.PRODUITS);
-  const lignes=resaLines.filter(l=>!l.removed&&l.qte>0).map(l=>{const p=prods.find(x=>x.id===l.produitId);return{produitId:l.produitId,designation:p?.nom||'',qte:l.qte,unite:p?.unite||'',prixUnit:l.prixUnit};});
+  const lignes=resaLines.filter(l=>!l.removed&&l.qte>0).map(l=>{const p=prods.find(x=>x.id===l.produitId);return{produitId:l.produitId,designation:p?.nom||'',qte:l.qte,unite:p?.unite||'',prixUnit:l.prixUnit,calibre:l.calibre||''};});
   if(!lignes.length){toast('Ajoutez au moins une ligne','err');return;}
   if(id){
     const resas=await getAll(S.RESERVATIONS);const existing=resas.find(x=>x.id===parseInt(id));
@@ -9542,7 +9548,7 @@ async function buildReservationHtml(id){
   const c=clients.find(x=>x.id===r.clientId)||{};
   const statutEff=statutEffectifResa(r);
   const total=(r.lignes||[]).reduce((a,l)=>a+l.qte*(l.prixUnit||0),0);
-  const rows=(r.lignes||[]).map(l=>`<tr><td>${esc(l.designation)}</td><td style="text-align:right">${l.qte} ${esc(l.unite||'')}</td><td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.qte*(l.prixUnit||0)).toLocaleString('fr-FR')}</td></tr>`).join('');
+  const rows=(r.lignes||[]).map(l=>`<tr><td>${esc(l.designation)}${l.calibre&&CALIBRE_TARIFS[l.calibre]?` <span style="font-size:10px;color:#888">(${esc(CALIBRE_TARIFS[l.calibre].label)})</span>`:''}</td><td style="text-align:right">${l.qte} ${esc(l.unite||'')}</td><td style="text-align:right">${(l.prixUnit||0).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(l.qte*(l.prixUnit||0)).toLocaleString('fr-FR')}</td></tr>`).join('');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.ref||'')}</title><style>
     body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:20px}
     .doc{max-width:700px;margin:0 auto}
@@ -10408,7 +10414,8 @@ async function openCondModal(flockId){
   if(defSrcDep) document.getElementById('condDepotSrc').value = defSrcDep.id;
 
   document.getElementById('condDepotDest').innerHTML = depOpts;
-  const destDep = deps.find(d => d.type === 'produit_fini');
+  const pPltRef = prods.find(p=>p.ref==='CAL-PLT-M') || findCondProduit(prods,'plateau');
+  const destDep = (pPltRef && pPltRef.depotAffecteId && deps.find(d=>d.id===pPltRef.depotAffecteId)) || deps.find(d => d.type === 'produit_fini');
   if(destDep) document.getElementById('condDepotDest').value = destDep.id;
   await verifierDepotCartonCond();
 
@@ -10497,6 +10504,9 @@ async function saveCond(){
   var depotDestId = parseInt(document.getElementById('condDepotDest').value);
   if(!depotSrcId||isNaN(depotSrcId)){ toast('⛔ Dépôt de stockage œufs bruts requis','err'); return; }
   if(!depotDestId||isNaN(depotDestId)){ toast('⛔ Dépôt destination (plateaux) requis','err'); return; }
+  await verifierDepotCartonCond();
+  const warnBox=document.getElementById('condDepotWarnBox');
+  if(warnBox && warnBox.dataset.blocked==='1'){ toast('⛔ Dépôt destination incohérent avec le "Dépôt affecté" des produits — même article dispersé sur plusieurs dépôts. Corrigez avant d\'enregistrer.','err'); return; }
 
   // Calibres
   var cPetit    = parseInt(document.getElementById('calPetit')?.value)||0;
@@ -10920,12 +10930,13 @@ window.verifierDepotCartonCond = async function(){
   const prods = await getAll(S.PRODUITS);
   const pCar = findCondProduit(prods,'carton');
   const pPlt = findCondProduit(prods,'plateau');
+  const pltCal=[prods.find(p=>p.ref==='CAL-PLT-P'),prods.find(p=>p.ref==='CAL-PLT-M'),prods.find(p=>p.ref==='CAL-PLT-G'),prods.find(p=>p.ref==='CAL-PLT-TG')];
+  const carCal=[prods.find(p=>p.ref==='CAL-CAR-P'),prods.find(p=>p.ref==='CAL-CAR-M'),prods.find(p=>p.ref==='CAL-CAR-G'),prods.find(p=>p.ref==='CAL-CAR-TG')];
   const ecarts=[];
-  if(pCar && pCar.depotAffecteId && pCar.depotAffecteId!==destId) ecarts.push(pCar.nom);
-  if(pPlt && pPlt.depotAffecteId && pPlt.depotAffecteId!==destId) ecarts.push(pPlt.nom);
-  if(!ecarts.length){ box.style.display='none'; return; }
-  box.style.display='block';
-  box.innerHTML = `⚠️ Le dépôt destination choisi ne correspond pas au "Dépôt affecté" de : <strong>${ecarts.join(', ')}</strong> (Catalogue produits). La vente décrémentera le dépôt affecté du produit, pas forcément celui-ci — vérifiez la cohérence pour éviter un stock introuvable à la livraison.`;
+  [pCar,pPlt,...pltCal,...carCal].forEach(p=>{if(p&&p.depotAffecteId&&p.depotAffecteId!==destId&&!ecarts.includes(p.nom)) ecarts.push(p.nom);});
+  if(!ecarts.length){ box.style.display='none'; box.dataset.blocked=''; return; }
+  box.style.display='block'; box.dataset.blocked='1';
+  box.innerHTML = `⚠️ Le dépôt destination choisi ne correspond pas au "Dépôt affecté" de : <strong>${ecarts.join(', ')}</strong> (Catalogue produits). Le même article se retrouverait dans plusieurs dépôts et la vente décrémentera le dépôt affecté, pas forcément celui-ci — enregistrement bloqué tant que l'écart persiste. Corrigez le dépôt destination ci-dessus, ou mettez à jour le "Dépôt affecté" dans Catalogue produits.`;
 };
 
 window.afficherResteCondLot = async function(){
