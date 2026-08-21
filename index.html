@@ -12660,6 +12660,20 @@ async function renderFinCharges(el,fin){
   var lm={};
   lots.forEach(function(l){lm[l.id]=l.nom||'Lot '+l.id;});
   var rows=charges.map(function(c){
+    var v=c.validation;
+    var vBadge=!v?'<span style="color:var(--text3);font-size:10px">—</span>'
+      :v.statut==='attente'?'<span class="badge b-a" style="font-size:9px" title="Envoyée à '+esc(v.destinataireNom||'')+'">⏳ Attente</span>'
+      :v.statut==='validee'?'<span class="badge b-g" style="font-size:9px" title="Par '+esc(v.repondantNom||'')+' le '+(v.dateReponse||'').slice(0,10)+'">✅ Validée</span>'
+      :'<span class="badge b-r" style="font-size:9px" title="'+esc(v.commentaire||'')+'">❌ Rejetée</span>';
+    var canRepond=v&&v.statut==='attente'&&currentUser&&(currentUser.id===v.destinataireId||currentUser.role==='admin');
+    var actions=c.paieRef?'<span style="color:var(--text3);font-size:10px">Voir RH &gt; Bulletins</span>':(
+      '<button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> '
+      +'<button class="btn btn-xs btn-gh" onclick="printChargeUnique('+c.id+')" title="Imprimer"><i class="fas fa-print"></i></button> '
+      +(canRepond?('<button class="btn btn-xs btn-gh" style="color:#059669" onclick="validerCharge('+c.id+')" title="Valider"><i class="fas fa-check"></i></button> '
+        +'<button class="btn btn-xs btn-gh" style="color:var(--red)" onclick="rejeterCharge('+c.id+')" title="Rejeter"><i class="fas fa-times"></i></button> ')
+        :(!v||v.statut==='rejetee')?'<button class="btn btn-xs btn-gh" title="Envoyer pour validation" onclick="ouvrirEnvoiValidationCharge('+c.id+')"><i class="fas fa-paper-plane"></i></button> ':'')
+      +'<button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button>'
+    );
     return '<tr data-lot="'+(c.flockId||'')+'" data-cat="'+(c.categorie||'')+'">'
       +'<td>'+(c.date||'—')+'</td>'
       +'<td>'+(c.flockId?esc(lm[c.flockId]||'—'):'<span style="color:var(--text3)">Global</span>')+'</td>'
@@ -12667,7 +12681,8 @@ async function renderFinCharges(el,fin){
       +'<td>'+esc(c.libelle||'')+(c.paieRef?' <span class="badge b-bl" style="font-size:9px" title="Générée automatiquement par RH">🔗 Paie</span>':'')+'</td><td>'+(c.qte||'—')+'</td><td>'+esc(c.unite||'—')+'</td>'
       +'<td>'+(c.unitCost?fcfa(c.unitCost):'—')+'</td>'
       +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+'</td>'
-      +'<td style="white-space:nowrap">'+(c.paieRef?'<span style="color:var(--text3);font-size:10px">Voir RH &gt; Bulletins</span>':'<button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button>')+'</td></tr>';
+      +'<td>'+vBadge+'</td>'
+      +'<td style="white-space:nowrap">'+actions+'</td></tr>';
   }).join('');
   var lo=lots.map(function(l){return '<option value="'+l.id+'">'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
   var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'">'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
@@ -12680,7 +12695,7 @@ async function renderFinCharges(el,fin){
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
     +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
 window.filtrerCharges=function(){
@@ -12694,6 +12709,91 @@ window.deleteCharge=async function(id){
   if(!confirm('Supprimer ?')) return;
   try{ await annulerEcritures('CHARGE-'+id); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
   await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
+};
+
+// ── Validation charges par personne habilitée (admin/manager) ──
+window.ouvrirEnvoiValidationCharge=async function(id){
+  const users=await getAll(S.USERS);
+  const habilites=users.filter(u=>u.actif!==false&&(u.role==='admin'||u.role==='manager')&&u.id!==currentUser?.id);
+  if(!habilites.length){toast('Aucune personne habilitée (admin/manager) trouvée','err');return;}
+  document.getElementById('valChargeId').value=id;
+  document.getElementById('valChargeDest').innerHTML=habilites.map(u=>'<option value="'+u.id+'">'+esc(u.nom||'Utilisateur')+' — '+(ROLE_PERMS[u.role]?.label||u.role)+'</option>').join('');
+  openOverlay('ovChargeValidation');
+};
+window.confirmerEnvoiValidation=async function(){
+  const id=parseInt(document.getElementById('valChargeId').value);
+  const destId=parseInt(document.getElementById('valChargeDest').value);
+  const note=document.getElementById('valChargeNote').value.trim();
+  const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);if(!c){toast('Charge introuvable','err');return;}
+  const users=await getAll(S.USERS);const dest=users.find(u=>u.id===destId);if(!dest){toast('Destinataire introuvable','err');return;}
+  const lots=await getAll(S.FLOCKS);const lotNom=c.flockId?(lots.find(l=>l.id===c.flockId)?.nom||'Lot '+c.flockId):'Global';
+  await updRec(S.CHARGES,id,{...c,validation:{statut:'attente',destinataireId:destId,destinataireNom:dest.nom,expediteurId:currentUser.id,expediteurNom:currentUser.nom,dateEnvoi:new Date().toISOString(),note}});
+  const convId=await msgGetOrCreateDirectConversation(destId);
+  await envoyerMessageInterne(convId,'📉 Demande de validation — Charge : '+(CAT_LABELS[c.categorie]||c.categorie)+' · '+lotNom+' · '+(c.libelle||'')+' · '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F du '+(c.date||'')+(note?' — Note : '+note:'')+'. Merci de valider dans Finance > Charges.');
+  closeOverlay('ovChargeValidation');toast('Envoyée pour validation à '+dest.nom);
+  await renderFinance(document.getElementById('contentArea'));
+};
+window.validerCharge=async function(id){
+  const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);if(!c||!c.validation)return;
+  await updRec(S.CHARGES,id,{...c,validation:{...c.validation,statut:'validee',repondantId:currentUser.id,repondantNom:currentUser.nom,dateReponse:new Date().toISOString()}});
+  if(c.validation.expediteurId){const convId=await msgGetOrCreateDirectConversation(c.validation.expediteurId);await envoyerMessageInterne(convId,'✅ Charge validée : '+(c.libelle||'')+' · '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F.');}
+  toast('Charge validée');await renderFinance(document.getElementById('contentArea'));
+};
+window.rejeterCharge=async function(id){
+  const commentaire=prompt('Motif du rejet :')||'';
+  const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);if(!c||!c.validation)return;
+  await updRec(S.CHARGES,id,{...c,validation:{...c.validation,statut:'rejetee',repondantId:currentUser.id,repondantNom:currentUser.nom,dateReponse:new Date().toISOString(),commentaire}});
+  if(c.validation.expediteurId){const convId=await msgGetOrCreateDirectConversation(c.validation.expediteurId);await envoyerMessageInterne(convId,'❌ Charge rejetée : '+(c.libelle||'')+' · '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F.'+(commentaire?' Motif : '+commentaire:''));}
+  toast('Charge rejetée');await renderFinance(document.getElementById('contentArea'));
+};
+
+// ── Impression d'une charge unique (bon à signer) ──
+window.printChargeUnique=async function(id){
+  const[charges,lots,cfg]=await Promise.all([getAll(S.CHARGES),getAll(S.FLOCKS),getExploitationSettings()]);
+  const c=charges.find(x=>x.id===id);if(!c){toast('Charge introuvable','err');return;}
+  const lotNom=c.flockId?(lots.find(l=>l.id===c.flockId)?.nom||'Lot '+c.flockId):'Global';
+  const v=c.validation;
+  const statutLbl=!v?'Non soumise':v.statut==='attente'?'En attente de validation ('+esc(v.destinataireNom||'')+')':v.statut==='validee'?'Validée par '+esc(v.repondantNom||'')+' le '+(v.dateReponse||'').slice(0,10):'Rejetée par '+esc(v.repondantNom||'')+' le '+(v.dateReponse||'').slice(0,10)+(v.commentaire?' — '+esc(v.commentaire):'');
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Bon de charge</title><style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:18px}
+    .doc{max-width:700px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:14px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    table{width:100%;border-collapse:collapse;margin-bottom:16px}
+    th,td{padding:7px 8px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;width:38%}
+    .statut-box{background:#f3f4f6;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:11px}
+    .sign{display:flex;justify-content:space-between;margin-top:40px}
+    .sign div{width:45%;text-align:center;font-size:11px}
+    .sign .ligne{border-top:1px solid #333;margin-top:50px;padding-top:4px}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:12mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr">${buildEmetteurHeader(cfg)}
+      <div style="text-align:right"><div class="doc-type">BON DE CHARGE</div><div style="font-size:10px;color:#888">Réf. CHG-${c.id} · Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <table>
+      <tr><th>Date</th><td>${c.date||'—'}</td></tr>
+      <tr><th>Lot</th><td>${esc(lotNom)}</td></tr>
+      <tr><th>Catégorie</th><td>${esc(CAT_LABELS[c.categorie]||c.categorie||'—')}</td></tr>
+      <tr><th>Libellé</th><td>${esc(c.libelle||'')}</td></tr>
+      <tr><th>Quantité</th><td>${c.qte||'—'} ${esc(c.unite||'')}</td></tr>
+      <tr><th>Prix unitaire</th><td>${c.unitCost?Math.round(c.unitCost).toLocaleString('fr-FR')+' F':'—'}</td></tr>
+      <tr><th>Montant</th><td style="font-weight:800">${Math.round(c.montant||0).toLocaleString('fr-FR')} F CFA</td></tr>
+      <tr><th>Mode de règlement</th><td>${esc(c.mode||'—')}</td></tr>
+    </table>
+    <div class="statut-box"><strong>Statut de validation :</strong> ${statutLbl}</div>
+    <div class="sign">
+      <div><div class="ligne">Demandeur${v&&v.expediteurNom?' — '+esc(v.expediteurNom):''}</div></div>
+      <div><div class="ligne">Validé par (nom, date, signature)</div></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">${buildSecurityQR(cfg,'CHARGE',String(c.id),Math.round(c.montant||0),c.date||new Date().toISOString().slice(0,10))}</div>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=800,height=750');
+  if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
+  w.document.write(html);w.document.close();
 };
 
 // ── État des dépenses imprimable — respecte les filtres lot/catégorie actifs à l'écran ──
@@ -13220,6 +13320,28 @@ window.exportFinanceCSV=function(fin){
     <div class="modal-footer">
       <button class="btn btn-s" onclick="closeOverlay('ovChargeManuelle')">Annuler</button>
       <button class="btn btn-p" onclick="saveChargeManuelle()"><i class="fas fa-save"></i> Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL VALIDATION CHARGE ══ -->
+<div class="overlay" id="ovChargeValidation">
+  <div class="modal">
+    <h3>📤 Envoyer pour validation</h3>
+    <input type="hidden" id="valChargeId">
+    <div class="form-grid">
+      <div class="fg fg-full">
+        <label>Personne habilitée</label>
+        <select id="valChargeDest"></select>
+      </div>
+      <div class="fg fg-full">
+        <label>Note (optionnel)</label>
+        <input type="text" id="valChargeNote" placeholder="ex: Urgent, à valider avant vendredi">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-s" onclick="closeOverlay('ovChargeValidation')">Annuler</button>
+      <button class="btn btn-p" onclick="confirmerEnvoiValidation()"><i class="fas fa-paper-plane"></i> Envoyer</button>
     </div>
   </div>
 </div>
