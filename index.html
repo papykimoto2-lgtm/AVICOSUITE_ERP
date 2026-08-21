@@ -12494,8 +12494,8 @@ async function renderFinance(ca){
   var fin=await computeFinanceGlobale();
   var roi=fin.totalCharges>0?(fin.margeGlobale/fin.totalCharges*100):0;
   var txCh=fin.totalRecettes>0?(fin.totalCharges/fin.totalRecettes*100):0;
-  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','tiers','controle'].map(function(t){
-    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',tiers:'👥 Comptes Tiers',controle:'📈 Contrôle de gestion'};
+  var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','tiers','controle','aliments'].map(function(t){
+    var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',tiers:'👥 Comptes Tiers',controle:'📈 Contrôle de gestion',aliments:'🌾 Conso Aliments'};
     return '<button class="tab-btn '+(finTab===t?'on':'')+'" data-tab="'+t+'" onclick="switchFinTab(\''+t+'\')">'+labs[t]+'</button>';
   }).join('');
 
@@ -12542,6 +12542,7 @@ async function renderFinTab(fin){
   else if(finTab==='budget') renderFinBudget(el,fin);
   else if(finTab==='tiers') await renderFinTiers(el);
   else if(finTab==='controle') await renderFinControle(el,fin);
+  else if(finTab==='aliments') await renderFinAliments(el);
 }
 
 // ── 1. SYNTHESE ──
@@ -13020,6 +13021,120 @@ async function renderFinControle(el,fin){
 window.renderFinControle=renderFinControle;
 window.switchFinControleGroupe=function(g){ finControleGroupe=g; renderFinControle(document.getElementById('finTabContent'),window._fin); };
 window.switchFinControleLot=function(v){ finControleLot=v; renderFinControle(document.getElementById('finTabContent'),window._fin); };
+
+// ── CONSO ALIMENTS — bâtiment > ligne > lot (sujet) ──
+let finAlimentsFiltreBat='';
+async function computeConsoAliments(){
+  const[buildings,lines,flocks,feeds,mort,reformes,ventes,slaughters,charges]=await Promise.all([
+    getAll(S.BUILDINGS),getAll(S.LINES),getAll(S.FLOCKS),getAll(S.FEEDING),getAll(S.MORTALITE),
+    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.CHARGES)
+  ]);
+  const today=new Date();
+  const lotRows=flocks.map(function(f){
+    const fFeeds=feeds.filter(function(x){return x.flockId===f.id;});
+    const totalKg=fFeeds.reduce(function(a,x){return a+(x.quantityKg||0);},0);
+    const mortCum=mort.filter(function(x){return x.flockId===f.id;}).reduce(function(a,x){return a+(x.nbMorts||0);},0);
+    const sortRef=reformes.filter(function(x){return x.flockId===f.id;}).reduce(function(a,x){return a+(x.nbTetes||0);},0);
+    const sortVente=ventes.filter(function(x){return x.flockId===f.id;}).reduce(function(a,x){return a+(x.nbTetes||0);},0);
+    const sortAb=slaughters.filter(function(x){return x.flockId===f.id&&!x.viaReforme;}).reduce(function(a,x){return a+(x.nbAnimaux||0);},0);
+    const vivants=Math.max(0,(f.initialStock||0)-mortCum-sortRef-sortVente-sortAb);
+    const jours=f.startDate?Math.max(1,Math.round((today-new Date(f.startDate))/86400000)):1;
+    const coutAliment=charges.filter(function(x){return x.flockId===f.id&&x.categorie==='aliment';}).reduce(function(a,x){return a+(x.montant||0);},0);
+    const kgSujet=vivants>0?totalKg/vivants:0;
+    const kgSujetJour=vivants>0?totalKg/vivants/jours:0;
+    const line=lines.find(function(l){return l.id===f.lineId;});
+    const building=buildings.find(function(b){return b.id===(f.buildingId||(line?line.buildingId:null));});
+    return {lot:f,buildingId:building?building.id:null,buildingNom:building?building.nom:'Non affecté',lineNom:line?line.nom:'—',
+      totalKg,vivants,jours,coutAliment,kgSujet,kgSujetJour,coutSujet:vivants>0?coutAliment/vivants:0};
+  }).filter(function(r){return r.totalKg>0||r.vivants>0;});
+  return {lotRows,buildings};
+}
+async function renderFinAliments(el){
+  const {lotRows,buildings}=await computeConsoAliments();
+  const filtered=finAlimentsFiltreBat?lotRows.filter(function(r){return String(r.buildingId)===finAlimentsFiltreBat;}):lotRows;
+  const parBat={};
+  filtered.forEach(function(r){const k=r.buildingNom;if(!parBat[k])parBat[k]={rows:[],totalKg:0,totalCout:0,totalSujets:0};parBat[k].rows.push(r);parBat[k].totalKg+=r.totalKg;parBat[k].totalCout+=r.coutAliment;parBat[k].totalSujets+=r.vivants;});
+  const totalKgG=filtered.reduce(function(a,r){return a+r.totalKg;},0);
+  const totalCoutG=filtered.reduce(function(a,r){return a+r.coutAliment;},0);
+  const totalSujetsG=filtered.reduce(function(a,r){return a+r.vivants;},0);
+  const batOpts=buildings.map(function(b){return '<option value="'+b.id+'"'+(String(b.id)===finAlimentsFiltreBat?' selected':'')+'>'+esc(b.nom)+'</option>';}).join('');
+  const blocs=Object.entries(parBat).sort(function(a,b){return b[1].totalKg-a[1].totalKg;}).map(function(e){
+    const nomBat=e[0],d=e[1];
+    const rows=d.rows.sort(function(a,b){return (a.lineNom||'').localeCompare(b.lineNom||'')||(a.lot.nom||'').localeCompare(b.lot.nom||'');}).map(function(r){
+      return '<tr><td>'+esc(r.lineNom)+'</td><td>'+esc(r.lot.nom||'')+'</td><td>'+(r.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</td>'
+        +'<td style="text-align:right">'+r.vivants.toLocaleString('fr-FR')+'</td>'
+        +'<td style="text-align:right">'+r.jours+'</td>'
+        +'<td style="text-align:right;font-weight:700">'+Math.round(r.totalKg).toLocaleString('fr-FR')+' kg</td>'
+        +'<td style="text-align:right">'+r.kgSujet.toFixed(2)+' kg</td>'
+        +'<td style="text-align:right">'+(r.kgSujetJour*1000).toFixed(0)+' g/j</td>'
+        +'<td style="text-align:right">'+(r.coutAliment?fcfa(r.coutAliment):'—')+'</td>'
+        +'<td style="text-align:right">'+(r.coutSujet?fcfa(r.coutSujet):'—')+'</td></tr>';
+    }).join('');
+    return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between"><span>🏢 '+esc(nomBat)+'</span><span style="font-size:11px;font-weight:600;color:var(--text3)">'+Math.round(d.totalKg).toLocaleString('fr-FR')+' kg · '+d.totalSujets.toLocaleString('fr-FR')+' sujets</span></div>'
+      +'<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Effectif</th><th style="text-align:right">Jours</th><th style="text-align:right">Conso totale</th><th style="text-align:right">Kg/sujet</th><th style="text-align:right">g/sujet/j</th><th style="text-align:right">Coût aliment</th><th style="text-align:right">Coût/sujet</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">🌾 Consommation d\'aliments — Bâtiment / Ligne / Sujet</div>'
+    +'<div style="display:flex;gap:6px"><select id="finAlimentsBatSel" onchange="switchFinAlimentsBat(this.value)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les bâtiments</option>'+batOpts+'</select>'
+    +'<button class="btn btn-sm btn-gh" onclick="printAlimentsConsoEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printAlimentsConsoEtat()"><i class="fas fa-print"></i> Imprimer</button></div></div>'
+    +'<div class="g4" style="margin-bottom:14px">'
+    +'<div class="kpi"><div class="kpi-lbl">Conso totale</div><div class="kpi-val">'+Math.round(totalKgG).toLocaleString('fr-FR')+' kg</div></div>'
+    +'<div class="kpi"><div class="kpi-lbl">Sujets (vivants)</div><div class="kpi-val">'+totalSujetsG.toLocaleString('fr-FR')+'</div></div>'
+    +'<div class="kpi"><div class="kpi-lbl">Kg/sujet moyen</div><div class="kpi-val">'+(totalSujetsG>0?(totalKgG/totalSujetsG).toFixed(2):'—')+' kg</div></div>'
+    +'<div class="kpi kpi-r"><div class="kpi-lbl">Coût aliment total</div><div class="kpi-val" style="font-size:15px">'+fcfa(totalCoutG)+'</div></div>'
+    +'</div>'
+    +(blocs||'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune consommation enregistrée.</div>');
+}
+window.switchFinAlimentsBat=function(v){finAlimentsFiltreBat=v;renderFinAliments(document.getElementById('finTabContent'));};
+window.printAlimentsConsoEtat=async function(preview){
+  const {lotRows,buildings}=await computeConsoAliments();
+  const filtered=finAlimentsFiltreBat?lotRows.filter(function(r){return String(r.buildingId)===finAlimentsFiltreBat;}):lotRows;
+  const cfg=await getExploitationSettings();
+  const totalKgG=filtered.reduce(function(a,r){return a+r.totalKg;},0);
+  const totalCoutG=filtered.reduce(function(a,r){return a+r.coutAliment;},0);
+  const totalSujetsG=filtered.reduce(function(a,r){return a+r.vivants;},0);
+  const parBat={};
+  filtered.forEach(function(r){const k=r.buildingNom;if(!parBat[k])parBat[k]=[];parBat[k].push(r);});
+  const batLbl=finAlimentsFiltreBat?(buildings.find(function(b){return String(b.id)===finAlimentsFiltreBat;})||{}).nom:'Tous les bâtiments';
+  const blocsHtml=Object.entries(parBat).map(function(e){
+    const rows=e[1].sort(function(a,b){return (a.lineNom||'').localeCompare(b.lineNom||'');}).map(function(r){
+      return '<tr><td>'+esc(r.lineNom)+'</td><td>'+esc(r.lot.nom||'')+'</td><td style="text-align:right">'+r.vivants.toLocaleString('fr-FR')+'</td><td style="text-align:right">'+Math.round(r.totalKg).toLocaleString('fr-FR')+' kg</td><td style="text-align:right">'+r.kgSujet.toFixed(2)+' kg</td><td style="text-align:right">'+(r.kgSujetJour*1000).toFixed(0)+' g/j</td><td style="text-align:right">'+(r.coutAliment?Math.round(r.coutAliment).toLocaleString('fr-FR'):'—')+'</td></tr>';
+    }).join('');
+    return '<div style="font-weight:700;font-size:12px;margin:10px 0 4px">🏢 '+esc(e[0])+'</div><table><thead><tr><th>Ligne</th><th>Lot</th><th style="text-align:right">Effectif</th><th style="text-align:right">Conso totale</th><th style="text-align:right">Kg/sujet</th><th style="text-align:right">g/sujet/j</th><th style="text-align:right">Coût (F)</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>État consommation aliments</title><style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
+    .doc{max-width:950px;margin:0 auto}
+    .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #2d6a4f;padding-bottom:10px;margin-bottom:12px}
+    .doc-type{font-size:18px;font-weight:800;color:#2d6a4f}
+    .filtres{background:#f3f4f6;border-radius:6px;padding:6px 10px;margin-bottom:12px;font-size:10px;color:#555}
+    table{width:100%;border-collapse:collapse;margin-bottom:10px}
+    th,td{padding:5px 6px;border:1px solid #e5e7eb;text-align:left}
+    th{background:#f3f4f6;font-size:10px}
+    .kpis{display:flex;gap:14px;margin-bottom:12px}
+    .kpi-box{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;text-align:center}
+    .kpi-val{font-size:16px;font-weight:800}
+    .preview-bar{position:sticky;top:0;background:#1a5c2a;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+    .preview-bar button{background:#fff;color:#1a5c2a;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer}
+    @media print{.preview-bar{display:none}@page{margin:10mm;size:A4}}
+  </style></head><body>
+  <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
+  <div class="doc">
+    <div class="hdr">${buildEmetteurHeader(cfg)}
+      <div style="text-align:right"><div class="doc-type">ÉTAT CONSOMMATION ALIMENTS</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="filtres">🔎 ${esc(batLbl)}</div>
+    <div class="kpis">
+      <div class="kpi-box"><div class="kpi-val">${Math.round(totalKgG).toLocaleString('fr-FR')}</div>Kg total</div>
+      <div class="kpi-box"><div class="kpi-val">${totalSujetsG.toLocaleString('fr-FR')}</div>Sujets</div>
+      <div class="kpi-box"><div class="kpi-val">${totalSujetsG>0?(totalKgG/totalSujetsG).toFixed(2):'—'}</div>Kg/sujet moy.</div>
+      <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${Math.round(totalCoutG).toLocaleString('fr-FR')}</div>Coût (FCFA)</div>
+    </div>
+    ${blocsHtml||'<p style="text-align:center;color:#999">Aucune donnée</p>'}
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'CONSO-ALIMENTS',new Date().toISOString().slice(0,10),Math.round(totalCoutG),new Date().toISOString().slice(0,10))}</div>
+  </div></body></html>`;
+  const w=window.open('','_blank','width=1000,height=750');
+  if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
+  w.document.write(html);w.document.close();
+};
 
 function renderFinBudget(el,fin){
   if(!fin.budgets.length){el.innerHTML='<div style="text-align:center;padding:60px;background:#fff;border-radius:12px;border:1px dashed var(--border)"><div style="font-size:36px;margin-bottom:12px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucun budget defini</div><div style="font-size:12px;color:var(--text3);margin-bottom:16px">Definissez vos objectifs par lot</div><button class="btn btn-p" onclick="openBudgetModal()"><i class="fas fa-plus"></i> Creer un budget</button></div>';return;}
