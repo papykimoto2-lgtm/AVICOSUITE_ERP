@@ -13022,12 +13022,21 @@ window.renderFinControle=renderFinControle;
 window.switchFinControleGroupe=function(g){ finControleGroupe=g; renderFinControle(document.getElementById('finTabContent'),window._fin); };
 window.switchFinControleLot=function(v){ finControleLot=v; renderFinControle(document.getElementById('finTabContent'),window._fin); };
 
-// ── CONSO ALIMENTS — bâtiment > ligne > lot (sujet) ──
+// ── CONSO ALIMENTS — bâtiment > ligne > lot (sujet), vs standard souche/âge (Simulation) ──
 let finAlimentsFiltreBat='';
+const CONSO_SEUIL_ATTENTION=10, CONSO_SEUIL_CRITIQUE=20; // % écart vs standard
+function getStandardConso(nutritions, type, breed, ageJours){
+  const b=breed||'Général';
+  let rows=nutritions.filter(function(n){return n.type===type&&(n.breed||'Général')===b;});
+  if(!rows.length) rows=nutritions.filter(function(n){return n.type===type&&(n.breed||'Général')==='Général';});
+  let phase=rows.find(function(n){return ageJours>=n.ageMin&&ageJours<=n.ageMax;});
+  if(!phase&&rows.length) phase=ageJours<rows[0].ageMin?rows[0]:rows[rows.length-1];
+  return phase||null;
+}
 async function computeConsoAliments(){
-  const[buildings,lines,flocks,feeds,mort,reformes,ventes,slaughters,charges]=await Promise.all([
+  const[buildings,lines,flocks,feeds,mort,reformes,ventes,slaughters,charges,nutritions]=await Promise.all([
     getAll(S.BUILDINGS),getAll(S.LINES),getAll(S.FLOCKS),getAll(S.FEEDING),getAll(S.MORTALITE),
-    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.CHARGES)
+    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.CHARGES),getAll(S.NUTRITION)
   ]);
   const today=new Date();
   const lotRows=flocks.map(function(f){
@@ -13038,16 +13047,36 @@ async function computeConsoAliments(){
     const sortVente=ventes.filter(function(x){return x.flockId===f.id;}).reduce(function(a,x){return a+(x.nbTetes||0);},0);
     const sortAb=slaughters.filter(function(x){return x.flockId===f.id&&!x.viaReforme;}).reduce(function(a,x){return a+(x.nbAnimaux||0);},0);
     const vivants=Math.max(0,(f.initialStock||0)-mortCum-sortRef-sortVente-sortAb);
-    const jours=f.startDate?Math.max(1,Math.round((today-new Date(f.startDate))/86400000)):1;
+    const ageJours=f.startDate?Math.max(1,Math.round((today-new Date(f.startDate))/86400000)):1;
+    const jours=ageJours;
     const coutAliment=charges.filter(function(x){return x.flockId===f.id&&x.categorie==='aliment';}).reduce(function(a,x){return a+(x.montant||0);},0);
     const kgSujet=vivants>0?totalKg/vivants:0;
     const kgSujetJour=vivants>0?totalKg/vivants/jours:0;
+    const gSujetJour=kgSujetJour*1000;
     const line=lines.find(function(l){return l.id===f.lineId;});
     const building=buildings.find(function(b){return b.id===(f.buildingId||(line?line.buildingId:null));});
+    const souche=f.breed||'Général';
+    const stdPhase=getStandardConso(nutritions,f.type,souche,ageJours);
+    const stdGPD=stdPhase?stdPhase.feedGPD:null;
+    const ecartPct=(stdGPD&&gSujetJour>0)?((gSujetJour-stdGPD)/stdGPD*100):null;
+    const statut=ecartPct===null?'ndisp':Math.abs(ecartPct)<=CONSO_SEUIL_ATTENTION?'ok':Math.abs(ecartPct)<=CONSO_SEUIL_CRITIQUE?'attention':'critique';
+    let directive=null;
+    if(ecartPct!==null){
+      if(ecartPct<-CONSO_SEUIL_ATTENTION) directive='Sous-consommation vs standard '+souche+' ('+ecartPct.toFixed(0)+'%) — vérifier accès mangeoires (nombre/hauteur), qualité/appétence aliment, stress thermique ou statut sanitaire. '+(stdPhase.notes||'');
+      else if(ecartPct>CONSO_SEUIL_ATTENTION) directive='Surconsommation vs standard '+souche+' (+'+ecartPct.toFixed(0)+'%) — vérifier gaspillage aux mangeoires (réglage/débit), granulométrie, ou température ambiante trop basse. '+(stdPhase.notes||'');
+      else directive=stdPhase.notes||null;
+    }
     return {lot:f,buildingId:building?building.id:null,buildingNom:building?building.nom:'Non affecté',lineNom:line?line.nom:'—',
+      souche,ageJours,phaseLabel:stdPhase?stdPhase.phase:'—',stdGPD,gSujetJour,ecartPct,statut,directive,
       totalKg,vivants,jours,coutAliment,kgSujet,kgSujetJour,coutSujet:vivants>0?coutAliment/vivants:0};
   }).filter(function(r){return r.totalKg>0||r.vivants>0;});
   return {lotRows,buildings};
+}
+function statutBadge(statut){
+  if(statut==='ok') return '<span class="badge b-g">✓ Conforme</span>';
+  if(statut==='attention') return '<span class="badge b-a">⚠ Écart</span>';
+  if(statut==='critique') return '<span class="badge b-r">⛔ Critique</span>';
+  return '<span class="badge b-gr">—</span>';
 }
 async function renderFinAliments(el){
   const {lotRows,buildings}=await computeConsoAliments();
@@ -13057,34 +13086,63 @@ async function renderFinAliments(el){
   const totalKgG=filtered.reduce(function(a,r){return a+r.totalKg;},0);
   const totalCoutG=filtered.reduce(function(a,r){return a+r.coutAliment;},0);
   const totalSujetsG=filtered.reduce(function(a,r){return a+r.vivants;},0);
+  const nbCritiques=filtered.filter(function(r){return r.statut==='critique';}).length;
+  const nbAttention=filtered.filter(function(r){return r.statut==='attention';}).length;
   const batOpts=buildings.map(function(b){return '<option value="'+b.id+'"'+(String(b.id)===finAlimentsFiltreBat?' selected':'')+'>'+esc(b.nom)+'</option>';}).join('');
   const blocs=Object.entries(parBat).sort(function(a,b){return b[1].totalKg-a[1].totalKg;}).map(function(e){
     const nomBat=e[0],d=e[1];
     const rows=d.rows.sort(function(a,b){return (a.lineNom||'').localeCompare(b.lineNom||'')||(a.lot.nom||'').localeCompare(b.lot.nom||'');}).map(function(r){
-      return '<tr><td>'+esc(r.lineNom)+'</td><td>'+esc(r.lot.nom||'')+'</td><td>'+(r.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</td>'
+      const ecartTxt=r.ecartPct===null?'—':(r.ecartPct>=0?'+':'')+r.ecartPct.toFixed(1)+'%';
+      const ecartColor=r.statut==='critique'?'var(--red)':r.statut==='attention'?'var(--amber-d)':'#059669';
+      return '<tr><td>'+esc(r.lineNom)+'</td><td>'+esc(r.lot.nom||'')+'</td><td>'+(r.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</td><td style="font-size:10px;color:var(--text3)">'+esc(r.souche)+'</td>'
         +'<td style="text-align:right">'+r.vivants.toLocaleString('fr-FR')+'</td>'
-        +'<td style="text-align:right">'+r.jours+'</td>'
+        +'<td style="text-align:right">'+r.jours+'j</td>'
         +'<td style="text-align:right;font-weight:700">'+Math.round(r.totalKg).toLocaleString('fr-FR')+' kg</td>'
-        +'<td style="text-align:right">'+r.kgSujet.toFixed(2)+' kg</td>'
-        +'<td style="text-align:right">'+(r.kgSujetJour*1000).toFixed(0)+' g/j</td>'
-        +'<td style="text-align:right">'+(r.coutAliment?fcfa(r.coutAliment):'—')+'</td>'
-        +'<td style="text-align:right">'+(r.coutSujet?fcfa(r.coutSujet):'—')+'</td></tr>';
+        +'<td style="text-align:right">'+(r.gSujetJour).toFixed(0)+' g/j</td>'
+        +'<td style="text-align:right;color:var(--text3)">'+(r.stdGPD?r.stdGPD+' g/j':'—')+'</td>'
+        +'<td style="text-align:right;font-weight:700;color:'+ecartColor+'">'+ecartTxt+'</td>'
+        +'<td>'+statutBadge(r.statut)+'</td>'
+        +'<td style="text-align:right">'+(r.coutAliment?fcfa(r.coutAliment):'—')+'</td></tr>';
     }).join('');
     return '<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between"><span>🏢 '+esc(nomBat)+'</span><span style="font-size:11px;font-weight:600;color:var(--text3)">'+Math.round(d.totalKg).toLocaleString('fr-FR')+' kg · '+d.totalSujets.toLocaleString('fr-FR')+' sujets</span></div>'
-      +'<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Effectif</th><th style="text-align:right">Jours</th><th style="text-align:right">Conso totale</th><th style="text-align:right">Kg/sujet</th><th style="text-align:right">g/sujet/j</th><th style="text-align:right">Coût aliment</th><th style="text-align:right">Coût/sujet</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+      +'<div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th>Souche</th><th style="text-align:right">Effectif</th><th style="text-align:right">Âge</th><th style="text-align:right">Conso totale</th><th style="text-align:right">Réel g/sujet/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th>Statut</th><th style="text-align:right">Coût aliment</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">🌾 Consommation d\'aliments — Bâtiment / Ligne / Sujet</div>'
+  const directivesRows=filtered.filter(function(r){return r.directive&&r.statut!=='ndisp';}).sort(function(a,b){return (b.statut==='critique'?2:b.statut==='attention'?1:0)-(a.statut==='critique'?2:a.statut==='attention'?1:0);}).map(function(r){
+    return '<div style="padding:10px 12px;border-left:3px solid '+(r.statut==='critique'?'var(--red)':r.statut==='attention'?'var(--amber-d)':'#059669')+';background:#f9fbf9;border-radius:0 8px 8px 0;margin-bottom:8px">'
+      +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px"><strong style="font-size:12px">'+esc(r.buildingNom)+' · '+esc(r.lineNom)+' · '+esc(r.lot.nom||'')+'</strong>'+statutBadge(r.statut)+'</div>'
+      +'<div style="font-size:11px;color:var(--text2);margin-top:4px">'+esc(r.directive)+'</div></div>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">🌾 Consommation d\'aliments vs Standard (âge/souche) — Bâtiment / Ligne / Sujet</div>'
     +'<div style="display:flex;gap:6px"><select id="finAlimentsBatSel" onchange="switchFinAlimentsBat(this.value)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les bâtiments</option>'+batOpts+'</select>'
-    +'<button class="btn btn-sm btn-gh" onclick="printAlimentsConsoEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printAlimentsConsoEtat()"><i class="fas fa-print"></i> Imprimer</button></div></div>'
+    +'<button class="btn btn-sm btn-gh" onclick="printAlimentsConsoEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printAlimentsConsoEtat()"><i class="fas fa-print"></i> Imprimer</button>'
+    +(nbCritiques?'<button class="btn btn-sm btn-p" style="background:var(--red)" onclick="alerterConsoCritique()"><i class="fas fa-bell"></i> Alerter responsables ('+nbCritiques+')</button>':'')
+    +'</div></div>'
     +'<div class="g4" style="margin-bottom:14px">'
     +'<div class="kpi"><div class="kpi-lbl">Conso totale</div><div class="kpi-val">'+Math.round(totalKgG).toLocaleString('fr-FR')+' kg</div></div>'
     +'<div class="kpi"><div class="kpi-lbl">Sujets (vivants)</div><div class="kpi-val">'+totalSujetsG.toLocaleString('fr-FR')+'</div></div>'
-    +'<div class="kpi"><div class="kpi-lbl">Kg/sujet moyen</div><div class="kpi-val">'+(totalSujetsG>0?(totalKgG/totalSujetsG).toFixed(2):'—')+' kg</div></div>'
     +'<div class="kpi kpi-r"><div class="kpi-lbl">Coût aliment total</div><div class="kpi-val" style="font-size:15px">'+fcfa(totalCoutG)+'</div></div>'
+    +'<div class="kpi '+(nbCritiques?'kpi-r':nbAttention?'kpi-a':'kpi-g')+'"><div class="kpi-lbl">Lots hors standard</div><div class="kpi-val" style="font-size:15px">'+(nbCritiques+nbAttention)+'</div><div class="kpi-sub">'+nbCritiques+' critique(s) · '+nbAttention+' attention</div></div>'
     +'</div>'
-    +(blocs||'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune consommation enregistrée.</div>');
+    +(blocs||'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune consommation enregistrée.</div>')
+    +(directivesRows?'<div class="card"><div class="card-hd">📋 Directives — écarts vs consommation standard</div><div class="card-bd">'+directivesRows+'</div></div>':'');
 }
 window.switchFinAlimentsBat=function(v){finAlimentsFiltreBat=v;renderFinAliments(document.getElementById('finTabContent'));};
+window.alerterConsoCritique=async function(){
+  const {lotRows}=await computeConsoAliments();
+  const critiques=lotRows.filter(function(r){return r.statut==='critique';});
+  if(!critiques.length){toast('Aucun écart critique','err');return;}
+  const today=new Date().toISOString().slice(0,10);
+  let deja={};try{deja=JSON.parse(localStorage.getItem('avico_conso_alertes')||'{}');}catch(e){}
+  const aEnvoyer=critiques.filter(function(r){return deja[r.lot.id]!==today;});
+  if(!aEnvoyer.length){toast('Déjà alerté aujourd\'hui pour ces lots');return;}
+  const lignes=aEnvoyer.map(function(r){return '• '+r.buildingNom+' · '+r.lineNom+' · '+(r.lot.nom||'')+' ('+r.souche+', '+r.ageJours+'j) : '+(r.ecartPct>=0?'+':'')+r.ecartPct.toFixed(0)+'% vs standard ('+r.gSujetJour.toFixed(0)+' g/j réel, '+r.stdGPD+' g/j standard)';}).join('\n');
+  const texte='🚨 Alerte consommation aliments — '+aEnvoyer.length+' lot(s) en écart critique (>'+CONSO_SEUIL_CRITIQUE+'%) vs standard souche/âge :\n\n'+lignes+'\n\nVoir Finance > Conso Aliments pour les directives détaillées.';
+  const convId=await msgGetOrCreateRapportConversation();
+  await envoyerMessageInterne(convId,texte);
+  aEnvoyer.forEach(function(r){deja[r.lot.id]=today;});
+  localStorage.setItem('avico_conso_alertes',JSON.stringify(deja));
+  toast('Alerte envoyée à '+aEnvoyer.length+' lot(s) — groupe Rapports & Alertes');
+};
 window.printAlimentsConsoEtat=async function(preview){
   const {lotRows,buildings}=await computeConsoAliments();
   const filtered=finAlimentsFiltreBat?lotRows.filter(function(r){return String(r.buildingId)===finAlimentsFiltreBat;}):lotRows;
@@ -13097,9 +13155,13 @@ window.printAlimentsConsoEtat=async function(preview){
   const batLbl=finAlimentsFiltreBat?(buildings.find(function(b){return String(b.id)===finAlimentsFiltreBat;})||{}).nom:'Tous les bâtiments';
   const blocsHtml=Object.entries(parBat).map(function(e){
     const rows=e[1].sort(function(a,b){return (a.lineNom||'').localeCompare(b.lineNom||'');}).map(function(r){
-      return '<tr><td>'+esc(r.lineNom)+'</td><td>'+esc(r.lot.nom||'')+'</td><td style="text-align:right">'+r.vivants.toLocaleString('fr-FR')+'</td><td style="text-align:right">'+Math.round(r.totalKg).toLocaleString('fr-FR')+' kg</td><td style="text-align:right">'+r.kgSujet.toFixed(2)+' kg</td><td style="text-align:right">'+(r.kgSujetJour*1000).toFixed(0)+' g/j</td><td style="text-align:right">'+(r.coutAliment?Math.round(r.coutAliment).toLocaleString('fr-FR'):'—')+'</td></tr>';
+      const ecartTxt=r.ecartPct===null?'—':(r.ecartPct>=0?'+':'')+r.ecartPct.toFixed(1)+'%';
+      return '<tr><td>'+esc(r.lineNom)+'</td><td>'+esc(r.lot.nom||'')+'</td><td>'+esc(r.souche)+'</td><td style="text-align:right">'+r.vivants.toLocaleString('fr-FR')+'</td><td style="text-align:right">'+Math.round(r.totalKg).toLocaleString('fr-FR')+' kg</td><td style="text-align:right">'+r.gSujetJour.toFixed(0)+' g/j</td><td style="text-align:right">'+(r.stdGPD?r.stdGPD+' g/j':'—')+'</td><td style="text-align:right">'+ecartTxt+'</td><td style="text-align:right">'+(r.coutAliment?Math.round(r.coutAliment).toLocaleString('fr-FR'):'—')+'</td></tr>';
     }).join('');
-    return '<div style="font-weight:700;font-size:12px;margin:10px 0 4px">🏢 '+esc(e[0])+'</div><table><thead><tr><th>Ligne</th><th>Lot</th><th style="text-align:right">Effectif</th><th style="text-align:right">Conso totale</th><th style="text-align:right">Kg/sujet</th><th style="text-align:right">g/sujet/j</th><th style="text-align:right">Coût (F)</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    return '<div style="font-weight:700;font-size:12px;margin:10px 0 4px">🏢 '+esc(e[0])+'</div><table><thead><tr><th>Ligne</th><th>Lot</th><th>Souche</th><th style="text-align:right">Effectif</th><th style="text-align:right">Conso totale</th><th style="text-align:right">Réel g/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th style="text-align:right">Coût (F)</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }).join('');
+  const directivesHtml=filtered.filter(function(r){return r.directive&&r.statut!=='ndisp';}).map(function(r){
+    return '<div style="padding:6px 10px;border-left:3px solid #999;margin-bottom:6px;font-size:10px"><strong>'+esc(r.buildingNom)+' · '+esc(r.lineNom)+' · '+esc(r.lot.nom||'')+'</strong> ('+r.statut+') — '+esc(r.directive)+'</div>';
   }).join('');
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>État consommation aliments</title><style>
     body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:18px}
@@ -13120,15 +13182,16 @@ window.printAlimentsConsoEtat=async function(preview){
   <div class="preview-bar no-print"><span>📄 Aperçu avant impression</span><button onclick="window.print()">🖨️ Imprimer</button></div>
   <div class="doc">
     <div class="hdr">${buildEmetteurHeader(cfg)}
-      <div style="text-align:right"><div class="doc-type">ÉTAT CONSOMMATION ALIMENTS</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
-    <div class="filtres">🔎 ${esc(batLbl)}</div>
+      <div style="text-align:right"><div class="doc-type">ÉTAT CONSOMMATION ALIMENTS vs STANDARD</div><div style="font-size:10px;color:#888">Édité le ${new Date().toLocaleDateString('fr-FR')}</div></div></div>
+    <div class="filtres">🔎 ${esc(batLbl)} · Standard = Simulation Déploiement de Bande / Programme nutritionnel par souche et âge</div>
     <div class="kpis">
       <div class="kpi-box"><div class="kpi-val">${Math.round(totalKgG).toLocaleString('fr-FR')}</div>Kg total</div>
       <div class="kpi-box"><div class="kpi-val">${totalSujetsG.toLocaleString('fr-FR')}</div>Sujets</div>
-      <div class="kpi-box"><div class="kpi-val">${totalSujetsG>0?(totalKgG/totalSujetsG).toFixed(2):'—'}</div>Kg/sujet moy.</div>
       <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${Math.round(totalCoutG).toLocaleString('fr-FR')}</div>Coût (FCFA)</div>
     </div>
     ${blocsHtml||'<p style="text-align:center;color:#999">Aucune donnée</p>'}
+    <div style="font-weight:700;font-size:12px;margin:14px 0 6px">📋 Directives</div>
+    ${directivesHtml||'<p style="color:#999;font-size:10px">Aucun écart notable.</p>'}
     <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'CONSO-ALIMENTS',new Date().toISOString().slice(0,10),Math.round(totalCoutG),new Date().toISOString().slice(0,10))}</div>
   </div></body></html>`;
   const w=window.open('','_blank','width=1000,height=750');
@@ -19145,36 +19208,23 @@ function startRapportAuto(){
   const cfg = getRapportConfig();
   if(!cfg.autoActif) return;
 
-  // Vérification toutes les minutes
-  const iv = setInterval(async()=>{
+  // ── Vérif + rattrapage ── comparaison "heure programmée dépassée aujourd'hui" au lieu
+  // d'une égalité stricte à la minute : un onglet en arrière-plan est throttlé par le
+  // navigateur et rate facilement la minute exacte → aucun rapport n'était jamais envoyé.
+  // Dédup par jour (par type), pas par minute : rattrape le rapport manqué dès que
+  // l'app est rouverte, au lieu de l'ignorer silencieusement jusqu'au lendemain.
+  async function tickRapportAuto(){
     const now = new Date();
     const hhmm = now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+    const todayStr = now.toISOString().slice(0,10);
     const dow = now.getDay(); // 0=dim, 1=lun...
     const dom = now.getDate();
-    const lastSent = localStorage.getItem('avico_rapport_last')||'';
-    const keyNow = now.toISOString().slice(0,16); // yyyy-mm-ddThh:mm
+    const lastDate = k => localStorage.getItem('avico_rapport_last_'+k)||'';
+    const marque = k => localStorage.setItem('avico_rapport_last_'+k, todayStr);
 
-    if(lastSent===keyNow) return; // déjà envoyé cette minute
-
-    let typeToSend = null;
-
-    // Rapport journalier
-    if(cfg.autoJour && cfg.heureJour===hhmm){
-      typeToSend = 'jour';
-    }
-    // Rapport hebdo (lundi matin)
-    if(cfg.autoSemaine && cfg.heureSemaine===hhmm && dow===1){
-      typeToSend = 'semaine';
-    }
-    // Rapport mensuel (1er du mois)
-    if(cfg.autoMois && cfg.heureMois===hhmm && dom===1){
-      typeToSend = 'mois';
-    }
-    // Rapport Copilote (quotidien) — traité séparément, texte différent, messagerie uniquement
-    let copiloteAEnvoyer = cfg.autoCopilote && cfg.heureCopilote===hhmm;
-
-    if(copiloteAEnvoyer){
-      localStorage.setItem('avico_rapport_last', keyNow);
+    // Rapport Copilote — quotidien, messagerie uniquement
+    if(cfg.autoCopilote && cfg.heureCopilote && hhmm>=cfg.heureCopilote && lastDate('copilote')!==todayStr){
+      marque('copilote');
       try{
         const texteCopilote = await genererRapportCopiloteTexte();
         if(cfg.messagerieActif!==false){
@@ -19183,11 +19233,15 @@ function startRapportAuto(){
         }
         toast('🤖 Rapport Copilote envoyé !');
       }catch(e){ console.warn('Envoi Copilote auto échoué :', e.message); }
-      return; // un seul type de rapport par minute
     }
 
+    let typeToSend = null;
+    if(cfg.autoJour && cfg.heureJour && hhmm>=cfg.heureJour && lastDate('jour')!==todayStr) typeToSend='jour';
+    else if(cfg.autoSemaine && cfg.heureSemaine && dow===1 && hhmm>=cfg.heureSemaine && lastDate('semaine')!==todayStr) typeToSend='semaine';
+    else if(cfg.autoMois && cfg.heureMois && dom===1 && hhmm>=cfg.heureMois && lastDate('mois')!==todayStr) typeToSend='mois';
+
     if(typeToSend){
-      localStorage.setItem('avico_rapport_last', keyNow);
+      marque(typeToSend);
       const data = await collectRapportData(typeToSend);
       const texte = genRapportTexte(data, 'whatsapp');
       const titres = {jour:'Rapport journalier', semaine:'Rapport hebdomadaire', mois:'Rapport mensuel'};
@@ -19203,7 +19257,10 @@ function startRapportAuto(){
       }
       toast('📤 Rapport '+titres[typeToSend]+' envoyé !');
     }
-  }, 60000); // check chaque minute
+  }
+
+  tickRapportAuto(); // rattrapage immédiat au démarrage/login, sans attendre le 1er tick
+  const iv = setInterval(tickRapportAuto, 60000);
 
   _rapportIntervals.push(iv);
 }
