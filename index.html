@@ -7817,7 +7817,7 @@ async function renderStocks(ca){
   }
   if(stocksCharts.cat){stocksCharts.cat.destroy();stocksCharts.cat=null;}
   if(stocksCharts.dep){stocksCharts.dep.destroy();stocksCharts.dep=null;}
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-boxes-stacked" style="color:var(--g2)"></i> État des stocks</div><div style="display:flex;gap:6px"><button class="btn btn-gh btn-sm" onclick="previewEtat('stocks')"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-gh btn-sm" onclick="printEtatPeriodique('stocks')"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Mouvement</button></div></div><div class="stock-page">
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-boxes-stacked" style="color:var(--g2)"></i> État des stocks</div><div style="display:flex;gap:6px"><button class="btn btn-gh btn-sm" onclick="previewEtat('stocks')"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-gh btn-sm" onclick="printEtatPeriodique('stocks')"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerEtatWhatsApp('stocks')"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Mouvement</button></div></div><div class="stock-page">
     <div style="font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><i class="fas fa-chart-pie" style="color:var(--g2)"></i> Tableau de bord</div>
     ${dashHtml}
     <div style="font-weight:700;font-size:13px;margin:18px 0 8px;display:flex;align-items:center;gap:6px"><i class="fas fa-list" style="color:var(--g2)"></i> Détail par catégorie</div>
@@ -11546,6 +11546,32 @@ async function renderCond(ca){
   const totCar   = sorted.reduce((a,s)=>a+s.cartons,0);
   const totPlt   = sorted.reduce((a,s)=>a+s.plateaux,0);
 
+  // ── État par calibre : stock temps réel + cumul sessions ──
+  const CAL_DEFS = [
+    {k:'petit',    lbl:'🟡 Petit',     col:'#eab308', pltRef:'CAL-PLT-P',  carRef:'CAL-CAR-P',  fCal:'cal_petit',    fPlt:'plt_petit'},
+    {k:'moyen',    lbl:'🟢 Moyen',     col:'#22c55e', pltRef:'CAL-PLT-M',  carRef:'CAL-CAR-M',  fCal:'cal_moyen',    fPlt:'plt_moyen'},
+    {k:'gros',     lbl:'🟠 Gros',      col:'#f97316', pltRef:'CAL-PLT-G',  carRef:'CAL-CAR-G',  fCal:'cal_gros',     fPlt:'plt_gros'},
+    {k:'tresGros', lbl:'🔴 Très gros', col:'#dc2626', pltRef:'CAL-PLT-TG', carRef:'CAL-CAR-TG', fCal:'cal_tres_gros',fPlt:'plt_tres_gros'}
+  ];
+  const totOeufsCal = CAL_DEFS.reduce((a,c)=>a+sorted.reduce((s2,s)=>s2+(s[c.fCal]||0),0),0);
+  const calRows = CAL_DEFS.map(c=>{
+    const pPlt=prods.find(p=>p.ref===c.pltRef), pCar=prods.find(p=>p.ref===c.carRef);
+    const stockPlt=pPlt?Math.round(stockTot[pPlt.id]||0):0, stockCar=pCar?Math.round(stockTot[pCar.id]||0):0;
+    const cumOeufs=sorted.reduce((s2,s)=>s2+(s[c.fCal]||0),0);
+    const cumPlt=sorted.reduce((s2,s)=>s2+(s[c.fPlt]||0),0);
+    const valStock=stockPlt*CALIBRE_TARIFS[c.k].prixPlateau+stockCar*CALIBRE_TARIFS[c.k].prixCarton;
+    const pct=totOeufsCal>0?(cumOeufs/totOeufsCal*100).toFixed(1):'0.0';
+    return `<tr>
+      <td><span class="badge" style="background:${c.col}22;color:${c.col};font-weight:700">${c.lbl}</span></td>
+      <td style="font-weight:700">${cumOeufs.toLocaleString()}</td>
+      <td>${pct}%</td>
+      <td>${cumPlt}</td>
+      <td><strong>${stockPlt}</strong> plt</td>
+      <td><strong>${stockCar}</strong> car</td>
+      <td style="font-weight:700;color:#166534">${valStock.toLocaleString('fr-FR')} F</td>
+    </tr>`;
+  }).join('');
+
   // Lots pondeuses pour le selecteur
   const layerLots = lots.filter(f => f.type === 'layer');
   const lotSelect = layerLots.map(f => `<option value="${f.id}">${f.nom}</option>`).join('');
@@ -11573,6 +11599,7 @@ async function renderCond(ca){
           <div style="display:flex;gap:6px">
             <button class="btn btn-gh btn-sm" onclick="afficherEtatInline('prodcond')"><i class="fas fa-eye"></i> Aperçu</button>
             <button class="btn btn-p btn-sm" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
+            <button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerEtatWhatsApp('prodcond')"><i class="fab fa-whatsapp"></i></button>
           </div>
         </div>
       </div>
@@ -11621,6 +11648,17 @@ async function renderCond(ca){
           <span>🥚 <strong>1 plateau</strong> = 30 œufs + 1 alvéole</span>
           <span>📦 <strong>1 carton</strong> = 12 plateaux = 360 œufs + 4 alvéoles de couverture (1/pile)</span>
           <span>💰 <strong>Unité de vente</strong> = carton</span>
+        </div>
+      </div>
+
+      <!-- ÉTAT PAR CALIBRE -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd">⚖️ État du conditionnement par calibre</div>
+        <div class="card-bd tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Calibre</th><th>Œufs cumulés</th><th>Part</th><th>Plateaux cumulés</th><th>Stock plateaux</th><th>Stock cartons</th><th>Valeur stock</th></tr></thead>
+            <tbody>${calRows}</tbody>
+          </table>
         </div>
       </div>
 
@@ -12695,7 +12733,7 @@ async function renderFinCharges(el,fin){
       +'<div style="font-size:14px;font-weight:700;margin-top:3px">'+fcfa(e[1])+'</div>'
       +'<div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+'</div></div>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
     +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
     +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
@@ -12818,6 +12856,25 @@ window.printChargeUnique=async function(id){
   const w=window.open('','_blank','width=800,height=750');
   if(!w){toast('Autoriser les pop-ups pour imprimer','err');return;}
   w.document.write(html);w.document.close();
+};
+
+// ── État des dépenses — envoi WhatsApp ──
+window.envoyerChargesEtatWhatsApp=async function(){
+  const[charges,lots]=await Promise.all([getAll(S.CHARGES),getAll(S.FLOCKS)]);
+  const lf=document.getElementById('filtreChargeLot')?.value||'';
+  const cf=document.getElementById('filtreChargeCat')?.value||'';
+  const lm={};lots.forEach(l=>lm[l.id]=l.nom||'Lot '+l.id);
+  const filtered=charges.filter(c=>(!lf||String(c.flockId||'')===lf)&&(!cf||c.categorie===cf));
+  const cfg=await getExploitationSettings();
+  const total=filtered.reduce((a,c)=>a+(c.montant||0),0);
+  const parCat={};filtered.forEach(c=>{const k=c.categorie||'autre';parCat[k]=(parCat[k]||0)+(c.montant||0);});
+  const catLignes=Object.entries(parCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>(CAT_LABELS[k]||k)+' : '+Math.round(v).toLocaleString('fr-FR')+' F ('+(total>0?(v/total*100).toFixed(1):0)+'%)').join('\n');
+  const texte='*📉 ÉTAT DES DÉPENSES*\n'+(cfg.nomExploitation||'Exploitation')+'\n━━━━━━━━━━━━━━━━\n'
+    +'Charges : '+filtered.length+'\nTotal : '+Math.round(total).toLocaleString('fr-FR')+' F\n\n'
+    +'*Répartition par catégorie*\n'+(catLignes||'—');
+  const num=cfg.whatsapp||prompt('Numéro WhatsApp (+225…) :');
+  if(!num){return;}
+  envoyerWhatsApp(texte,num);
 };
 
 // ── État des dépenses imprimable — respecte les filtres lot/catégorie actifs à l'écran ──
@@ -19346,6 +19403,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:var(--g2);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('production')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:var(--g1);border:1.5px solid var(--g3);border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('production')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('production')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19355,6 +19413,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#534AB7;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('stocks')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#534AB7;border:1.5px solid #c4b5fd;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('stocks')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('stocks')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19364,6 +19423,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#ea580c;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('appro')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#ea580c;border:1.5px solid #fdba74;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('appro')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('appro')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19373,6 +19433,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#059669;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('finance')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#059669;border:1.5px solid #86efac;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('finance')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('finance')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19382,6 +19443,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#b45309;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('commercial')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#b45309;border:1.5px solid #fcd34d;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('commercial')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('commercial')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19391,6 +19453,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#993556;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('gmao')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#993556;border:1.5px solid #fda4af;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('gmao')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('gmao')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19400,6 +19463,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:#0f766e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
           <button style="padding:11px 14px;background:#fff;color:#0f766e;border:1.5px solid #99f6e4;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('prodcond')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('prodcond')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -19409,6 +19473,7 @@ async function renderRapports(ca){
         <div style="padding:0 10px 12px;display:flex;gap:7px">
           <button style="flex:1;padding:11px 0;background:var(--g1);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('bilan')"><i class="fas fa-print"></i> Bilan complet</button>
           <button style="padding:11px 14px;background:#fff;color:var(--g1);border:1.5px solid var(--g3);border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('bilan')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('bilan')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
       </div>
 
@@ -20326,6 +20391,37 @@ window.refreshCondGlobalDashboard = async function(){
 };
 
 // ── Fonctions preview et impression d'états ──
+// ── Envoi d'un état par WhatsApp (conversion HTML → texte lisible) ──
+function htmlEtatVersTexte(html){
+  let t = html
+    .replace(/<style[\s\S]*?<\/style>/gi,'')
+    .replace(/<\/tr>/gi,'\n')
+    .replace(/<\/t[hd]>/gi,'  ')
+    .replace(/<t[hd][^>]*>/gi,'')
+    .replace(/<tr[^>]*>/gi,'')
+    .replace(/<table[^>]*>/gi,'\n')
+    .replace(/<\/table>/gi,'\n')
+    .replace(/<br\s*\/?>/gi,'\n')
+    .replace(/<\/(div|p|h[1-6])>/gi,'\n')
+    .replace(/<[^>]+>/g,'')
+    .replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&eacute;/g,'é').replace(/&egrave;/g,'è');
+  t = t.split('\n').map(l=>l.replace(/[ \t]+/g,' ').trim()).filter(l=>l.length>0).join('\n');
+  return t;
+}
+window.envoyerEtatWhatsApp=async function(type){
+  const dateMin = document.getElementById('condDateMin')?.value || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = document.getElementById('condDateMax')?.value || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = document.getElementById('condLotFilter')?.value || document.getElementById('rapLotFilter')?.value || '';
+  const cfg     = await getExploitationSettings();
+  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET'};
+  const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
+  const entete = '*'+(titres[type]||'ÉTAT')+'*\n'+(cfg.nomExploitation||'Exploitation')+'\nPériode : '+dateMin+' au '+dateMax+'\n━━━━━━━━━━━━━━━━\n';
+  const texte = entete + htmlEtatVersTexte(corps);
+  const num = cfg.whatsapp || prompt('Numéro WhatsApp (+225…) :');
+  if(!num){return;}
+  envoyerWhatsApp(texte,num);
+};
+
 window.previewEtat = function(type){ printEtatPeriodique(type, true); };
 
 // Filtres bâtiment/ligne — lus depuis la page Conditionnement (condBatFilter/condLigneFilter)
@@ -20393,6 +20489,7 @@ window.afficherEtatInline = async function(type){
       <span>${titres[type]||'État'} — ${dateMin} au ${dateMax}</span>
       <div style="display:flex;gap:6px">
         <button class="btn btn-sm btn-p" onclick="printEtatPeriodique('${type}')"><i class="fas fa-print"></i> Imprimer</button>
+        <button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerEtatWhatsApp('${type}')"><i class="fab fa-whatsapp"></i></button>
         <button class="btn btn-sm btn-gh" onclick="document.getElementById('etatInlineResult').innerHTML=''"><i class="fas fa-xmark"></i></button>
       </div>
     </div>
