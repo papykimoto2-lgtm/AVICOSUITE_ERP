@@ -7801,6 +7801,13 @@ async function renderStocks(ca){
     else if(!p.alerteDesactivee&&p.seuil>0&&q<p.seuil*1.5) faibles.push(p);
   }
   const catVals={};for(const p of prods){const v=(stockTot[p.id]||0)*(p.prix||0);catVals[p.categorie]=(catVals[p.categorie]||0)+v;}
+
+  // ── Diagnostic : articles dispersés sur plusieurs dépôts à la fois (anormal — chaque article a un dépôt affecté unique) ──
+  const dispersion=prods.map(p=>{
+    const lignes=deps.map(d=>({dep:d,qty:bal[`${p.id}_${d.id}`]||0})).filter(l=>Math.abs(l.qty)>0.01);
+    return {p,lignes};
+  }).filter(x=>x.lignes.length>1);
+
   const depInfo=deps.map(d=>{
     const depQ=Object.entries(bal).filter(([k])=>parseInt(k.split('_')[1])===d.id).reduce((a,[,v])=>a+Math.max(0,v),0);
     const depVal=prods.reduce((a,p)=>a+Math.max(0,bal[`${p.id}_${d.id}`]||0)*(p.prix||0),0);
@@ -7832,6 +7839,21 @@ async function renderStocks(ca){
       <div class="card-hd" style="background:linear-gradient(135deg,#fffbeb,#fff)"><span>🔔 Articles à surveiller (${critiques.length+faibles.length})</span></div>
       <div class="card-bd" style="display:flex;flex-direction:column;gap:8px">
         ${topAlertes.map(({p,q})=>{const al=stockEnAlerte(p,q);const pct=p.seuil>0?Math.min(100,q/p.seuil*100):0;return `<div style="display:flex;align-items:center;gap:10px;background:${al?'var(--red-bg)':'var(--amber-bg)'};border:1px solid ${al?'#fca5a5':'#fcd34d'};border-radius:8px;padding:8px 12px;flex-wrap:wrap"><i class="fas ${al?'fa-box-open':'fa-exclamation-triangle'}" style="color:${al?'var(--red)':'var(--amber-d)'}"></i><div style="flex:1;min-width:160px;font-size:12px"><strong>${esc(p.nom)}</strong> — ${q.toFixed(1)} ${p.unite} <span style="color:var(--text3)">/ seuil ${p.seuil}</span><div class="prog" style="width:130px;margin-top:3px"><div class="prog-fill" style="width:${pct}%;background:${al?'var(--red)':'var(--amber)'}"></div></div></div><button class="btn btn-sm btn-p" onclick="openMvtModal('entree',${p.id})">📥 Entrée</button></div>`;}).join('')}
+      </div>
+    </div>`:''}
+    ${dispersion.length?`<div class="card" style="border:1.5px solid #fca5a5">
+      <div class="card-hd" style="background:linear-gradient(135deg,#fef2f2,#fff)"><span>🚨 Articles dispersés sur plusieurs dépôts (${dispersion.length})</span><span style="font-size:11px;color:var(--text3);font-weight:400">Anormal — chaque article doit vivre dans un seul dépôt (son "Dépôt affecté")</span></div>
+      <div class="card-bd" style="display:flex;flex-direction:column;gap:8px">
+        ${dispersion.map(({p,lignes})=>{
+          const depAff=deps.find(d=>d.id===p.depotAffecteId);
+          const detail=lignes.map(l=>`<span class="badge b-r" style="font-size:10px">${esc(l.dep.nom)}${l.dep.id===p.depotAffecteId?' ✓':''}: ${l.qty.toFixed(1)} ${p.unite}</span>`).join(' ');
+          return `<div style="background:var(--red-bg);border:1px solid #fca5a5;border-radius:8px;padding:8px 12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+              <div style="font-size:12px"><strong>${esc(p.nom)}</strong> — ${p.ref||'—'}<div style="margin-top:4px">${detail}</div><div style="font-size:10px;color:var(--text3);margin-top:3px">Dépôt affecté : ${depAff?esc(depAff.nom):'<span style="color:var(--red)">non défini</span>'}</div></div>
+              <button class="btn btn-sm btn-p" onclick="regulariserDispersion(${p.id})"><i class="fas fa-wrench"></i> Régulariser</button>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
     </div>`:''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
@@ -7869,6 +7891,33 @@ async function renderStocks(ca){
   const ctxDep=document.getElementById('stocksDepChart');
   if(ctxDep&&depWithVal.length) stocksCharts.dep=new Chart(ctxDep,{type:'bar',data:{labels:depWithVal.map(d=>d.dep.nom),datasets:[{data:depWithVal.map(d=>Math.round(d.depVal/1000)),backgroundColor:'rgba(45,106,79,.6)',borderColor:'#2d6a4f',borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+'K'}},x:{grid:{display:false}}}}});
 }
+
+// ── Régularisation : consolide un article dispersé sur plusieurs dépôts vers son "Dépôt affecté" ──
+window.regulariserDispersion=async function(produitId){
+  const[prods,deps]=await Promise.all([getAll(S.PRODUITS),getAll(S.DEPOTS)]);
+  const p=prods.find(x=>x.id===produitId);if(!p){toast('Produit introuvable','err');return;}
+  if(!p.depotAffecteId){toast('⛔ Définissez d\'abord le "Dépôt affecté" de ce produit dans Catalogue produits','err');return;}
+  const bal=await getBalance();
+  const autres=deps.filter(d=>d.id!==p.depotAffecteId).map(d=>({dep:d,qty:bal[`${p.id}_${d.id}`]||0})).filter(l=>Math.abs(l.qty)>0.01);
+  if(!autres.length){toast('Aucun écart à régulariser pour cet article');return;}
+  const detail=autres.map(l=>'• '+l.dep.nom+' : '+l.qty.toFixed(1)+' '+p.unite).join('\n');
+  if(!confirm('Régulariser "'+p.nom+'" ?\nConsolidation vers le dépôt affecté :\n'+detail)) return;
+  const depAffNom=deps.find(d=>d.id===p.depotAffecteId)?.nom||'—';
+  try{
+    for(const l of autres){
+      await regMvt({
+        type:'transfert', produitId:p.id,
+        depotSrcId: l.qty>0 ? l.dep.id : p.depotAffecteId,
+        depotDestId: l.qty>0 ? p.depotAffecteId : l.dep.id,
+        quantite: Math.abs(l.qty), unite:p.unite, prixUnit:p.prix||0,
+        ref:'REG-DEPOT-'+Date.now(), motif:'Régularisation dispersion multi-dépôt — consolidation vers "'+depAffNom+'"',
+        date:new Date().toISOString().slice(0,10), cadre:'inventaire', force:true
+      });
+    }
+  }catch(e){ toast('⛔ '+e.message,'err'); return; }
+  toast('✅ "'+p.nom+'" consolidé dans '+depAffNom);
+  await renderStocks(document.getElementById('contentArea'));
+};
 
 // ══ MOUVEMENTS ══
 let mvtEditId=null;
@@ -8324,11 +8373,17 @@ async function renderInventaires(ca){
   const rows=sorted.map(i=>{
     const dep=deps.find(d=>d.id===i.depotId);
     const ecartVal=(i.lignes||[]).reduce((a,l)=>a+(l.compte-l.theorique)*(l.prixUnit||0),0);
+    const lignesEcart=(i.lignes||[]).filter(l=>Math.round((l.compte-l.theorique)*100)!==0);
+    const nbJustif=lignesEcart.filter(l=>(l.justification||'').trim()).length;
+    const justifBadge=lignesEcart.length===0?'<span style="color:var(--text3);font-size:10px">—</span>'
+      :nbJustif===lignesEcart.length?`<span class="badge b-g" style="font-size:10px">✅ ${nbJustif}/${lignesEcart.length}</span>`
+      :`<span class="badge b-r" style="font-size:10px">⚠ ${nbJustif}/${lignesEcart.length}</span>`;
     return `<tr><td><strong>${esc(i.ref||'—')}</strong><br><span style="font-size:10px;color:var(--text3)">${i.date||'—'}</span></td>
       <td>${esc(dep?dep.nom:'—')}</td>
       <td><span class="badge ${statutCls[i.statut]||'b-gr'}">${statutLbl[i.statut]||i.statut}</span></td>
       <td>${(i.lignes||[]).length} réf.</td>
       <td style="font-weight:700;color:${ecartVal<0?'var(--red)':ecartVal>0?'var(--g2)':'inherit'}">${ecartVal>0?'+':''}${Math.round(ecartVal).toLocaleString()} F</td>
+      <td>${justifBadge}</td>
       <td style="font-size:10px;color:var(--text3)">${esc(i.auteur||'—')}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-xs btn-gh" title="Aperçu" onclick="invApercu(${i.id})"><i class="fas fa-eye"></i></button>
@@ -8337,8 +8392,8 @@ async function renderInventaires(ca){
       </td></tr>`;
   }).join('');
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-clipboard-check" style="color:var(--g2)"></i> Inventaires</div><button class="btn btn-p btn-sm" onclick="openInvModal()"><i class="fas fa-plus"></i> Nouvel inventaire</button></div><div class="stock-page">
-    <div class="card"><div class="card-hd">Sessions d'inventaire (${sorted.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Dépôt</th><th>Statut</th><th>Réf.</th><th>Écart valorisé</th><th>Auteur</th><th></th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Aucun inventaire réalisé</td></tr>'}</tbody></table></div></div>
+    <div class="card"><div class="card-hd">Sessions d'inventaire (${sorted.length})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Dépôt</th><th>Statut</th><th>Réf.</th><th>Écart valorisé</th><th>Écarts justifiés</th><th>Auteur</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucun inventaire réalisé</td></tr>'}</tbody></table></div></div>
   </div>`;
 }
 window.renderInventaires=renderInventaires;
@@ -8365,18 +8420,26 @@ window.invGenererLignes=async function(){
 };
 function renderInvSaisie(){
   if(!invDraft) return;
-  const rows=invDraft.lignes.map((l,idx)=>`<tr><td>${esc(l.nom)}</td><td style="text-align:right;color:var(--text3)">${l.theorique} ${l.unite||''}</td>
+  const rows=invDraft.lignes.map((l,idx)=>{
+    const ecart0=Math.round((l.compte-l.theorique)*100)/100;
+    return `<tr><td>${esc(l.nom)}</td><td style="text-align:right;color:var(--text3)">${l.theorique} ${l.unite||''}</td>
     <td style="text-align:right"><input type="number" step="0.01" value="${l.compte}" style="width:90px;text-align:right" oninput="invSetCompte(${idx},this.value)" onchange="invSetCompte(${idx},this.value)"></td>
-    <td id="invEcart${idx}" style="text-align:right;font-weight:700;color:${l.compte-l.theorique<0?'var(--red)':l.compte-l.theorique>0?'var(--g2)':'inherit'}">${(l.compte-l.theorique)>0?'+':''}${(Math.round((l.compte-l.theorique)*100)/100)} ${l.unite||''}</td>
-    <td id="invVal${idx}" style="text-align:right;color:var(--text3)">${Math.round((l.compte-l.theorique)*(l.prixUnit||0)).toLocaleString()} F</td></tr>`).join('');
+    <td id="invEcart${idx}" style="text-align:right;font-weight:700;color:${ecart0<0?'var(--red)':ecart0>0?'var(--g2)':'inherit'}">${ecart0>0?'+':''}${ecart0} ${l.unite||''}</td>
+    <td id="invVal${idx}" style="text-align:right;color:var(--text3)">${Math.round(ecart0*(l.prixUnit||0)).toLocaleString()} F</td>
+    <td id="invJustifWrap${idx}">${ecart0!==0?`<input type="text" placeholder="Motif de l'écart *" value="${esc(l.justification||'')}" style="width:180px" oninput="invSetJustif(${idx},this.value)" onchange="invSetJustif(${idx},this.value)">`:'<span style="color:var(--text3);font-size:11px">—</span>'}</td></tr>`;
+  }).join('');
   document.getElementById('invGenBody').innerHTML=`
-    <div class="tbl-wrap" style="max-height:340px;overflow-y:auto"><table class="tbl"><thead><tr><th>Produit</th><th style="text-align:right">Théorique</th><th style="text-align:right">Compté *</th><th style="text-align:right">Écart</th><th style="text-align:right">Valorisation écart</th></tr></thead><tbody>${rows||'<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucun produit pour ce dépôt</td></tr>'}</tbody></table></div>
+    <div class="tbl-wrap" style="max-height:340px;overflow-y:auto"><table class="tbl"><thead><tr><th>Produit</th><th style="text-align:right">Théorique</th><th style="text-align:right">Compté *</th><th style="text-align:right">Écart</th><th style="text-align:right">Valorisation écart</th><th>Justification</th></tr></thead><tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3)">Aucun produit pour ce dépôt</td></tr>'}</tbody></table></div>
     <div class="modal-footer" style="margin-top:10px">
       <button class="btn btn-s" onclick="closeOverlay('mInvGen')">Annuler</button>
       <button class="btn btn-gh" onclick="saveInvDraft()"><i class="fas fa-save"></i> Enregistrer brouillon</button>
       <button class="btn btn-p" onclick="validerInv()"><i class="fas fa-check-double"></i> Valider l'inventaire</button>
     </div>`;
 }
+window.invSetJustif=function(idx,val){
+  if(!invDraft) return;
+  invDraft.lignes[idx].justification=val;
+};
 window.invSetCompte=function(idx,val){
   if(!invDraft) return;
   invDraft.lignes[idx].compte=parseFloat(val)||0;
@@ -8384,6 +8447,10 @@ window.invSetCompte=function(idx,val){
   const ecartCell=document.getElementById('invEcart'+idx),valCell=document.getElementById('invVal'+idx);
   if(ecartCell){ ecartCell.textContent=(ecart>0?'+':'')+ecart+' '+(l.unite||''); ecartCell.style.color=ecart<0?'var(--red)':ecart>0?'var(--g2)':'inherit'; }
   if(valCell){ const v=Math.round(ecart*(l.prixUnit||0)); valCell.textContent=v.toLocaleString()+' F'; }
+  const justifWrap=document.getElementById('invJustifWrap'+idx);
+  if(justifWrap) justifWrap.innerHTML = ecart!==0
+    ? `<input type="text" placeholder="Motif de l'écart *" value="${esc(l.justification||'')}" style="width:180px" oninput="invSetJustif(${idx},this.value)" onchange="invSetJustif(${idx},this.value)">`
+    : '<span style="color:var(--text3);font-size:11px">—</span>';
 };
 window.saveInvDraft=async function(){
   if(!invDraft||!invDraft.lignes.length){toast('Aucune ligne à enregistrer','err');return;}
@@ -8396,6 +8463,8 @@ window.saveInvDraft=async function(){
 // ── Validation : verrouille la session et génère les mouvements de correction (cadre inventaire) ──
 window.validerInv=async function(){
   if(!invDraft||!invDraft.lignes.length){toast('Aucune ligne à valider','err');return;}
+  const sansJustif=invDraft.lignes.filter(l=>Math.round((l.compte-l.theorique)*100)!==0 && !(l.justification||'').trim());
+  if(sansJustif.length){toast('⛔ Justification requise pour '+sansJustif.length+' écart(s) : '+sansJustif.slice(0,3).map(l=>l.nom).join(', ')+(sansJustif.length>3?'…':''),'err');return;}
   if(!confirm('Valider cet inventaire ?\nLes écarts seront corrigés par des mouvements de stock automatiques. Cette action est définitive.')) return;
   if(!invDraft.ref) invDraft.ref=await invNumero(invDraft.date);
   try{
@@ -8406,7 +8475,7 @@ window.validerInv=async function(){
         type: ecart>0?'entree':'sortie', produitId:l.produitId,
         depotSrcId: ecart<0?invDraft.depotId:null, depotDestId: ecart>0?invDraft.depotId:null,
         quantite: Math.abs(ecart), unite:l.unite, prixUnit:l.prixUnit,
-        ref: invDraft.ref, motif:`Régularisation inventaire ${invDraft.ref}`, date:invDraft.date,
+        ref: invDraft.ref, motif:`Régularisation inventaire ${invDraft.ref} — ${l.justification||''}`, date:invDraft.date,
         cadre:'inventaire', force:true
       });
     }
@@ -8448,7 +8517,7 @@ async function buildInvHtml(id){
     const ecart=Math.round((l.compte-l.theorique)*100)/100;
     const valTheo=l.theorique*(l.prixUnit||0),valCompte=l.compte*(l.prixUnit||0),valEcart=ecart*(l.prixUnit||0);
     totTheo+=valTheo;totCompte+=valCompte;totEcart+=valEcart;
-    return `<tr style="${ecart!==0?'background:#fffbeb':''}"><td>${esc(l.nom)}</td><td style="text-align:right">${l.theorique} ${l.unite||''}</td><td style="text-align:right;font-weight:700">${l.compte} ${l.unite||''}</td><td style="text-align:right;color:${ecart<0?'#c1121f':ecart>0?'#059669':'#888'}">${ecart>0?'+':''}${ecart} ${l.unite||''}</td><td style="text-align:right">${Math.round(valTheo).toLocaleString()}</td><td style="text-align:right;font-weight:700">${Math.round(valCompte).toLocaleString()}</td><td style="text-align:right;color:${valEcart<0?'#c1121f':valEcart>0?'#059669':'#888'}">${valEcart>0?'+':''}${Math.round(valEcart).toLocaleString()}</td></tr>`;
+    return `<tr style="${ecart!==0?'background:#fffbeb':''}"><td>${esc(l.nom)}</td><td style="text-align:right">${l.theorique} ${l.unite||''}</td><td style="text-align:right;font-weight:700">${l.compte} ${l.unite||''}</td><td style="text-align:right;color:${ecart<0?'#c1121f':ecart>0?'#059669':'#888'}">${ecart>0?'+':''}${ecart} ${l.unite||''}</td><td style="text-align:right">${Math.round(valTheo).toLocaleString()}</td><td style="text-align:right;font-weight:700">${Math.round(valCompte).toLocaleString()}</td><td style="text-align:right;color:${valEcart<0?'#c1121f':valEcart>0?'#059669':'#888'}">${valEcart>0?'+':''}${Math.round(valEcart).toLocaleString()}</td><td style="font-size:10px">${ecart!==0?esc(l.justification||'—'):''}</td></tr>`;
   }).join('');
   const nbEcarts=(i.lignes||[]).filter(l=>Math.round((l.compte-l.theorique)*100)!==0).length;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${i.ref}</title><style>
@@ -8484,9 +8553,9 @@ async function buildInvHtml(id){
       <div class="kpi-box"><div class="kpi-val">${Math.round(totTheo).toLocaleString()}</div>Stock valorisé théorique (F)</div>
       <div class="kpi-box"><div class="kpi-val">${Math.round(totCompte).toLocaleString()}</div>Stock valorisé compté (F)</div>
     </div>
-    <table><thead><tr><th>Produit</th><th style="text-align:right">Théorique</th><th style="text-align:right">Compté</th><th style="text-align:right">Écart (qté)</th><th style="text-align:right">Val. théorique</th><th style="text-align:right">Val. comptée</th><th style="text-align:right">Écart valorisé</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
-    <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${Math.round(totTheo).toLocaleString()}</td><td style="text-align:right">${Math.round(totCompte).toLocaleString()}</td><td style="text-align:right;color:${totEcart<0?'#c1121f':'#059669'}">${totEcart>0?'+':''}${Math.round(totEcart).toLocaleString()}</td></tr></tfoot>
+    <table><thead><tr><th>Produit</th><th style="text-align:right">Théorique</th><th style="text-align:right">Compté</th><th style="text-align:right">Écart (qté)</th><th style="text-align:right">Val. théorique</th><th style="text-align:right">Val. comptée</th><th style="text-align:right">Écart valorisé</th><th>Justification</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:#999">Aucune ligne</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${Math.round(totTheo).toLocaleString()}</td><td style="text-align:right">${Math.round(totCompte).toLocaleString()}</td><td style="text-align:right;color:${totEcart<0?'#c1121f':'#059669'}">${totEcart>0?'+':''}${Math.round(totEcart).toLocaleString()}</td><td></td></tr></tfoot>
     </table>
     <div style="display:flex;justify-content:flex-end;margin-top:10px">${buildSecurityQR(cfg,'INVENTAIRE',i.ref,Math.round(totCompte),i.date)}</div>
     <div class="sig"><div>Responsable dépôt</div><div>Compteur</div><div>Validation direction</div></div>
