@@ -9531,6 +9531,7 @@ async function renderReservations(ca){
       <td style="white-space:nowrap">
         <button class="btn btn-xs btn-gh" onclick="apercuReservation(${r.id})" title="Aperçu"><i class="fas fa-eye"></i></button>
         <button class="btn btn-xs btn-gh" onclick="imprimerReservation(${r.id})" title="Imprimer"><i class="fas fa-print"></i></button>
+        ${c&&c.tel?`<button class="btn btn-xs btn-gh" style="color:#25D366" onclick="envoyerReservationWhatsApp(${r.id})" title="Envoyer au client par WhatsApp"><i class="fab fa-whatsapp"></i></button>`:''}
         ${r.statutEff==='active'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier"><i class="fas fa-pen"></i></button>
         <button class="btn btn-xs" style="background:#dcfce7;color:#166534" onclick="convertirReservationEnCommande(${r.id})" title="Convertir en commande ferme"><i class="fas fa-right-left"></i></button>
         <button class="btn-del" onclick="annulerReservation(${r.id})" title="Annuler"><i class="fas fa-ban"></i></button>`:''}
@@ -9686,6 +9687,24 @@ async function buildReservationHtml(id){
 }
 window.apercuReservation = async function(id){ const html=await buildReservationHtml(id); if(!html){toast('Introuvable','err');return;} const w=window.open('','_blank','width=800,height=750'); if(!w){toast('Autoriser les pop-ups','err');return;} w.document.write(html);w.document.close(); };
 window.imprimerReservation = window.apercuReservation;
+
+// ── Envoi bon de réservation au client par WhatsApp (numéro du client, pas des destinataires internes) ──
+window.envoyerReservationWhatsApp=async function(id){
+  const[resas,clients,cfg]=await Promise.all([getAll(S.RESERVATIONS),getAll(S.CLIENTS),getExploitationSettings()]);
+  const r=resas.find(x=>x.id===id);if(!r){toast('Réservation introuvable','err');return;}
+  const c=clients.find(x=>x.id===r.clientId);
+  if(!c||!c.tel){toast('⛔ Aucun numéro de téléphone pour ce client','err');return;}
+  const statutEff=statutEffectifResa(r);
+  const total=(r.lignes||[]).reduce((a,l)=>a+l.qte*(l.prixUnit||0),0);
+  const lignesTxt=(r.lignes||[]).map(l=>'• '+l.designation+(l.calibre&&CALIBRE_TARIFS[l.calibre]?' ('+CALIBRE_TARIFS[l.calibre].label+')':'')+' × '+l.qte+' — '+Math.round(l.qte*(l.prixUnit||0)).toLocaleString('fr-FR')+' F').join('\n');
+  const texte='📋 *BON DE RÉSERVATION*\n'+(r.ref||'')+'\n'+(cfg.nomExploitation||'')+'\n━━━━━━━━━━━━━━━━\n'
+    +'Bonjour '+(c.nom||'')+',\n\nVotre réservation :\n'+lignesTxt+'\n\n'
+    +'Total estimé : *'+Math.round(total).toLocaleString('fr-FR')+' F*\n'
+    +'Valable jusqu\'au : '+(r.dateExpiration||'—')+'\n'
+    +'Statut : '+(RESA_STATUT_LABEL[statutEff]||statutEff)+'\n\n'
+    +'Prix et disponibilités confirmés à la commande ferme.';
+  envoyerWhatsApp(texte,c.tel);
+};
 
 // ══ LIVRAISON — tableau de bord + historique d'enlèvement (Distribution) ══
 let livrDistDateMin=null, livrDistDateMax=null, livrDistVue='flat';
@@ -9892,6 +9911,23 @@ window.delClient=async(id)=>{
   await renderClients(document.getElementById('contentArea'));
 };
 
+// ── Envoi WhatsApp au client — commande (résumé adapté au statut + réf. BL/Facture si dispo) ──
+window.envoyerCommandeWhatsApp=async function(id){
+  const[sales,clients,cfg]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getExploitationSettings()]);
+  const s=sales.find(x=>x.id===id);if(!s){toast('Commande introuvable','err');return;}
+  const c=clients.find(x=>x.id===s.clientId);
+  if(!c||!c.tel){toast('⛔ Aucun numéro de téléphone pour ce client','err');return;}
+  const lignesTxt=(s.lignes||[]).map(l=>'• '+(l.designation||'')+' × '+(l.qte||0)+' — '+Math.round((l.qte||0)*(l.prixUnit||0)).toLocaleString('fr-FR')+' F').join('\n')||'—';
+  const docRef=s.numFacture?'\nFacture : '+s.numFacture:(s.blRef?'\nBon de livraison : '+s.blRef:'');
+  const texte='🛒 *COMMANDE '+(s.ref||'')+'*\n'+(cfg.nomExploitation||'')+'\n━━━━━━━━━━━━━━━━\n'
+    +'Bonjour '+(c.nom||'')+',\n\n'+lignesTxt+'\n\n'
+    +'Total HT : *'+Math.round(s.totalHT||0).toLocaleString('fr-FR')+' F*\n'
+    +'Statut : '+(SALE_STATUT_LABEL[s.statut]||s.statut)
+    +(s.dateEcheance?'\nÉchéance paiement : '+s.dateEcheance:'')
+    +docRef;
+  envoyerWhatsApp(texte,c.tel);
+};
+
 // ══ COMMANDES CLIENTS ══
 async function renderCommandes(ca){
   const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
@@ -9915,10 +9951,11 @@ async function renderCommandes(ca){
         ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
         ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
         ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
-        ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
+        ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> ${c&&c.tel?`<button class="btn btn-sm btn-gh" style="color:#25D366" onclick="envoyerBLWhatsApp(${s.id})" title="Envoyer BL par WhatsApp"><i class="fab fa-whatsapp"></i></button> `:''}`:''}
+        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> ${c&&c.tel?`<button class="btn btn-sm btn-gh" style="color:#25D366" onclick="envoyerFactureWhatsApp(${s.id})" title="Envoyer facture par WhatsApp"><i class="fab fa-whatsapp"></i></button> `:''}`:''}
         ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
         <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
+        <button class="btn btn-sm btn-gh" style="color:#25D366" onclick="envoyerCommandeWhatsApp(${s.id})" title="Envoyer au client par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         ${canDelete('commandes')?`<button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>`:''}
       </td>
     </tr>`;
@@ -11685,6 +11722,7 @@ async function renderCond(ca){
     {k:'tresGros', lbl:'🔴 Très gros', col:'#dc2626', pltRef:'CAL-PLT-TG', carRef:'CAL-CAR-TG', fCal:'cal_tres_gros',fPlt:'plt_tres_gros',fCar:'car_tres_gros'}
   ];
   const totOeufsCal = CAL_DEFS.reduce((a,c)=>a+sortedFiltered.reduce((s2,s)=>s2+(s[c.fCal]||0),0),0);
+  let calTotOeufs=0,calTotPlt=0,calTotCar=0,calTotStockPlt=0,calTotStockCar=0,calTotValeur=0;
   const calRows = CAL_DEFS.map(c=>{
     const pPlt=prods.find(p=>p.ref===c.pltRef), pCar=prods.find(p=>p.ref===c.carRef);
     const stockPlt=pPlt?Math.round(stockTot[pPlt.id]||0):0, stockCar=pCar?Math.round(stockTot[pCar.id]||0):0;
@@ -11693,6 +11731,7 @@ async function renderCond(ca){
     const cumCar=sortedFiltered.reduce((s2,s)=>s2+(s[c.fCar]||0),0);
     const valStock=stockPlt*CALIBRE_TARIFS[c.k].prixPlateau+stockCar*CALIBRE_TARIFS[c.k].prixCarton;
     const pct=totOeufsCal>0?(cumOeufs/totOeufsCal*100).toFixed(1):'0.0';
+    calTotOeufs+=cumOeufs; calTotPlt+=cumPlt; calTotCar+=cumCar; calTotStockPlt+=stockPlt; calTotStockCar+=stockCar; calTotValeur+=valStock;
     return `<tr>
       <td><span class="badge" style="background:${c.col}22;color:${c.col};font-weight:700">${c.lbl}</span></td>
       <td style="font-weight:700">${cumOeufs.toLocaleString()}</td>
@@ -11703,7 +11742,16 @@ async function renderCond(ca){
       <td><strong>${stockCar}</strong> car</td>
       <td style="font-weight:700;color:#166534">${valStock.toLocaleString('fr-FR')} F</td>
     </tr>`;
-  }).join('');
+  }).join('') + `<tr style="background:#f6f9f6;font-weight:700;border-top:2px solid var(--border)">
+    <td>TOTAL</td>
+    <td>${calTotOeufs.toLocaleString()}</td>
+    <td>100%</td>
+    <td>${calTotPlt}</td>
+    <td>${calTotCar}</td>
+    <td>${calTotStockPlt} plt</td>
+    <td>${calTotStockCar} car</td>
+    <td style="color:#166534">${calTotValeur.toLocaleString('fr-FR')} F</td>
+  </tr>`;
 
   // Lots pondeuses pour le selecteur
   const layerLots = lots.filter(f => f.type === 'layer');
@@ -15866,6 +15914,39 @@ function buildAndPrintFacture(s, c, cfg){
   if(!w){ toast('Autoriser les pop-ups pour imprimer','err'); return; }
   w.document.write(html); w.document.close();
 }
+
+// ── Envoi BL / Facture au client par WhatsApp (résumé texte) ──
+window.envoyerBLWhatsApp=async function(id){
+  const[sales,clients,cfg]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getExploitationSettings()]);
+  const s=sales.find(x=>x.id===id);if(!s){toast('Vente introuvable','err');return;}
+  const c=clients.find(x=>x.id===s.clientId);
+  if(!c||!c.tel){toast('⛔ Aucun numéro de téléphone pour ce client','err');return;}
+  const lignes=(s.lignes&&s.lignes.length?s.lignes:[{designation:s.produit||'Produit',qte:s.qty||0,unite:'u'}]);
+  const lignesTxt=lignes.map(l=>'• '+(l.designation||'')+' × '+(l.qte||0)+' '+(l.unite||'')).join('\n');
+  const texte='🚚 *BON DE LIVRAISON '+(s.numBL||s.ref||'')+'*\n'+(cfg.nomExploitation||'')+'\n━━━━━━━━━━━━━━━━\n'
+    +'Bonjour '+(c.nom||'')+',\n\nLivraison :\n'+lignesTxt+'\n\n'
+    +'Date : '+(s.dateLiv||s.date||'—')
+    +(s.numFacture?'\nFacture réf. : '+s.numFacture:'\nFacture à établir');
+  envoyerWhatsApp(texte,c.tel);
+};
+window.envoyerFactureWhatsApp=async function(id){
+  const[sales,clients,cfg]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getExploitationSettings()]);
+  const s=sales.find(x=>x.id===id);if(!s){toast('Vente introuvable','err');return;}
+  const c=clients.find(x=>x.id===s.clientId);
+  if(!c||!c.tel){toast('⛔ Aucun numéro de téléphone pour ce client','err');return;}
+  const totalTTC=s.totalTTC||s.totalHT||0;
+  const paye=(s.paiements||[]).reduce((a,p)=>a+(p.montant||0),0);
+  const reste=Math.max(0,totalTTC-paye);
+  const lignes=(s.lignes&&s.lignes.length?s.lignes:[{designation:s.produit||'Produit',qte:s.qty||0,prixUnit:s.prixUnit||0}]);
+  const lignesTxt=lignes.map(l=>'• '+(l.designation||'')+' × '+(l.qte||0)+' — '+Math.round((l.qte||0)*(l.prixUnit||0)).toLocaleString('fr-FR')+' F').join('\n');
+  const texte='🧾 *FACTURE '+(s.numFacture||s.ref||'')+'*\n'+(cfg.nomExploitation||'')+'\n━━━━━━━━━━━━━━━━\n'
+    +'Bonjour '+(c.nom||'')+',\n\n'+lignesTxt+'\n\n'
+    +'Total TTC : *'+Math.round(totalTTC).toLocaleString('fr-FR')+' F*\n'
+    +(paye>0?'Déjà réglé : '+Math.round(paye).toLocaleString('fr-FR')+' F\n':'')
+    +(reste>0?'Reste à payer : *'+Math.round(reste).toLocaleString('fr-FR')+' F*':'✅ Facture soldée')
+    +(s.dateEcheance?'\nÉchéance : '+s.dateEcheance:'');
+  envoyerWhatsApp(texte,c.tel);
+};
 
 window.printFacture = async function(id){
   var sales   = await getAll(S.SALES);
