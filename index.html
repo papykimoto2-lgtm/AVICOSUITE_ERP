@@ -12670,6 +12670,7 @@ async function renderFinCharges(el,fin){
     var actions=c.paieRef?'<span style="color:var(--text3);font-size:10px">Voir RH &gt; Bulletins</span>':(
       '<button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> '
       +'<button class="btn btn-xs btn-gh" onclick="printChargeUnique('+c.id+')" title="Imprimer"><i class="fas fa-print"></i></button> '
+      +'<button class="btn btn-xs btn-gh" style="color:#25D366" onclick="envoyerChargeWhatsApp('+c.id+')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button> '
       +(canRepond?('<button class="btn btn-xs btn-gh" style="color:#059669" onclick="validerCharge('+c.id+')" title="Valider"><i class="fas fa-check"></i></button> '
         +'<button class="btn btn-xs btn-gh" style="color:var(--red)" onclick="rejeterCharge('+c.id+')" title="Rejeter"><i class="fas fa-times"></i></button> ')
         :(!v||v.statut==='rejetee')?'<button class="btn btn-xs btn-gh" title="Envoyer pour validation" onclick="ouvrirEnvoiValidationCharge('+c.id+')"><i class="fas fa-paper-plane"></i></button> ':'')
@@ -12746,6 +12747,28 @@ window.rejeterCharge=async function(id){
   await updRec(S.CHARGES,id,{...c,validation:{...c.validation,statut:'rejetee',repondantId:currentUser.id,repondantNom:currentUser.nom,dateReponse:new Date().toISOString(),commentaire}});
   if(c.validation.expediteurId){const convId=await msgGetOrCreateDirectConversation(c.validation.expediteurId);await envoyerMessageInterne(convId,'❌ Charge rejetée : '+(c.libelle||'')+' · '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F.'+(commentaire?' Motif : '+commentaire:''));}
   toast('Charge rejetée');await renderFinance(document.getElementById('contentArea'));
+};
+
+// ── Envoi d'une charge par WhatsApp ──
+window.envoyerChargeWhatsApp=async function(id){
+  const[charges,lots,cfg]=await Promise.all([getAll(S.CHARGES),getAll(S.FLOCKS),getExploitationSettings()]);
+  const c=charges.find(x=>x.id===id);if(!c){toast('Charge introuvable','err');return;}
+  const lotNom=c.flockId?(lots.find(l=>l.id===c.flockId)?.nom||'Lot '+c.flockId):'Global';
+  const v=c.validation;
+  const statutLbl=!v?'Non soumise':v.statut==='attente'?'En attente de validation':v.statut==='validee'?'Validée':'Rejetée';
+  const texte='📉 *BON DE CHARGE*\n'
+    +'Date : '+(c.date||'—')+'\n'
+    +'Lot : '+lotNom+'\n'
+    +'Catégorie : '+(CAT_LABELS[c.categorie]||c.categorie||'—')+'\n'
+    +'Libellé : '+(c.libelle||'—')+'\n'
+    +(c.qte?'Qté : '+c.qte+' '+(c.unite||'')+'\n':'')
+    +(c.unitCost?'P.U. : '+Math.round(c.unitCost).toLocaleString('fr-FR')+' F\n':'')
+    +'Montant : '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F\n'
+    +'Statut : '+statutLbl+'\n'
+    +'— '+(cfg.nomExploitation||'Exploitation');
+  const num=cfg.whatsapp||prompt('Numéro WhatsApp (+225…) :');
+  if(!num){return;}
+  envoyerWhatsApp(texte,num);
 };
 
 // ── Impression d'une charge unique (bon à signer) ──
