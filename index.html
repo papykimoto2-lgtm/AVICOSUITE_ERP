@@ -11586,10 +11586,10 @@ async function renderCond(ca){
 
   // ── État par calibre : stock temps réel + cumul sessions ──
   const CAL_DEFS = [
-    {k:'petit',    lbl:'🟡 Petit',     col:'#eab308', pltRef:'CAL-PLT-P',  carRef:'CAL-CAR-P',  fCal:'cal_petit',    fPlt:'plt_petit'},
-    {k:'moyen',    lbl:'🟢 Moyen',     col:'#22c55e', pltRef:'CAL-PLT-M',  carRef:'CAL-CAR-M',  fCal:'cal_moyen',    fPlt:'plt_moyen'},
-    {k:'gros',     lbl:'🟠 Gros',      col:'#f97316', pltRef:'CAL-PLT-G',  carRef:'CAL-CAR-G',  fCal:'cal_gros',     fPlt:'plt_gros'},
-    {k:'tresGros', lbl:'🔴 Très gros', col:'#dc2626', pltRef:'CAL-PLT-TG', carRef:'CAL-CAR-TG', fCal:'cal_tres_gros',fPlt:'plt_tres_gros'}
+    {k:'petit',    lbl:'🟡 Petit',     col:'#eab308', pltRef:'CAL-PLT-P',  carRef:'CAL-CAR-P',  fCal:'cal_petit',    fPlt:'plt_petit',    fCar:'car_petit'},
+    {k:'moyen',    lbl:'🟢 Moyen',     col:'#22c55e', pltRef:'CAL-PLT-M',  carRef:'CAL-CAR-M',  fCal:'cal_moyen',    fPlt:'plt_moyen',    fCar:'car_moyen'},
+    {k:'gros',     lbl:'🟠 Gros',      col:'#f97316', pltRef:'CAL-PLT-G',  carRef:'CAL-CAR-G',  fCal:'cal_gros',     fPlt:'plt_gros',     fCar:'car_gros'},
+    {k:'tresGros', lbl:'🔴 Très gros', col:'#dc2626', pltRef:'CAL-PLT-TG', carRef:'CAL-CAR-TG', fCal:'cal_tres_gros',fPlt:'plt_tres_gros',fCar:'car_tres_gros'}
   ];
   const totOeufsCal = CAL_DEFS.reduce((a,c)=>a+sorted.reduce((s2,s)=>s2+(s[c.fCal]||0),0),0);
   const calRows = CAL_DEFS.map(c=>{
@@ -11597,6 +11597,7 @@ async function renderCond(ca){
     const stockPlt=pPlt?Math.round(stockTot[pPlt.id]||0):0, stockCar=pCar?Math.round(stockTot[pCar.id]||0):0;
     const cumOeufs=sorted.reduce((s2,s)=>s2+(s[c.fCal]||0),0);
     const cumPlt=sorted.reduce((s2,s)=>s2+(s[c.fPlt]||0),0);
+    const cumCar=sorted.reduce((s2,s)=>s2+(s[c.fCar]||0),0);
     const valStock=stockPlt*CALIBRE_TARIFS[c.k].prixPlateau+stockCar*CALIBRE_TARIFS[c.k].prixCarton;
     const pct=totOeufsCal>0?(cumOeufs/totOeufsCal*100).toFixed(1):'0.0';
     return `<tr>
@@ -11604,6 +11605,7 @@ async function renderCond(ca){
       <td style="font-weight:700">${cumOeufs.toLocaleString()}</td>
       <td>${pct}%</td>
       <td>${cumPlt}</td>
+      <td>${cumCar}</td>
       <td><strong>${stockPlt}</strong> plt</td>
       <td><strong>${stockCar}</strong> car</td>
       <td style="font-weight:700;color:#166534">${valStock.toLocaleString('fr-FR')} F</td>
@@ -11694,7 +11696,7 @@ async function renderCond(ca){
         <div class="card-hd">⚖️ État du conditionnement par calibre</div>
         <div class="card-bd tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>Calibre</th><th>Œufs cumulés</th><th>Part</th><th>Plateaux cumulés</th><th>Stock plateaux</th><th>Stock cartons</th><th>Valeur stock</th></tr></thead>
+            <thead><tr><th>Calibre</th><th>Œufs cumulés</th><th>Part</th><th>Plateaux cumulés</th><th>Cartons cumulés</th><th>Stock plateaux</th><th>Stock cartons</th><th>Valeur stock</th></tr></thead>
             <tbody>${calRows}</tbody>
           </table>
         </div>
