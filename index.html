@@ -4713,6 +4713,19 @@ function renderSettingsNotifs(cfg, isAdmin){
   </div>
 
   <div class="card" style="margin-bottom:14px">
+    <div class="card-hd">👥 Destinataires WhatsApp (envoi des états)</div>
+    <div class="card-bd">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Numéros pouvant recevoir les états/rapports envoyés par WhatsApp. Si vide, le numéro d'alertes ci-dessus est utilisé.</div>
+      <div id="waDestList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">${renderWaDestRows(cfg.whatsappDestinataires||[])}</div>
+      ${isAdmin?`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="waDestNom" placeholder="Nom (ex: Directeur)" style="flex:1;min-width:120px">
+        <input id="waDestNum" placeholder="+225 07 …" style="flex:1;min-width:120px">
+        <button class="btn btn-gh btn-sm" onclick="ajouterWaDest()"><i class="fas fa-plus"></i> Ajouter</button>
+      </div>`:''}
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
     <div class="card-hd">📧 Rapports par email</div>
     <div class="card-bd">
       <div class="form-grid" style="grid-template-columns:1fr;gap:10px">
@@ -4729,6 +4742,31 @@ function renderSettingsNotifs(cfg, isAdmin){
 
   ${isAdmin?`<button class="btn btn-p" onclick="saveNotifs()"><i class="fas fa-save"></i> Enregistrer les notifications</button>`:''}`;
 }
+
+function renderWaDestRows(list){
+  if(!list.length) return '<div style="font-size:11px;color:var(--text3)">Aucun destinataire — le numéro d\'alertes sera utilisé.</div>';
+  return list.map((d,i)=>'<div style="display:flex;align-items:center;gap:8px;background:#f8f8f8;border-radius:7px;padding:6px 10px">'
+    +'<i class="fab fa-whatsapp" style="color:#25D366"></i>'
+    +'<span style="flex:1;font-size:12px"><strong>'+esc(d.nom||'—')+'</strong> — '+esc(d.numero||'')+'</span>'
+    +'<button class="btn-del" onclick="supprimerWaDest('+i+')" title="Supprimer">✕</button></div>').join('');
+}
+window.ajouterWaDest=async function(){
+  const nom=document.getElementById('waDestNom')?.value.trim()||'';
+  const numero=document.getElementById('waDestNum')?.value.trim()||'';
+  if(!numero){toast('Numéro requis','err');return;}
+  const all=await getAll(S.SETTINGS_APP);const existing=all.find(s=>s.key==='exploitation');if(!existing)return;
+  const list=(existing.whatsappDestinataires||[]).concat([{nom:nom||numero,numero}]);
+  await updRec(S.SETTINGS_APP,existing.id,{...existing,whatsappDestinataires:list});
+  toast('Destinataire ajouté');
+  switchSettingsTab('notifs');
+};
+window.supprimerWaDest=async function(i){
+  const all=await getAll(S.SETTINGS_APP);const existing=all.find(s=>s.key==='exploitation');if(!existing)return;
+  const list=(existing.whatsappDestinataires||[]).slice();list.splice(i,1);
+  await updRec(S.SETTINGS_APP,existing.id,{...existing,whatsappDestinataires:list});
+  toast('Destinataire supprimé');
+  switchSettingsTab('notifs');
+};
 
 window.saveNotifs = async function(){
   const all = await getAll(S.SETTINGS_APP);
@@ -12804,9 +12842,7 @@ window.envoyerChargeWhatsApp=async function(id){
     +'Montant : '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F\n'
     +'Statut : '+statutLbl+'\n'
     +'— '+(cfg.nomExploitation||'Exploitation');
-  const num=cfg.whatsapp||prompt('Numéro WhatsApp (+225…) :');
-  if(!num){return;}
-  envoyerWhatsApp(texte,num);
+  choisirDestinataireWhatsApp(texte);
 };
 
 // ── Impression d'une charge unique (bon à signer) ──
@@ -12872,9 +12908,7 @@ window.envoyerChargesEtatWhatsApp=async function(){
   const texte='*📉 ÉTAT DES DÉPENSES*\n'+(cfg.nomExploitation||'Exploitation')+'\n━━━━━━━━━━━━━━━━\n'
     +'Charges : '+filtered.length+'\nTotal : '+Math.round(total).toLocaleString('fr-FR')+' F\n\n'
     +'*Répartition par catégorie*\n'+(catLignes||'—');
-  const num=cfg.whatsapp||prompt('Numéro WhatsApp (+225…) :');
-  if(!num){return;}
-  envoyerWhatsApp(texte,num);
+  choisirDestinataireWhatsApp(texte);
 };
 
 // ── État des dépenses imprimable — respecte les filtres lot/catégorie actifs à l'écran ──
@@ -13603,6 +13637,28 @@ window.exportFinanceCSV=function(fin){
     </div>
   </div>
 </div>
+
+<div class="overlay" id="ovWaDest">
+  <div class="modal">
+    <h3><i class="fab fa-whatsapp" style="color:#25D366"></i> Destinataire WhatsApp</h3>
+    <input type="hidden" id="waDestTexte">
+    <div class="form-grid">
+      <div class="fg fg-full">
+        <label>Envoyer à</label>
+        <select id="waDestChoix"></select>
+      </div>
+      <div class="fg fg-full" id="waDestAutreWrap" style="display:none">
+        <label>Numéro</label>
+        <input type="tel" id="waDestAutreNum" placeholder="+225 07 …">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-s" onclick="closeOverlay('ovWaDest')">Annuler</button>
+      <button class="btn btn-p" style="background:#25D366" onclick="confirmerEnvoiWaDest()"><i class="fab fa-whatsapp"></i> Envoyer</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- ══ MODAL TRÉSORERIE ══ -->
 <div class="overlay" id="ovTresorerie">
@@ -18657,10 +18713,8 @@ window.testWebhook=async function(){
 
 window.partagerSauvegardeWhatsApp=async function(){
   const cfg=await getExploitationSettings();
-  const num=cfg.whatsapp||prompt('Numéro WhatsApp (+225…) :');
-  if(!num)return;
   const msg='🗄️ *Sauvegarde AviNest Pro*\n📅 '+new Date().toLocaleDateString('fr-FR')+'\n🏢 '+(cfg.nomExploitation||'AviNest')+'\n\n_Téléchargez le fichier JSON : Paramétrage → Cloud → Télécharger JSON_';
-  window.open('https://wa.me/'+num.replace(/[^0-9]/g,'')+'?text='+encodeURIComponent(msg),'_blank');
+  choisirDestinataireWhatsApp(msg);
 };
 
 window.partagerSauvegardeEmail=async function(){
@@ -19181,6 +19235,41 @@ function envoyerWhatsApp(texte, numero){
   window.open(url,'_blank');
 }
 
+// ── Sélecteur de destinataire WhatsApp (paramétrable dans Réglages > Notifications) ──
+window.choisirDestinataireWhatsApp=async function(texte){
+  const cfg = await getExploitationSettings();
+  const dests = cfg.whatsappDestinataires||[];
+  if(!dests.length){
+    const num = cfg.whatsapp || prompt('Numéro WhatsApp (+225…) :');
+    if(num) envoyerWhatsApp(texte, num);
+    return;
+  }
+  document.getElementById('waDestTexte').value = texte;
+  const opts = dests.map((d,i)=>'<option value="'+i+'">'+esc(d.nom||d.numero)+' — '+esc(d.numero)+'</option>').join('')
+    + '<option value="autre">✏️ Autre numéro…</option>';
+  document.getElementById('waDestChoix').innerHTML = opts;
+  document.getElementById('waDestAutreWrap').style.display='none';
+  document.getElementById('waDestChoix').onchange=function(){
+    document.getElementById('waDestAutreWrap').style.display = this.value==='autre'?'block':'none';
+  };
+  openOverlay('ovWaDest');
+};
+window.confirmerEnvoiWaDest=async function(){
+  const texte = document.getElementById('waDestTexte').value;
+  const choix = document.getElementById('waDestChoix').value;
+  let num;
+  if(choix==='autre'){
+    num = document.getElementById('waDestAutreNum').value.trim();
+    if(!num){toast('Numéro requis','err');return;}
+  } else {
+    const cfg = await getExploitationSettings();
+    num = (cfg.whatsappDestinataires||[])[parseInt(choix)]?.numero;
+  }
+  if(!num){toast('Destinataire invalide','err');return;}
+  closeOverlay('ovWaDest');
+  envoyerWhatsApp(texte, num);
+};
+
 // ── Envoi Email (mailto) ──
 function envoyerEmail(texte, email, sujet){
   const corps = texte.replace(/\*/g,'').replace(/_/g,'');
@@ -19225,9 +19314,7 @@ window.envoyerRapport = async function(type, canal){
   const titres = {jour:'Rapport journalier', semaine:'Rapport hebdomadaire', mois:'Rapport mensuel', annee:'Rapport annuel'};
   const lbl = titres[type]||'Rapport';
   if(canal==='whatsapp'){
-    const num = cfg.whatsapp || prompt('Numéro WhatsApp (avec indicatif, ex: +225XXXXXXXXXX) :');
-    if(!num) return;
-    envoyerWhatsApp(texte, num);
+    choisirDestinataireWhatsApp(texte);
   } else {
     const email = cfg.email || prompt('Adresse email :');
     if(!email) return;
@@ -20417,9 +20504,7 @@ window.envoyerEtatWhatsApp=async function(type){
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
   const entete = '*'+(titres[type]||'ÉTAT')+'*\n'+(cfg.nomExploitation||'Exploitation')+'\nPériode : '+dateMin+' au '+dateMax+'\n━━━━━━━━━━━━━━━━\n';
   const texte = entete + htmlEtatVersTexte(corps);
-  const num = cfg.whatsapp || prompt('Numéro WhatsApp (+225…) :');
-  if(!num){return;}
-  envoyerWhatsApp(texte,num);
+  choisirDestinataireWhatsApp(texte);
 };
 
 window.previewEtat = function(type){ printEtatPeriodique(type, true); };
@@ -20877,8 +20962,7 @@ window.previewRapport = async function(type){
   document.getElementById('previewTitre').textContent = titres[type]||'Aperçu rapport';
   document.getElementById('previewContenu').textContent = texte;
   document.getElementById('btnPreviewWA').onclick = ()=>{
-    const num = cfg.whatsapp || prompt('Numéro WhatsApp :');
-    if(num) envoyerWhatsApp(texte, num);
+    choisirDestinataireWhatsApp(texte);
   };
   document.getElementById('btnPreviewEmail').onclick = ()=>{
     const email = cfg.email || prompt('Email :');
