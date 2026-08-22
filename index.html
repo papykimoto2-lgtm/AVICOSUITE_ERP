@@ -11631,7 +11631,31 @@ async function renderCond(ca){
   const qCar   = pCar ? Math.round(stockTot[pCar.id]||0) : 0;
 
   const sorted = sessions.slice().sort((a,b) => b.date.localeCompare(a.date));
-  const rows = sorted.map(s => {
+
+  // ── Filtres périodiques actifs (Du/Au/Bâtiment/Ligne/Lot) — appliqués à TOUS les tableaux/KPI ci-dessous ──
+  const todayISO = new Date().toISOString().slice(0,10);
+  const monthStartISO = new Date().toISOString().slice(0,7)+'-01';
+  const fDateMin = document.getElementById('condDateMin')?.value || monthStartISO;
+  const fDateMax = document.getElementById('condDateMax')?.value || todayISO;
+  const fLot     = document.getElementById('condLotFilter')?.value || '';
+  const fBat     = document.getElementById('condBatFilter')?.value || '';
+  const fLigne   = document.getElementById('condLigneFilter')?.value || '';
+  const lotLineMap={}, lineBatMap={};
+  lots.forEach(f=>{ lotLineMap[f.id]=f.lineId||null; });
+  lines.forEach(l=>{ lineBatMap[l.id]=l.buildingId||null; });
+  const sortedAll = sorted; // conservé pour le stock temps réel (non filtré)
+  const sortedFiltered = sorted.filter(s=>{
+    if(fDateMin && s.date < fDateMin) return false;
+    if(fDateMax && s.date > fDateMax) return false;
+    if(fLot && String(s.flockId||'') !== fLot) return false;
+    if(fBat || fLigne){
+      const lineId = lotLineMap[s.flockId];
+      if(fLigne && String(lineId||'') !== fLigne) return false;
+      if(fBat && String(lineBatMap[lineId]||'') !== fBat) return false;
+    }
+    return true;
+  });
+  const rows = sortedFiltered.map(s => {
     const lot = lots.find(f => f.id === s.flockId);
     return `<tr>
       <td style="color:var(--text3)">${s.date}</td>
@@ -11648,10 +11672,10 @@ async function renderCond(ca){
     </tr>`;
   }).join('');
 
-  const totValeur = sorted.reduce((a,s)=>a+valeurCondSession(s),0);
-  const totBruts = sorted.reduce((a,s)=>a+s.oeufs_bruts,0);
-  const totCar   = sorted.reduce((a,s)=>a+s.cartons,0);
-  const totPlt   = sorted.reduce((a,s)=>a+s.plateaux,0);
+  const totValeur = sortedFiltered.reduce((a,s)=>a+valeurCondSession(s),0);
+  const totBruts = sortedFiltered.reduce((a,s)=>a+s.oeufs_bruts,0);
+  const totCar   = sortedFiltered.reduce((a,s)=>a+s.cartons,0);
+  const totPlt   = sortedFiltered.reduce((a,s)=>a+s.plateaux,0);
 
   // ── État par calibre : stock temps réel + cumul sessions ──
   const CAL_DEFS = [
@@ -11660,13 +11684,13 @@ async function renderCond(ca){
     {k:'gros',     lbl:'🟠 Gros',      col:'#f97316', pltRef:'CAL-PLT-G',  carRef:'CAL-CAR-G',  fCal:'cal_gros',     fPlt:'plt_gros',     fCar:'car_gros'},
     {k:'tresGros', lbl:'🔴 Très gros', col:'#dc2626', pltRef:'CAL-PLT-TG', carRef:'CAL-CAR-TG', fCal:'cal_tres_gros',fPlt:'plt_tres_gros',fCar:'car_tres_gros'}
   ];
-  const totOeufsCal = CAL_DEFS.reduce((a,c)=>a+sorted.reduce((s2,s)=>s2+(s[c.fCal]||0),0),0);
+  const totOeufsCal = CAL_DEFS.reduce((a,c)=>a+sortedFiltered.reduce((s2,s)=>s2+(s[c.fCal]||0),0),0);
   const calRows = CAL_DEFS.map(c=>{
     const pPlt=prods.find(p=>p.ref===c.pltRef), pCar=prods.find(p=>p.ref===c.carRef);
     const stockPlt=pPlt?Math.round(stockTot[pPlt.id]||0):0, stockCar=pCar?Math.round(stockTot[pCar.id]||0):0;
-    const cumOeufs=sorted.reduce((s2,s)=>s2+(s[c.fCal]||0),0);
-    const cumPlt=sorted.reduce((s2,s)=>s2+(s[c.fPlt]||0),0);
-    const cumCar=sorted.reduce((s2,s)=>s2+(s[c.fCar]||0),0);
+    const cumOeufs=sortedFiltered.reduce((s2,s)=>s2+(s[c.fCal]||0),0);
+    const cumPlt=sortedFiltered.reduce((s2,s)=>s2+(s[c.fPlt]||0),0);
+    const cumCar=sortedFiltered.reduce((s2,s)=>s2+(s[c.fCar]||0),0);
     const valStock=stockPlt*CALIBRE_TARIFS[c.k].prixPlateau+stockCar*CALIBRE_TARIFS[c.k].prixCarton;
     const pct=totOeufsCal>0?(cumOeufs/totOeufsCal*100).toFixed(1):'0.0';
     return `<tr>
@@ -11700,11 +11724,11 @@ async function renderCond(ca){
       <div class="card" style="margin-bottom:14px">
         <div class="card-hd">📅 État périodique — Production vs Conditionnement</div>
         <div class="card-bd" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;align-items:end">
-          <div class="fg" style="margin:0"><label style="font-size:11px">Du</label><input type="date" id="condDateMin" value="${new Date().toISOString().slice(0,7)+'-01'}"></div>
-          <div class="fg" style="margin:0"><label style="font-size:11px">Au</label><input type="date" id="condDateMax" value="${new Date().toISOString().slice(0,10)}"></div>
-          <div class="fg" style="margin:0"><label style="font-size:11px">Bâtiment</label><select id="condBatFilter"><option value="">Tous</option>${buildings.map(b=>`<option value="${b.id}">${esc(b.nom)}</option>`).join('')}</select></div>
-          <div class="fg" style="margin:0"><label style="font-size:11px">Ligne</label><select id="condLigneFilter"><option value="">Toutes</option>${lines.map(l=>`<option value="${l.id}">${esc(l.nom)}</option>`).join('')}</select></div>
-          <div class="fg" style="margin:0"><label style="font-size:11px">Lot</label><select id="condLotFilter"><option value="">Tous les lots</option>${lotSelect}</select></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Du</label><input type="date" id="condDateMin" value="${fDateMin}"></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Au</label><input type="date" id="condDateMax" value="${fDateMax}"></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Bâtiment</label><select id="condBatFilter"><option value="">Tous</option>${buildings.map(b=>`<option value="${b.id}" ${String(b.id)===fBat?'selected':''}>${esc(b.nom)}</option>`).join('')}</select></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Ligne</label><select id="condLigneFilter"><option value="">Toutes</option>${lines.map(l=>`<option value="${l.id}" ${String(l.id)===fLigne?'selected':''}>${esc(l.nom)}</option>`).join('')}</select></div>
+          <div class="fg" style="margin:0"><label style="font-size:11px">Lot</label><select id="condLotFilter"><option value="">Tous les lots</option>${layerLots.map(f => `<option value="${f.id}" ${String(f.id)===fLot?'selected':''}>${f.nom}</option>`).join('')}</select></div>
           <div style="display:flex;gap:6px">
             <button class="btn btn-gh btn-sm" onclick="afficherEtatInline('prodcond')"><i class="fas fa-eye"></i> Aperçu</button>
             <button class="btn btn-p btn-sm" onclick="printEtatPeriodique('prodcond')"><i class="fas fa-print"></i> Imprimer</button>
@@ -11745,7 +11769,7 @@ async function renderCond(ca){
         <div class="kpi kpi-b"><div class="kpi-lbl">Alvéoles</div><div class="kpi-val" style="color:${qAlv<(pAlv?.seuil||200)?'var(--red)':'inherit'}">${qAlv}</div><div class="kpi-sub">disponibles</div></div>
         <div class="kpi kpi-g"><div class="kpi-lbl">Plateaux</div><div class="kpi-val">${qPlt}</div><div class="kpi-sub">en stock</div></div>
         <div class="kpi kpi-g" style="border-left-color:var(--purple)"><div class="kpi-lbl">Cartons</div><div class="kpi-val">${qCar}</div><div class="kpi-sub">= ${qCar*360} œufs</div></div>
-        <div class="kpi kpi-b"><div class="kpi-lbl">Sessions totales</div><div class="kpi-val">${sorted.length}</div><div class="kpi-sub">${totBruts.toLocaleString()} œufs traités</div></div>
+        <div class="kpi kpi-b"><div class="kpi-lbl">Sessions (période)</div><div class="kpi-val">${sortedFiltered.length}</div><div class="kpi-sub">${totBruts.toLocaleString()} œufs traités</div></div>
         <div class="kpi kpi-g"><div class="kpi-lbl">Production cumulée</div><div class="kpi-val">${totCar}</div><div class="kpi-sub">cartons · ${totPlt} plateaux</div></div>
         <div class="kpi kpi-g" style="border-left-color:#166534"><div class="kpi-lbl">💰 Valeur cumulée</div><div class="kpi-val">${Math.round(totValeur/1000)}K</div><div class="kpi-sub">FCFA · tarifs calibrés</div></div>
       </div>
@@ -11773,8 +11797,8 @@ async function renderCond(ca){
 
       <!-- HISTORIQUE -->
       <div class="card">
-        <div class="card-hd"><span>📋 Historique des sessions (${sorted.length})</span></div>
-        ${sorted.length > 0 ? `
+        <div class="card-hd"><span>📋 Historique des sessions (${sortedFiltered.length})</span></div>
+        ${sortedFiltered.length > 0 ? `
         <div class="card-bd tbl-wrap">
           <table class="tbl">
             <thead><tr><th>Date</th><th>Cartons</th><th>Plateaux</th><th>Référence</th><th>Lot</th><th>Œufs bruts</th><th>Casses</th><th>Œufs nets</th><th>Rendement</th><th>Valeur</th><th></th></tr></thead>
@@ -11783,7 +11807,7 @@ async function renderCond(ca){
         </div>` : `
         <div class="card-bd" style="text-align:center;color:var(--text3);padding:40px">
           <i class="fas fa-box-open" style="font-size:40px;opacity:.3;display:block;margin-bottom:12px"></i>
-          Aucune session de conditionnement enregistrée.<br>
+          ${sortedAll.length>0?'Aucune session sur cette période / ce filtre.':'Aucune session de conditionnement enregistrée.'}<br>
           <button class="btn btn-p" style="margin-top:14px" onclick="openCondModal()"><i class="fas fa-plus"></i> Démarrer</button>
         </div>`}
       </div>
@@ -11793,7 +11817,7 @@ async function renderCond(ca){
   renderCondRendementChart();
   ['condDateMin','condDateMax','condBatFilter','condLigneFilter','condLotFilter'].forEach(id=>{
     const el = document.getElementById(id);
-    if(el) el.addEventListener('change', ()=>{ renderCondCartonsChart(); renderCondRendementChart(); });
+    if(el) el.addEventListener('change', ()=>{ renderCond(document.getElementById('contentArea')); });
   });
 }
 
