@@ -9535,6 +9535,9 @@ async function renderReservations(ca){
         ${r.statutEff==='active'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier"><i class="fas fa-pen"></i></button>
         <button class="btn btn-xs" style="background:#dcfce7;color:#166534" onclick="convertirReservationEnCommande(${r.id})" title="Convertir en commande ferme"><i class="fas fa-right-left"></i></button>
         <button class="btn-del" onclick="annulerReservation(${r.id})" title="Annuler"><i class="fas fa-ban"></i></button>`:''}
+        ${r.statutEff==='expiree'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier / réactiver"><i class="fas fa-pen"></i></button>
+        <button class="btn-del" onclick="supprimerReservation(${r.id})" title="Supprimer définitivement"><i class="fas fa-trash"></i></button>`:''}
+        ${r.statutEff==='annulee'?`<button class="btn-del" onclick="supprimerReservation(${r.id})" title="Supprimer définitivement"><i class="fas fa-trash"></i></button>`:''}
       </td>
     </tr>`;
   }).join('');
@@ -9591,7 +9594,8 @@ window.openReservationModal = async function(id=null){
   if(id){
     const resas=await getAll(S.RESERVATIONS); r=resas.find(x=>x.id===id);
     if(!r){toast('Réservation introuvable','err');return;}
-    if(statutEffectifResa(r)!=='active'){toast('⛔ Seule une réservation active peut être modifiée.','err');return;}
+    const eff=statutEffectifResa(r);
+    if(eff!=='active' && eff!=='expiree'){toast('⛔ Seule une réservation active ou expirée peut être modifiée.','err');return;}
   }
   document.getElementById('resaId').value=id||'';
   document.getElementById('mResaTitle').textContent=id?'Modifier la réservation':'Nouvelle réservation';
@@ -9619,8 +9623,9 @@ window.saveReservation = async function(){
   if(!lignes.length){toast('Ajoutez au moins une ligne','err');return;}
   if(id){
     const resas=await getAll(S.RESERVATIONS);const existing=resas.find(x=>x.id===parseInt(id));
-    await updRec(S.RESERVATIONS,parseInt(id),{...existing,clientId,date,dateExpiration,ref,notes,lignes});
-    toast('✓ Réservation modifiée');
+    const reactive = statutEffectifResa(existing)==='expiree';
+    await updRec(S.RESERVATIONS,parseInt(id),{...existing,clientId,date,dateExpiration,ref,notes,lignes,statut:reactive?'active':existing.statut});
+    toast(reactive?'✓ Réservation modifiée et réactivée':'✓ Réservation modifiée');
   } else {
     await addRec(S.RESERVATIONS,{clientId,date,dateExpiration,ref,notes,lignes,statut:'active',operatorId:currentUser?.id||1,ts:Date.now()});
     toast('✓ Réservation enregistrée');
@@ -9632,6 +9637,15 @@ window.annulerReservation = async function(id){
   const resas=await getAll(S.RESERVATIONS);const r=resas.find(x=>x.id===id);if(!r) return;
   await updRec(S.RESERVATIONS,id,{...r,statut:'annulee'});
   toast('Réservation annulée — stock libéré');await renderReservations(distCA());
+};
+// Suppression définitive — uniquement réservations annulées ou expirées (jamais actives ni converties, tracées par une commande).
+window.supprimerReservation = async function(id){
+  const resas=await getAll(S.RESERVATIONS);const r=resas.find(x=>x.id===id);if(!r){toast('Réservation introuvable','err');return;}
+  const eff=statutEffectifResa(r);
+  if(eff!=='annulee' && eff!=='expiree'){toast('⛔ Seule une réservation annulée ou expirée peut être supprimée.','err');return;}
+  if(!confirm('Supprimer définitivement cette réservation ? Action irréversible.')) return;
+  await delRec(S.RESERVATIONS,id);
+  toast('Réservation supprimée');await renderReservations(distCA());
 };
 // Transforme la réservation en commande ferme (statut 'pending', comme toute nouvelle commande) —
 // la réservation est marquée convertie et référence la commande créée, pour traçabilité.
