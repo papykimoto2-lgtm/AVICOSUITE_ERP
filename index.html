@@ -11672,9 +11672,48 @@ window.appliquerRecalculTousLesConditionnements = async function(){
   await render();
 };
 
+// ── Inventaire des produits finis (œufs conditionnés) par calibre, ventilé par dépôt ──
+// Stock réel instantané (indépendant de toute période) — distinct du cumul de production
+// de la période affiché dans "État périodique — Production vs Conditionnement".
+async function getInventairePFCalibreDetail(){
+  const [prods, deps, bal] = await Promise.all([getAll(S.PRODUITS), getAll(S.DEPOTS), getBalance()]);
+  const CAL_DEFS2 = [
+    {k:'petit',    lbl:'Petit',     emoji:'🟡', pltRef:'CAL-PLT-P',  carRef:'CAL-CAR-P'},
+    {k:'moyen',    lbl:'Moyen',     emoji:'🟢', pltRef:'CAL-PLT-M',  carRef:'CAL-CAR-M'},
+    {k:'gros',     lbl:'Gros',      emoji:'🟠', pltRef:'CAL-PLT-G',  carRef:'CAL-CAR-G'},
+    {k:'tresGros', lbl:'Très gros', emoji:'🔴', pltRef:'CAL-PLT-TG', carRef:'CAL-CAR-TG'}
+  ];
+  const totalParDepot = {}; // depotId -> {nom, valeur, calibres:[...]}
+
+  let grandStockPlt=0, grandStockCar=0, grandValeur=0;
+  const calibres = CAL_DEFS2.map(c=>{
+    const pPlt = prods.find(p=>p.ref===c.pltRef), pCar = prods.find(p=>p.ref===c.carRef);
+    const tarif = CALIBRE_TARIFS[c.k] || {prixPlateau:0, prixCarton:0};
+    let stockPltTotal=0, stockCarTotal=0, valeurTotal=0;
+    const depotsDetail = deps.map(d=>{
+      const stockPlt = pPlt ? Math.round((bal[`${pPlt.id}_${d.id}`]||0)*100)/100 : 0;
+      const stockCar = pCar ? Math.round((bal[`${pCar.id}_${d.id}`]||0)*100)/100 : 0;
+      const valeur = stockPlt*tarif.prixPlateau + stockCar*tarif.prixCarton;
+      return {depotId:d.id, depotNom:d.nom, stockPlt, stockCar, valeur};
+    }).filter(x=>Math.abs(x.stockPlt)>0.01||Math.abs(x.stockCar)>0.01);
+    depotsDetail.forEach(x=>{
+      stockPltTotal+=x.stockPlt; stockCarTotal+=x.stockCar; valeurTotal+=x.valeur;
+      if(!totalParDepot[x.depotId]) totalParDepot[x.depotId]={nom:x.depotNom, valeur:0, calibres:[]};
+      totalParDepot[x.depotId].valeur += x.valeur;
+      totalParDepot[x.depotId].calibres.push({lbl:c.lbl, emoji:c.emoji, stockPlt:x.stockPlt, stockCar:x.stockCar, valeur:x.valeur});
+    });
+    grandStockPlt+=stockPltTotal; grandStockCar+=stockCarTotal; grandValeur+=valeurTotal;
+    return {...c, stockPltTotal, stockCarTotal, valeurTotal, depots:depotsDetail};
+  });
+
+  const parDepot = Object.values(totalParDepot).sort((a,b)=>b.valeur-a.valeur);
+  return { calibres, parDepot, grandStockPlt, grandStockCar, grandValeur, nbDepots: parDepot.length };
+}
+
 async function renderCond(ca){
   const [sessions, lots, prods, buildings, lines] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS), getAll(S.BUILDINGS), getAll(S.LINES)]);
   const stockTot = await getStockTotal();
+  const invPF = await getInventairePFCalibreDetail();
 
   const pBruts = findCondProduit(prods,'bruts');
   const pAlv   = findCondProduit(prods,'alveole');
@@ -11858,6 +11897,34 @@ async function renderCond(ca){
             <thead><tr><th>Calibre</th><th>Œufs cumulés</th><th>Part</th><th>Plateaux cumulés</th><th>Cartons cumulés</th><th>Stock plateaux</th><th>Stock cartons</th><th>Valeur stock</th></tr></thead>
             <tbody>${calRows}</tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- INVENTAIRE PF PAR CALIBRE — VENTILÉ PAR DÉPÔT (stock réel instantané) -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span>🏬 Inventaire produits finis par calibre — détail par dépôt</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-gh btn-sm" onclick="afficherEtatInline('invpf')"><i class="fas fa-eye"></i> Aperçu</button>
+            <button class="btn btn-p btn-sm" onclick="printEtatPeriodique('invpf')"><i class="fas fa-print"></i> Imprimer</button>
+            <button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerEtatWhatsApp('invpf')"><i class="fab fa-whatsapp"></i></button>
+          </div>
+        </div>
+        <div class="card-bd">
+          ${invPF.parDepot.length ? invPF.parDepot.map(d=>`
+            <div style="margin-bottom:12px;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+              <div style="background:#f6f9f6;padding:8px 12px;font-weight:700;font-size:12px;display:flex;justify-content:space-between;align-items:center">
+                <span><i class="fas fa-warehouse" style="color:var(--g2)"></i> ${esc(d.nom)}</span>
+                <span style="color:#166534">${Math.round(d.valeur).toLocaleString('fr-FR')} F</span>
+              </div>
+              <div class="tbl-wrap"><table class="tbl">
+                <thead><tr><th>Calibre</th><th>Stock plateaux</th><th>Stock cartons</th><th>Valeur</th></tr></thead>
+                <tbody>${d.calibres.map(c=>`<tr><td>${c.emoji} ${c.lbl}</td><td>${c.stockPlt}</td><td>${c.stockCar}</td><td>${Math.round(c.valeur).toLocaleString('fr-FR')} F</td></tr>`).join('')}</tbody>
+              </table></div>
+            </div>`).join('') : `<div style="text-align:center;color:var(--text3);padding:20px"><i class="fas fa-warehouse" style="font-size:30px;opacity:.3;display:block;margin-bottom:8px"></i>Aucun stock de produits finis calibrés en dépôt.</div>`}
+          ${invPF.parDepot.length ? `<div style="text-align:right;font-weight:800;padding:10px 6px 2px;border-top:2px solid var(--border);margin-top:6px;font-size:12px">
+            TOTAL GÉNÉRAL — ${invPF.grandStockPlt} plt · ${invPF.grandStockCar} car · <span style="color:#166534">${Math.round(invPF.grandValeur).toLocaleString('fr-FR')} F</span>
+          </div>` : ''}
         </div>
       </div>
 
@@ -19377,6 +19444,51 @@ function buildCorpsProdCond(data, cfg){
   </div>`;
 }
 
+// ── Corps : Inventaire produits finis par calibre, ventilé par dépôt (snapshot temps réel) ──
+function buildCorpsInventairePFCalibre(data, cfg){
+  const dev = cfg.devise||'FCFA';
+  const calRows = data.calibres.map(c=>`<tr>
+      <td>${c.emoji} ${c.lbl}</td>
+      <td style="text-align:right;font-weight:700">${c.stockPltTotal}</td>
+      <td style="text-align:right;font-weight:700">${c.stockCarTotal}</td>
+      <td style="text-align:right;font-weight:700;color:#166534">${Math.round(c.valeurTotal).toLocaleString('fr-FR')}</td>
+    </tr>`).join('');
+
+  const depotBlocks = data.parDepot.map(d=>{
+    const sousTotPlt = d.calibres.reduce((a,c)=>a+c.stockPlt,0);
+    const sousTotCar = d.calibres.reduce((a,c)=>a+c.stockCar,0);
+    return `
+    <div class="section">
+      <div class="section-title">🏬 Dépôt : ${esc(d.nom)}</div>
+      <table><thead><tr><th>Calibre</th><th style="text-align:right">Stock plateaux</th><th style="text-align:right">Stock cartons</th><th style="text-align:right">Valeur (${dev})</th></tr></thead>
+      <tbody>
+        ${d.calibres.map(c=>`<tr><td>${c.emoji} ${c.lbl}</td><td style="text-align:right">${c.stockPlt}</td><td style="text-align:right">${c.stockCar}</td><td style="text-align:right;font-weight:700;color:#166534">${Math.round(c.valeur).toLocaleString('fr-FR')}</td></tr>`).join('')}
+        <tr class="total-row"><td>Sous-total dépôt</td><td style="text-align:right">${sousTotPlt}</td><td style="text-align:right">${sousTotCar}</td><td style="text-align:right">${Math.round(d.valeur).toLocaleString('fr-FR')}</td></tr>
+      </tbody></table>
+    </div>`;
+  }).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucun stock de produits finis calibrés en dépôt.</p></div>';
+
+  return `
+  <div class="kpis">
+    <div class="kpi-box"><div class="kpi-val">${data.grandStockPlt}</div><div class="kpi-lbl">Plateaux en stock</div></div>
+    <div class="kpi-box"><div class="kpi-val">${data.grandStockCar}</div><div class="kpi-lbl">Cartons en stock</div></div>
+    <div class="kpi-box"><div class="kpi-val">${data.nbDepots}</div><div class="kpi-lbl">Dépôt(s) concerné(s)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${Math.round(data.grandValeur).toLocaleString('fr-FR')}</div><div class="kpi-lbl">Valeur totale (${dev})</div></div>
+  </div>
+  <div class="section">
+    <div class="section-title">⚖️ Récapitulatif global par calibre (tous dépôts)</div>
+    <table><thead><tr><th>Calibre</th><th style="text-align:right">Stock plateaux</th><th style="text-align:right">Stock cartons</th><th style="text-align:right">Valeur (${dev})</th></tr></thead>
+    <tbody>${calRows||'<tr><td colspan="4" style="text-align:center;color:#aaa">Aucune donnée</td></tr>'}
+    <tr class="total-row"><td>TOTAL</td><td style="text-align:right">${data.grandStockPlt}</td><td style="text-align:right">${data.grandStockCar}</td><td style="text-align:right">${Math.round(data.grandValeur).toLocaleString('fr-FR')}</td></tr>
+    </tbody></table>
+  </div>
+  <div class="section">
+    <div class="section-title">🏬 Détail par dépôt</div>
+    ${depotBlocks}
+  </div>
+  <p style="font-size:10px;color:#888;margin-top:4px">Inventaire instantané du stock de produits finis (plateaux et cartons d'œufs conditionnés), valorisé aux tarifs calibrés en vigueur (Paramétrage → Tarifs conditionnement). Ce document reflète le stock réel au moment de l'édition, indépendamment de la période sélectionnée dans les filtres.</p>`;
+}
+
 // ── Génération du texte du rapport ──
 function genRapportTexte(d, format='whatsapp'){
   const NL = '\n';
@@ -20771,7 +20883,7 @@ function getEtatPeriodFilters(){
 window.envoyerEtatWhatsApp=async function(type){
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
-  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET',mortalite:'☠️ SUIVI MORTALITÉ'};
+  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET',mortalite:'☠️ SUIVI MORTALITÉ',invpf:'🏬🥚 INVENTAIRE PF PAR CALIBRE'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
   const entete = '*'+(titres[type]||'ÉTAT')+'*\n'+(cfg.nomExploitation||'Exploitation')+'\nPériode : '+dateMin+' au '+dateMax+'\n━━━━━━━━━━━━━━━━\n';
   const texte = entete + htmlEtatVersTexte(corps);
@@ -20813,6 +20925,7 @@ async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
   }
   if(type==='appro') return buildCorpsApprovisionnement(await collectApprovisionnementData(dateMin, dateMax), cfg);
   if(type==='mortalite') return buildCorpsMortalite(await collectMortaliteData(dateMin, dateMax, lotId), cfg);
+  if(type==='invpf') return buildCorpsInventairePFCalibre(await getInventairePFCalibreDetail(), cfg);
   return '';
 }
 
@@ -20837,7 +20950,7 @@ window.afficherEtatInline = async function(type){
   zone.scrollIntoView({behavior:'smooth',block:'nearest'});
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
-  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité'};
+  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité',invpf:'🏬🥚 Inventaire PF par calibre'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
   zone.innerHTML = `<div class="card" style="border:1.5px solid var(--g3)">
     <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center">
@@ -20861,7 +20974,8 @@ function buildEnteteEtat(cfg, type, dateMin, dateMax){
     production:'ÉTAT DE PRODUCTION',finance:'ÉTAT FINANCIER',stocks:'ÉTAT DES STOCKS',
     commercial:'ÉTAT COMMERCIAL',gmao:'ÉTAT GMAO',bilan:'BILAN COMPLET',
     prodcond:'PRODUCTION vs CONDITIONNEMENT (par ligne / bâtiment)',
-    appro:'ÉTAT D\'APPROVISIONNEMENT', mortalite:'SUIVI DE MORTALITÉ PÉRIODIQUE'
+    appro:'ÉTAT D\'APPROVISIONNEMENT', mortalite:'SUIVI DE MORTALITÉ PÉRIODIQUE',
+    invpf:'INVENTAIRE PRODUITS FINIS PAR CALIBRE (par dépôt)'
   }[type]||'ÉTAT PÉRIODIQUE';
   const fmtDate = d => d ? new Date(d).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}) : '—';
   return {logo, titreType, fmtDate, dateMin, dateMax};
