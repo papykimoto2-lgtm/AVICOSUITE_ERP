@@ -2249,6 +2249,35 @@ function findCondProduit(prods, key){
   return null;
 }
 
+// ── Calibre = attribut du PRODUIT vendu, jamais un champ saisi à part ──
+// Les produits finis calibrés portent une référence normalisée CAL-PLT-<X> (plateau) ou
+// CAL-CAR-<X> (carton), X ∈ {P,M,G,TG}. Réservations, commandes/ventes et livraisons doivent
+// TOUTES dériver le calibre (et donc le stock physique impacté) du produit effectivement
+// choisi sur la ligne — jamais d'un sélecteur "calibre" indépendant qui pourrait diverger du
+// produit réellement débité en stock. C'est cette divergence qui faisait qu'une sortie de
+// carton livré n'avait aucun effet sur le stock d'œufs calibré : le produit vendu (générique)
+// n'était pas celui alimenté par le conditionnement (calibré).
+const CAL_REF_SUFFIX = {P:'petit', M:'moyen', G:'gros', TG:'tresGros'};
+const CALIBRE_EMOJI  = {petit:'🟡', moyen:'🟢', gros:'🟠', tresGros:'🔴'};
+function calibreFromProduit(p){
+  if(!p || !p.ref) return null;
+  const m = /^CAL-(PLT|CAR)-(P|M|G|TG)$/.exec(p.ref);
+  return m ? CAL_REF_SUFFIX[m[2]] : null;
+}
+function uniteCalibreFromProduit(p){
+  if(!p || !p.ref) return null;
+  const m = /^CAL-(PLT|CAR)-(P|M|G|TG)$/.exec(p.ref);
+  return m ? (m[1]==='PLT'?'plateau':'carton') : null;
+}
+// Libellé enrichi d'un produit dans les listes de vente/réservation — le calibre doit être
+// visible au moment du choix, sans quoi rien à l'écran ne distingue un carton générique d'un
+// carton d'un calibre donné.
+function libelleProduitAvecCalibre(p){
+  if(!p) return '';
+  const cal = calibreFromProduit(p);
+  return cal ? `${CALIBRE_EMOJI[cal]} ${p.nom}` : p.nom;
+}
+
 // ════════════════════════════════════════════════════════
 //  UNIFIED DB — SanixAviNest
 // ════════════════════════════════════════════════════════
@@ -9556,7 +9585,17 @@ async function renderReservations(ca){
 window.renderReservations = renderReservations;
 
 let resaLines=[];
-window.addResaLine = async function(presetProdId,presetQte,presetPrix,presetCalibre){
+let resaStockTot={};
+// Stock disponible (+ calibre dérivé) affiché sous le sélecteur produit d'une ligne réservation.
+function renderResaStockHint(p){
+  if(!p) return '';
+  const cal = calibreFromProduit(p);
+  const stock = Math.round((resaStockTot[p.id]||0)*100)/100;
+  const alerte = stock<=0;
+  const calTxt = cal ? `Calibre ${esc(CALIBRE_TARIFS[cal]?.label||cal)} — ` : '';
+  return `${calTxt}<span style="color:${alerte?'var(--red)':'inherit'}">Stock dispo : ${stock} ${esc(p.unite||'')}</span>`;
+}
+window.addResaLine = async function(presetProdId,presetQte,presetPrix){
   const allProds = await getAll(S.PRODUITS);
   // Une réservation porte sur des produits finis vendables (œufs conditionnés, volailles) —
   // même filtre que les commandes.
@@ -9566,18 +9605,27 @@ window.addResaLine = async function(presetProdId,presetQte,presetPrix,presetCali
   const idx = resaLines.length;
   const qte = presetQte!=null?presetQte:0;
   const prix = presetPrix!=null?presetPrix:(defProd?.prix||0);
-  const calibre = presetCalibre||'';
-  resaLines.push({produitId:defProd?.id,qte,prixUnit:prix,calibre});
-  const calOpts='<option value="">—</option>'+Object.keys(CALIBRE_TARIFS).map(k=>`<option value="${k}" ${k===calibre?'selected':''}>${CALIBRE_TARIFS[k].label}</option>`).join('');
-  const div=document.createElement('div');div.id='resaL'+idx;div.style.cssText='display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)';
-  div.innerHTML=`<select onchange="resaUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" ${p.id===defProd?.id?'selected':''}>${p.nom}</option>`).join('')}</select><select onchange="resaUpd(${idx},'c',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit">${calOpts}</select><input type="number" placeholder="Qté" value="${qte||''}" onchange="resaUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix estimé" onchange="resaUpd(${idx},'px',this)" value="${prix}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="resaT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">${Math.round(qte*prix).toLocaleString()} F</div><button onclick="rmResaLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
+  // Le calibre n'est plus saisi séparément : il est dérivé du produit choisi (voir plus haut).
+  resaLines.push({produitId:defProd?.id,qte,prixUnit:prix,calibre:calibreFromProduit(defProd)});
+  const div=document.createElement('div');div.id='resaL'+idx;div.style.cssText='display:grid;grid-template-columns:2.3fr 1fr 1fr 1fr auto;gap:6px;align-items:start;padding:7px 0;border-bottom:1px solid var(--border)';
+  const prodOpts = prodsList.map(p=>`<option value="${p.id}" data-px="${p.prix||0}" ${p.id===defProd?.id?'selected':''}>${esc(libelleProduitAvecCalibre(p))}</option>`).join('');
+  div.innerHTML=`<div><select onchange="resaUpd(${idx},'p',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;font-family:inherit;width:100%">${prodOpts}</select><div id="resaHint${idx}" style="font-size:10px;color:var(--text3);margin-top:3px">${renderResaStockHint(defProd)}</div></div><input type="number" placeholder="Qté" value="${qte||''}" onchange="resaUpd(${idx},'q',this)" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><input type="number" placeholder="Prix estimé" onchange="resaUpd(${idx},'px',this)" value="${prix}" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px"><div id="resaT${idx}" style="font-weight:700;font-size:12px;color:var(--g2)">${Math.round(qte*prix).toLocaleString()} F</div><button onclick="rmResaLine(${idx})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:6px;padding:5px 8px;cursor:pointer"><i class="fas fa-times"></i></button>`;
   document.getElementById('resaLinesDiv').appendChild(div);
   const grand=resaLines.reduce((a,l)=>a+(l.removed?0:l.qte*(l.prixUnit||0)),0);
   document.getElementById('resaTotalDiv').textContent='Total estimé : '+Math.round(grand).toLocaleString()+' FCFA';
 };
 window.resaUpd = function(i,f,el){
-  if(f==='p'){const o=el.options[el.selectedIndex];resaLines[i].produitId=parseInt(el.value);resaLines[i].prixUnit=parseFloat(o.dataset.px)||0;const pi=document.getElementById('resaL'+i)?.querySelectorAll('input')[1];if(pi) pi.value=resaLines[i].prixUnit;}
-  else if(f==='c') resaLines[i].calibre=el.value;
+  if(f==='p'){
+    const o=el.options[el.selectedIndex];
+    resaLines[i].produitId=parseInt(el.value);
+    resaLines[i].prixUnit=parseFloat(o.dataset.px)||0;
+    const pi=document.getElementById('resaL'+i)?.querySelectorAll('input')[1];if(pi) pi.value=resaLines[i].prixUnit;
+    getAll(S.PRODUITS).then(allProds=>{
+      const p=allProds.find(x=>x.id===resaLines[i].produitId);
+      resaLines[i].calibre=calibreFromProduit(p);
+      const hint=document.getElementById('resaHint'+i); if(hint) hint.innerHTML=renderResaStockHint(p);
+    });
+  }
   else if(f==='q') resaLines[i].qte=parseFloat(el.value)||0;
   else resaLines[i].prixUnit=parseFloat(el.value)||0;
   const t=resaLines[i].qte*(resaLines[i].prixUnit||0);const te=document.getElementById('resaT'+i);if(te) te.textContent=Math.round(t).toLocaleString()+' F';
@@ -9588,6 +9636,7 @@ window.rmResaLine = function(i){ const el=document.getElementById('resaL'+i); if
 
 window.openReservationModal = async function(id=null){
   const[clients]=await Promise.all([getAll(S.CLIENTS)]);
+  resaStockTot = await getStockTotal();
   resaLines=[];
   let r=null;
   if(id){
@@ -9604,7 +9653,7 @@ window.openReservationModal = async function(id=null){
   document.getElementById('resaRef').value=r?r.ref:('RESA-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4));
   document.getElementById('resaNotes').value=r?(r.notes||''):'';
   document.getElementById('resaLinesDiv').innerHTML='';
-  if(r && r.lignes && r.lignes.length){ for(const l of r.lignes) await addResaLine(l.produitId,l.qte,l.prixUnit,l.calibre); }
+  if(r && r.lignes && r.lignes.length){ for(const l of r.lignes) await addResaLine(l.produitId,l.qte,l.prixUnit); }
   else { document.getElementById('resaTotalDiv').textContent='Total estimé : 0 FCFA'; addResaLine(); }
   openOverlay('mResa');
 };
@@ -10046,6 +10095,20 @@ window.filterCommandes=async function(clientId){
 // ════════════════════════════════════════════════════════════════════════
 
 var saleLines = [];   // tableau des lignes en cours d'edition
+var saleStockTot = {}; // stock dispo par produit, rechargé à l'ouverture / ajout de ligne
+
+// Stock disponible (+ calibre dérivé) affiché sous le sélecteur produit d'une ligne vente.
+// Même principe que pour les réservations : le calibre n'est jamais saisi à part, il vient
+// du produit choisi — sans quoi la livraison peut décrémenter un stock qui n'est pas celui
+// réellement vendu (voir note sur calibreFromProduit plus haut dans le fichier).
+function renderSaleStockHint(p){
+  if(!p || p.id==null) return '';
+  const cal = calibreFromProduit(p);
+  const stock = Math.round((saleStockTot[p.id]||0)*100)/100;
+  const alerte = stock<=0;
+  const calTxt = cal ? `Calibre ${esc(CALIBRE_TARIFS[cal]?.label||cal)} — ` : '';
+  return `${calTxt}<span style="color:${alerte?'var(--red)':'inherit'}">Stock dispo : ${stock} ${esc(p.unite||'')}</span>`;
+}
 
 // Remplit les conditions de paiement selon le profil client
 window.salePaieFromClient = async function(sel) {
@@ -10059,21 +10122,22 @@ window.addSaleLine = async function() {
   var allProds = await getAll(S.PRODUITS);
   var prods = allProds.filter(function(p){ return p.stade==='produit_fini'; });
   if (!prods.length) prods = allProds; // repli si aucun produit fini n'a encore été qualifié
+  saleStockTot = await getStockTotal();
   var idx = saleLines.length;
   var fp = prods[0] || {};
   saleLines.push({ produitId: fp.id||null, qte: 0, prixUnit: fp.prix||0, remisePct: 0 });
 
   var div = document.createElement('div');
   div.id = 'saleL' + idx;
-  div.style.cssText = 'display:grid;grid-template-columns:2.5fr 0.8fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 6px;border-bottom:1px solid var(--border)';
+  div.style.cssText = 'display:grid;grid-template-columns:2.5fr 0.8fr 1fr 1fr 1fr auto;gap:6px;align-items:start;padding:7px 6px;border-bottom:1px solid var(--border)';
 
   var opts = prods.map(function(p){
     return '<option value="'+p.id+'" data-px="'+(p.prix||0)+'" data-u="'+esc(p.unite||'')+'" data-nom="'+esc(p.nom)+'">'
-      + esc(p.nom) + ' (' + (p.prix||0).toLocaleString('fr-FR') + ' F/'+esc(p.unite||'u')+')</option>';
+      + esc(libelleProduitAvecCalibre(p)) + ' (' + (p.prix||0).toLocaleString('fr-FR') + ' F/'+esc(p.unite||'u')+')</option>';
   }).join('');
 
   var INP = 'border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px;width:100%';
-  div.innerHTML = '<select style="'+INP+'" onchange="saleLineUpd('+idx+',\'p\',this)">'+opts+'</select>'
+  div.innerHTML = '<div><select style="'+INP+'" onchange="saleLineUpd('+idx+',\'p\',this)">'+opts+'</select><div id="saleStockHint'+idx+'" style="font-size:10px;color:var(--text3);margin-top:3px">'+renderSaleStockHint(fp)+'</div></div>'
     + '<span id="saleU'+idx+'" style="font-size:11px;color:var(--text3);text-align:center">'+esc(fp.unite||'u')+'</span>'
     + '<input type="number" placeholder="Qte" min="0" style="'+INP+'" oninput="saleLineUpd('+idx+',\'q\',this)" value="">'
     + '<input type="number" placeholder="PU HT" min="0" style="'+INP+'" oninput="saleLineUpd('+idx+',\'px\',this)" value="'+(fp.prix||0)+'">'
@@ -10095,6 +10159,11 @@ window.saleLineUpd = function(i, f, el) {
     }
     var uspan = document.getElementById('saleU'+i);
     if (uspan) uspan.textContent = opt.dataset.u || 'u';
+    getAll(S.PRODUITS).then(function(allProds){
+      var p = allProds.find(function(x){ return x.id===saleLines[i].produitId; });
+      var hint = document.getElementById('saleStockHint'+i);
+      if (hint) hint.innerHTML = renderSaleStockHint(p);
+    });
   } else if (f === 'q') {
     saleLines[i].qte = parseFloat(el.value) || 0;
   } else if (f === 'px') {
@@ -10139,6 +10208,7 @@ async function restoreSaleLines(lignes) {
   var allProds = await getAll(S.PRODUITS);
   var prods = allProds.filter(function(p){ return p.stade==='produit_fini'; });
   if (!prods.length) prods = allProds;
+  saleStockTot = await getStockTotal();
   saleLines = [];
   document.getElementById('saleLinesDiv').innerHTML = '';
   for (var i = 0; i < lignes.length; i++) {
@@ -10148,20 +10218,20 @@ async function restoreSaleLines(lignes) {
 
     var div = document.createElement('div');
     div.id = 'saleL' + idx;
-    div.style.cssText = 'display:grid;grid-template-columns:2.5fr 0.8fr 1fr 1fr 1fr auto;gap:6px;align-items:center;padding:7px 6px;border-bottom:1px solid var(--border)';
+    div.style.cssText = 'display:grid;grid-template-columns:2.5fr 0.8fr 1fr 1fr 1fr auto;gap:6px;align-items:start;padding:7px 6px;border-bottom:1px solid var(--border)';
 
     var lineProds = prods.some(function(p){ return p.id===l.produitId; }) ? prods
       : prods.concat(allProds.filter(function(p){ return p.id===l.produitId; }));
     var opts = lineProds.map(function(p){
       return '<option value="'+p.id+'" data-px="'+(p.prix||0)+'" data-u="'+esc(p.unite||'')+'"'
         + (p.id===l.produitId?' selected':'') + '>'
-        + esc(p.nom) + ' (' + (p.prix||0).toLocaleString('fr-FR') + ' F/'+esc(p.unite||'u')+')</option>';
+        + esc(libelleProduitAvecCalibre(p)) + ' (' + (p.prix||0).toLocaleString('fr-FR') + ' F/'+esc(p.unite||'u')+')</option>';
     }).join('');
 
-    var p = prods.find(function(x){ return x.id===l.produitId; }) || {};
+    var p = allProds.find(function(x){ return x.id===l.produitId; }) || {};
     var INP = 'border:1.5px solid var(--border);border-radius:6px;padding:6px;font-size:12px;width:100%';
     var ligneTotal = (l.qte||0)*(l.prixUnit||0);
-    div.innerHTML = '<select style="'+INP+'" onchange="saleLineUpd('+idx+',\'p\',this)">'+opts+'</select>'
+    div.innerHTML = '<div><select style="'+INP+'" onchange="saleLineUpd('+idx+',\'p\',this)">'+opts+'</select><div id="saleStockHint'+idx+'" style="font-size:10px;color:var(--text3);margin-top:3px">'+renderSaleStockHint(p)+'</div></div>'
       + '<span id="saleU'+idx+'" style="font-size:11px;color:var(--text3);text-align:center">'+esc(p.unite||'u')+'</span>'
       + '<input type="number" placeholder="Qte" min="0" style="'+INP+'" oninput="saleLineUpd('+idx+',\'q\',this)" value="'+(l.qte||'')+'">'
       + '<input type="number" placeholder="PU HT" min="0" style="'+INP+'" oninput="saleLineUpd('+idx+',\'px\',this)" value="'+(l.prixUnit||0)+'">'
