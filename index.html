@@ -9534,10 +9534,9 @@ async function renderReservations(ca){
         ${c&&c.tel?`<button class="btn btn-xs btn-gh" style="color:#25D366" onclick="envoyerReservationWhatsApp(${r.id})" title="Envoyer au client par WhatsApp"><i class="fab fa-whatsapp"></i></button>`:''}
         ${r.statutEff==='active'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier"><i class="fas fa-pen"></i></button>
         <button class="btn btn-xs" style="background:#dcfce7;color:#166534" onclick="convertirReservationEnCommande(${r.id})" title="Convertir en commande ferme"><i class="fas fa-right-left"></i></button>
-        <button class="btn-del" onclick="annulerReservation(${r.id})" title="Annuler"><i class="fas fa-ban"></i></button>`:''}
-        ${r.statutEff==='expiree'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier / réactiver"><i class="fas fa-pen"></i></button>
-        <button class="btn-del" onclick="supprimerReservation(${r.id})" title="Supprimer définitivement"><i class="fas fa-trash"></i></button>`:''}
-        ${r.statutEff==='annulee'?`<button class="btn-del" onclick="supprimerReservation(${r.id})" title="Supprimer définitivement"><i class="fas fa-trash"></i></button>`:''}
+        <button class="btn btn-xs btn-gh" onclick="annulerReservation(${r.id})" title="Annuler"><i class="fas fa-ban"></i></button>`:''}
+        ${r.statutEff==='expiree'?`<button class="btn btn-xs btn-gh" onclick="openReservationModal(${r.id})" title="Modifier / réactiver"><i class="fas fa-pen"></i></button>`:''}
+        ${(r.statutEff==='active'||r.statutEff==='expiree'||r.statutEff==='annulee'||r.statutEff==='convertie')?`<button class="btn-del" onclick="supprimerReservation(${r.id})" title="Supprimer définitivement"><i class="fas fa-trash"></i></button>`:''}
       </td>
     </tr>`;
   }).join('');
@@ -9638,12 +9637,17 @@ window.annulerReservation = async function(id){
   await updRec(S.RESERVATIONS,id,{...r,statut:'annulee'});
   toast('Réservation annulée — stock libéré');await renderReservations(distCA());
 };
-// Suppression définitive — uniquement réservations annulées ou expirées (jamais actives ni converties, tracées par une commande).
+// Suppression définitive — désormais autorisée quel que soit le statut, à la demande explicite
+// de l'utilisateur. Avertissement renforcé et adapté selon le cas :
+//  - active   : la réservation retenait du stock pour un client, cette retenue disparaît.
+//  - convertie: la commande ferme déjà créée n'est PAS supprimée, seul le lien de traçabilité l'est.
 window.supprimerReservation = async function(id){
   const resas=await getAll(S.RESERVATIONS);const r=resas.find(x=>x.id===id);if(!r){toast('Réservation introuvable','err');return;}
   const eff=statutEffectifResa(r);
-  if(eff!=='annulee' && eff!=='expiree'){toast('⛔ Seule une réservation annulée ou expirée peut être supprimée.','err');return;}
-  if(!confirm('Supprimer définitivement cette réservation ? Action irréversible.')) return;
+  let msg='Supprimer définitivement cette réservation ? Action irréversible.';
+  if(eff==='active') msg='⚠️ Cette réservation est ACTIVE — la quantité retenue pour le client sera libérée. Supprimer définitivement ? Action irréversible.';
+  else if(eff==='convertie') msg='⚠️ Cette réservation a été CONVERTIE en commande'+(r.commandeRef?' ('+r.commandeRef+')':'')+'. La commande ne sera pas supprimée, seule la réservation d\'origine le sera. Continuer ?';
+  if(!confirm(msg)) return;
   await delRec(S.RESERVATIONS,id);
   toast('Réservation supprimée');await renderReservations(distCA());
 };
@@ -19157,9 +19161,9 @@ async function collectApprovisionnementData(dateMin, dateMax){
   return { bcsP, recsP, montantCommande, montantReceptionne, bcEnAttente, bcEnRetard, delaiMoyen, topFournisseurs, topProduits, fourns };
 }
 
-// ── Collecte : Suivi de mortalité périodique — par lot, par cause, détail chronologique ──
+// ── Collecte : Suivi de mortalité périodique — par lot, par bâtiment, par cause, détail chronologique ──
 async function collectMortaliteData(dateMin, dateMax, lotId=''){
-  const [flocks, mortalite] = await Promise.all([getAll(S.FLOCKS), getAll(S.MORTALITE)]);
+  const [flocks, mortalite, buildings] = await Promise.all([getAll(S.FLOCKS), getAll(S.MORTALITE), getAll(S.BUILDINGS)]);
   const inPeriod = d => d && d >= dateMin && d <= dateMax;
   let lots = flocks.slice();
   if(lotId) lots = lots.filter(f=>String(f.id)===String(lotId));
@@ -19174,8 +19178,22 @@ async function collectMortaliteData(dateMin, dateMax, lotId=''){
     const causePrincipale = Object.entries(causes).sort((a,b)=>b[1]-a[1])[0];
     const effectif = f.initialStock||0;
     const taux = effectif>0 ? (nb/effectif*100) : 0;
-    return { id:f.id, nom:f.nom, type:f.type, effectif, nb, taux, causePrincipale: causePrincipale?causePrincipale[0]:'—' };
+    const batimentNom = buildings.find(b=>b.id===f.buildingId)?.nom || f.line || 'Sans bâtiment';
+    return { id:f.id, nom:f.nom, type:f.type, effectif, nb, taux, causePrincipale: causePrincipale?causePrincipale[0]:'—', batiment:batimentNom };
   });
+
+  // Synthèse par bâtiment (un bâtiment regroupe plusieurs lots)
+  const parBatiment = {};
+  parLot.forEach(l=>{
+    if(!parBatiment[l.batiment]) parBatiment[l.batiment] = { batiment:l.batiment, effectif:0, nb:0, nbLots:0, causes:{} };
+    const bg = parBatiment[l.batiment];
+    bg.effectif += l.effectif; bg.nb += l.nb; bg.nbLots++;
+    if(l.nb>0) bg.causes[l.causePrincipale] = (bg.causes[l.causePrincipale]||0) + l.nb;
+  });
+  const batiments = Object.values(parBatiment).map(bg=>{
+    const causePrincipale = Object.entries(bg.causes).sort((a,b)=>b[1]-a[1])[0];
+    return { ...bg, taux: bg.effectif>0 ? (bg.nb/bg.effectif*100) : 0, causePrincipale: causePrincipale?causePrincipale[0]:'—' };
+  }).sort((a,b)=>b.nb-a.nb);
 
   const totalMorts = mortP.reduce((a,m)=>a+(m.nbMorts||0),0);
   const effectifTotal = lots.reduce((a,f)=>a+(f.initialStock||0),0);
@@ -19188,10 +19206,11 @@ async function collectMortaliteData(dateMin, dateMax, lotId=''){
     .sort((a,b)=>b.nb-a.nb);
 
   const lotPlusTouche = parLot.slice().sort((a,b)=>b.nb-a.nb)[0] || null;
+  const batimentPlusTouche = batiments[0] || null;
 
   const detail = mortP.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.ts||0)-(a.ts||0));
 
-  return { dateMin, dateMax, parLot, totalMorts, effectifTotal, tauxGlobal, causesTri, lotPlusTouche, detail, flocks: lots };
+  return { dateMin, dateMax, parLot, batiments, totalMorts, effectifTotal, tauxGlobal, causesTri, lotPlusTouche, batimentPlusTouche, detail, flocks: lots };
 }
 
 // ── Valorisation FCFA d'une session de conditionnement — basée sur CALIBRE_TARIFS.
@@ -21170,8 +21189,18 @@ function buildCorpsGMAO(data, cfg){
 
 // ── Corps : Suivi de mortalité périodique ──
 function buildCorpsMortalite(data, cfg){
+  const batRows = data.batiments.map(b=>`<tr style="${b.nb>0?'background:#fff5f5':''}">
+    <td><strong>${esc(b.batiment)}</strong></td>
+    <td style="text-align:right">${b.nbLots}</td>
+    <td style="text-align:right">${b.effectif.toLocaleString('fr-FR')}</td>
+    <td style="text-align:right;font-weight:700;color:${b.nb>0?'#c1121f':'#059669'}">${b.nb.toLocaleString('fr-FR')}</td>
+    <td style="text-align:right">${b.taux.toFixed(2)}%</td>
+    <td>${esc(b.causePrincipale)}</td>
+  </tr>`).join('');
+
   const lotRows = data.parLot.slice().sort((a,b)=>b.nb-a.nb).map(l=>`<tr style="${l.nb>0?'background:#fff5f5':''}">
     <td><strong>${esc(l.nom)}</strong></td>
+    <td style="color:#555">${esc(l.batiment)}</td>
     <td style="text-align:center;color:#555">${l.type==='layer'?'Pondeuses':l.type==='broiler'?'Chair':(l.type||'—')}</td>
     <td style="text-align:right">${l.effectif.toLocaleString('fr-FR')}</td>
     <td style="text-align:right;font-weight:700;color:${l.nb>0?'#c1121f':'#059669'}">${l.nb.toLocaleString('fr-FR')}</td>
@@ -21200,14 +21229,21 @@ function buildCorpsMortalite(data, cfg){
   <div class="kpis">
     <div class="kpi-box"><div class="kpi-val" style="color:${data.totalMorts>0?'#c1121f':'#059669'}">${data.totalMorts.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Mortalité totale (période)</div></div>
     <div class="kpi-box"><div class="kpi-val">${data.tauxGlobal.toFixed(2)}%</div><div class="kpi-lbl">Taux global (vs effectif initial)</div></div>
-    <div class="kpi-box"><div class="kpi-val" style="font-size:14px">${data.lotPlusTouche&&data.lotPlusTouche.nb>0?esc(data.lotPlusTouche.nom):'—'}</div><div class="kpi-lbl">Lot le plus touché</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="font-size:14px">${data.batimentPlusTouche&&data.batimentPlusTouche.nb>0?esc(data.batimentPlusTouche.batiment):'—'}</div><div class="kpi-lbl">Bâtiment le plus touché</div></div>
     <div class="kpi-box"><div class="kpi-val" style="font-size:14px">${data.causesTri[0]?esc(data.causesTri[0].cause):'—'}</div><div class="kpi-lbl">Cause principale</div></div>
   </div>
   <div class="section">
-    <div class="section-title">Mortalité par lot</div>
-    <table><thead><tr><th>Lot</th><th style="text-align:center">Type</th><th style="text-align:right">Effectif initial</th><th style="text-align:right">Mortalité période</th><th style="text-align:right">Taux</th><th>Cause principale</th></tr></thead>
-    <tbody>${lotRows||'<tr><td colspan="6" style="text-align:center;color:#aaa">Aucun lot</td></tr>'}</tbody>
-    <tr class="total-row"><td colspan="3"><strong>TOTAL</strong></td><td style="text-align:right;color:#c1121f">${data.totalMorts.toLocaleString('fr-FR')}</td><td style="text-align:right">${data.tauxGlobal.toFixed(2)}%</td><td></td></tr>
+    <div class="section-title">Synthèse par bâtiment</div>
+    <table><thead><tr><th>Bâtiment</th><th style="text-align:right">Nb lots</th><th style="text-align:right">Effectif initial</th><th style="text-align:right">Mortalité période</th><th style="text-align:right">Taux</th><th>Cause principale</th></tr></thead>
+    <tbody>${batRows||'<tr><td colspan="6" style="text-align:center;color:#aaa">Aucun bâtiment</td></tr>'}</tbody>
+    <tr class="total-row"><td colspan="2"><strong>TOTAL</strong></td><td style="text-align:right">${data.effectifTotal.toLocaleString('fr-FR')}</td><td style="text-align:right;color:#c1121f">${data.totalMorts.toLocaleString('fr-FR')}</td><td style="text-align:right">${data.tauxGlobal.toFixed(2)}%</td><td></td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <div class="section-title">Détail par lot</div>
+    <table><thead><tr><th>Lot</th><th>Bâtiment</th><th style="text-align:center">Type</th><th style="text-align:right">Effectif initial</th><th style="text-align:right">Mortalité période</th><th style="text-align:right">Taux</th><th>Cause principale</th></tr></thead>
+    <tbody>${lotRows||'<tr><td colspan="7" style="text-align:center;color:#aaa">Aucun lot</td></tr>'}</tbody>
+    <tr class="total-row"><td colspan="3"><strong>TOTAL</strong></td><td style="text-align:right">${data.effectifTotal.toLocaleString('fr-FR')}</td><td style="text-align:right;color:#c1121f">${data.totalMorts.toLocaleString('fr-FR')}</td><td style="text-align:right">${data.tauxGlobal.toFixed(2)}%</td><td></td></tr>
     </table>
   </div>
   <div class="section">
