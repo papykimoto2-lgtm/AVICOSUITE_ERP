@@ -20685,10 +20685,25 @@ function htmlEtatVersTexte(html){
   t = t.split('\n').map(l=>l.replace(/[ \t]+/g,' ').trim()).filter(l=>l.length>0).join('\n');
   return t;
 }
+// ── Filtres de période/lot pour les États périodiques ──
+// condDateMin/condDateMax/condLotFilter (onglet "Point Conditionnement") et
+// rapDateMin/rapDateMax/rapLotFilter (onglet "États & Impression") coexistent tous les deux
+// dans le DOM de renderRapports (un onglet caché n'est pas retiré du DOM, juste display:none).
+// BUG corrigé ici : condDateMin étant toujours présent, il écrasait systématiquement le choix
+// de période fait dans "États & Impression", qui semblait donc ne jamais s'appliquer.
+// On ne fait confiance aux champs "cond*" que s'ils sont réellement visibles à l'écran
+// (onglet Point Conditionnement actif, ou page Conditionnement dédiée) — sinon on retombe
+// sur les champs "rap*" de la page Rapports.
+function getEtatPeriodFilters(){
+  const condMinEl = document.getElementById('condDateMin');
+  const condVisible = !!(condMinEl && condMinEl.offsetParent !== null);
+  const dateMin = (condVisible && condMinEl.value) || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
+  const dateMax = (condVisible && document.getElementById('condDateMax')?.value) || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
+  const lotId   = (condVisible && document.getElementById('condLotFilter')?.value) || document.getElementById('rapLotFilter')?.value || '';
+  return {dateMin, dateMax, lotId};
+}
 window.envoyerEtatWhatsApp=async function(type){
-  const dateMin = document.getElementById('condDateMin')?.value || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
-  const dateMax = document.getElementById('condDateMax')?.value || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
-  const lotId   = document.getElementById('condLotFilter')?.value || document.getElementById('rapLotFilter')?.value || '';
+  const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
   const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
@@ -20702,8 +20717,10 @@ window.previewEtat = function(type){ printEtatPeriodique(type, true); };
 // Filtres bâtiment/ligne — lus depuis la page Conditionnement (condBatFilter/condLigneFilter)
 // si présents, sinon depuis la page Rapports (rapBatFilter/rapLigneFilter) si elle les a.
 function getCondBatLigneFilters(){
-  const bat = document.getElementById('condBatFilter')?.value || document.getElementById('rapBatFilter')?.value || '';
-  const lig = document.getElementById('condLigneFilter')?.value || document.getElementById('rapLigneFilter')?.value || '';
+  const condBatEl = document.getElementById('condBatFilter');
+  const condVisible = !!(condBatEl && condBatEl.offsetParent !== null);
+  const bat = (condVisible && condBatEl.value) || document.getElementById('rapBatFilter')?.value || '';
+  const lig = (condVisible && document.getElementById('condLigneFilter')?.value) || document.getElementById('rapLigneFilter')?.value || '';
   return {bat, lig};
 }
 async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
@@ -20733,9 +20750,7 @@ async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
 }
 
 window.printEtatPeriodique = async function(type, preview=false){
-  const dateMin = document.getElementById('condDateMin')?.value || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
-  const dateMax = document.getElementById('condDateMax')?.value || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
-  const lotId   = document.getElementById('condLotFilter')?.value || document.getElementById('rapLotFilter')?.value || '';
+  const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
   const entreprise = buildEnteteEtat(cfg, type, dateMin, dateMax);
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
@@ -20753,9 +20768,7 @@ window.afficherEtatInline = async function(type){
   if(!zone) return;
   zone.innerHTML = '<div class="card"><div class="card-bd" style="text-align:center;padding:20px;color:var(--text3)"><i class="fas fa-spinner fa-spin"></i> Chargement…</div></div>';
   zone.scrollIntoView({behavior:'smooth',block:'nearest'});
-  const dateMin = document.getElementById('condDateMin')?.value || document.getElementById('rapDateMin')?.value || new Date().toISOString().slice(0,7)+'-01';
-  const dateMax = document.getElementById('condDateMax')?.value || document.getElementById('rapDateMax')?.value || new Date().toISOString().slice(0,10);
-  const lotId   = document.getElementById('condLotFilter')?.value || document.getElementById('rapLotFilter')?.value || '';
+  const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
   const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
