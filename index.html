@@ -11780,6 +11780,73 @@ async function getInventairePFCalibreDetail(){
   return { calibres, parDepot, grandStockPlt, grandStockCar, grandValeur, nbDepots: parDepot.length };
 }
 
+// ── Entrées PF (produits finis) par calibre, ventilées par dépôt — cumul sur la période ──
+// Distinct de getInventairePFCalibreDetail() (stock instantané) : ceci mesure le FLUX
+// d'entrées en dépôt sur la période choisie. Un carton n'est vendable au tarif de son
+// calibre que s'il est réellement entré, en tant que tel, dans le dépôt produits finis
+// d'où part la vente — d'où la ventilation par dépôt (et pas seulement par calibre).
+async function collectEntreesPFData(dateMin, dateMax, lotId='', batimentId='', ligneId=''){
+  const [flocks, cond, deps, lines] = await Promise.all([getAll(S.FLOCKS), getAll(S.COND), getAll(S.DEPOTS), getAll(S.LINES)]);
+  const inPeriod = d => d && d >= dateMin && d <= dateMax;
+  const lotLineMap={}, lineBatMap={};
+  flocks.forEach(f=>{ lotLineMap[f.id]=f.lineId||null; });
+  lines.forEach(l=>{ lineBatMap[l.id]=l.buildingId||null; });
+  let sessions = cond.filter(s=>inPeriod(s.date));
+  if(lotId) sessions = sessions.filter(s=>String(s.flockId||'')===String(lotId));
+  if(batimentId||ligneId){
+    sessions = sessions.filter(s=>{
+      const lineId = lotLineMap[s.flockId];
+      if(ligneId && String(lineId||'')!==String(ligneId)) return false;
+      if(batimentId && String(lineBatMap[lineId]||'')!==String(batimentId)) return false;
+      return true;
+    });
+  }
+
+  const CAL_DEFS3 = [
+    {k:'petit',    lbl:'Petit',     emoji:'🟡', fCal:'cal_petit',     fPlt:'plt_petit',     fCar:'car_petit'},
+    {k:'moyen',    lbl:'Moyen',     emoji:'🟢', fCal:'cal_moyen',     fPlt:'plt_moyen',     fCar:'car_moyen'},
+    {k:'gros',     lbl:'Gros',      emoji:'🟠', fCal:'cal_gros',      fPlt:'plt_gros',      fCar:'car_gros'},
+    {k:'tresGros', lbl:'Très gros', emoji:'🔴', fCal:'cal_tres_gros', fPlt:'plt_tres_gros', fCar:'car_tres_gros'}
+  ];
+
+  const parDepotMap = {}; // depotId|'_none' -> {nom, oeufs, plateaux, cartons, valeur, calibres:{k:{...}}}
+  let nonCalSessions=0, nonCalPlateaux=0, nonCalCartons=0;
+
+  sessions.forEach(s=>{
+    const hasCal = CAL_DEFS3.some(c=>(s[c.fCal]||0)>0);
+    const dep = s.depotDestId ? deps.find(d=>d.id===s.depotDestId) : null;
+    const key = dep ? dep.id : '_none';
+    if(!parDepotMap[key]) parDepotMap[key] = {nom: dep?dep.nom:'Dépôt non renseigné', oeufs:0, plateaux:0, cartons:0, valeur:0, calibres:{}};
+    const dg = parDepotMap[key];
+    if(hasCal){
+      CAL_DEFS3.forEach(c=>{
+        const oeufs=s[c.fCal]||0, plt=s[c.fPlt]||0, car=s[c.fCar]||0, val=plt*CALIBRE_TARIFS[c.k].prixPlateau;
+        if(!dg.calibres[c.k]) dg.calibres[c.k]={oeufs:0,plateaux:0,cartons:0,valeur:0};
+        dg.calibres[c.k].oeufs+=oeufs; dg.calibres[c.k].plateaux+=plt; dg.calibres[c.k].cartons+=car; dg.calibres[c.k].valeur+=val;
+        dg.oeufs+=oeufs; dg.plateaux+=plt; dg.cartons+=car; dg.valeur+=val;
+      });
+    } else {
+      // Session sans détail calibre : comptée dans le total du dépôt, hors ventilation calibre
+      // (valorisée au tarif Moyen par défaut, comme valeurCondSession()).
+      dg.plateaux+=s.plateaux||0; dg.cartons+=s.cartons||0; dg.oeufs+=s.oeufs_nets||0; dg.valeur+=valeurCondSession(s);
+      nonCalSessions++; nonCalPlateaux+=s.plateaux||0; nonCalCartons+=s.cartons||0;
+    }
+  });
+
+  const parDepot = Object.entries(parDepotMap).map(([key,dg])=>({
+    id: key==='_none'?null:parseInt(key), nom: dg.nom, oeufs:dg.oeufs, plateaux:dg.plateaux, cartons:dg.cartons, valeur:dg.valeur,
+    calibres: CAL_DEFS3.map(c=>({k:c.k, lbl:c.lbl, emoji:c.emoji, ...(dg.calibres[c.k]||{oeufs:0,plateaux:0,cartons:0,valeur:0})}))
+  })).sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+
+  const grandOeufs = parDepot.reduce((a,d)=>a+d.oeufs,0);
+  const grandPlateaux = parDepot.reduce((a,d)=>a+d.plateaux,0);
+  const grandCartons = parDepot.reduce((a,d)=>a+d.cartons,0);
+  const grandValeur = parDepot.reduce((a,d)=>a+d.valeur,0);
+
+  return { dateMin, dateMax, parDepot, grandOeufs, grandPlateaux, grandCartons, grandValeur,
+    nbDepots: parDepot.length, nbSessions: sessions.length, nonCalSessions, nonCalPlateaux, nonCalCartons };
+}
+
 async function renderCond(ca){
   const [sessions, lots, prods, buildings, lines] = await Promise.all([getAll(S.COND), getAll(S.FLOCKS), getAll(S.PRODUITS), getAll(S.BUILDINGS), getAll(S.LINES)]);
   const stockTot = await getStockTotal();
@@ -11884,6 +11951,9 @@ async function renderCond(ca){
   const layerLots = lots.filter(f => f.type === 'layer');
   const lotSelect = layerLots.map(f => `<option value="${f.id}">${f.nom}</option>`).join('');
 
+  // Entrées PF par calibre, ventilées par dépôt — même filtres période/bâtiment/ligne/lot que ci-dessus
+  const entreesPF = await collectEntreesPFData(fDateMin, fDateMax, fLot, fBat, fLigne);
+
   ca.innerHTML = `
     <div class="page-header">
       <div class="page-header-title"><i class="fas fa-box-open" style="color:var(--g2)"></i> Conditionnement des œufs</div>
@@ -11967,6 +12037,35 @@ async function renderCond(ca){
             <thead><tr><th>Calibre</th><th>Œufs cumulés</th><th>Part</th><th>Plateaux cumulés</th><th>Cartons cumulés</th><th>Stock plateaux</th><th>Stock cartons</th><th>Valeur stock</th></tr></thead>
             <tbody>${calRows}</tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- ENTRÉES PF PAR CALIBRE — VENTILÉ PAR DÉPÔT (flux de la période) -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span>📥 Entrées produits finis par calibre — détail par dépôt (période)</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-gh btn-sm" onclick="afficherEtatInline('entreespf')"><i class="fas fa-eye"></i> Aperçu</button>
+            <button class="btn btn-p btn-sm" onclick="printEtatPeriodique('entreespf')"><i class="fas fa-print"></i> Imprimer</button>
+            <button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerEtatWhatsApp('entreespf')"><i class="fab fa-whatsapp"></i></button>
+          </div>
+        </div>
+        <div class="card-bd">
+          ${entreesPF.parDepot.length ? entreesPF.parDepot.map(d=>`
+            <div style="margin-bottom:12px;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+              <div style="background:#f6f9f6;padding:8px 12px;font-weight:700;font-size:12px;display:flex;justify-content:space-between;align-items:center">
+                <span><i class="fas fa-warehouse" style="color:var(--g2)"></i> ${esc(d.nom)}</span>
+                <span style="color:#166534">${Math.round(d.valeur).toLocaleString('fr-FR')} F</span>
+              </div>
+              <div class="tbl-wrap"><table class="tbl">
+                <thead><tr><th>Calibre</th><th>Œufs</th><th>Plateaux</th><th>Cartons (12 plt)</th><th>Valeur</th></tr></thead>
+                <tbody>${d.calibres.map(c=>`<tr><td>${c.emoji} ${c.lbl}</td><td>${c.oeufs.toLocaleString('fr-FR')}</td><td>${c.plateaux}</td><td>${c.cartons}</td><td>${Math.round(c.valeur).toLocaleString('fr-FR')} F</td></tr>`).join('')}</tbody>
+              </table></div>
+            </div>`).join('') : `<div style="text-align:center;color:var(--text3);padding:20px"><i class="fas fa-inbox" style="font-size:30px;opacity:.3;display:block;margin-bottom:8px"></i>Aucune entrée de produits finis calibrés sur cette période.</div>`}
+          ${entreesPF.parDepot.length ? `<div style="text-align:right;font-weight:800;padding:10px 6px 2px;border-top:2px solid var(--border);margin-top:6px;font-size:12px">
+            TOTAL GÉNÉRAL — ${entreesPF.grandOeufs.toLocaleString('fr-FR')} œufs · ${entreesPF.grandPlateaux} plt · ${entreesPF.grandCartons} car · <span style="color:#166534">${Math.round(entreesPF.grandValeur).toLocaleString('fr-FR')} F</span>
+          </div>` : ''}
+          ${entreesPF.nonCalSessions>0 ? `<div style="font-size:10px;color:var(--text3);margin-top:6px">${entreesPF.nonCalSessions} session(s) sans détail calibre sur la période (${entreesPF.nonCalPlateaux} plt, ${entreesPF.nonCalCartons} car) — incluse(s) dans les totaux dépôt ci-dessus.</div>` : ''}
         </div>
       </div>
 
@@ -19559,6 +19658,38 @@ function buildCorpsInventairePFCalibre(data, cfg){
   <p style="font-size:10px;color:#888;margin-top:4px">Inventaire instantané du stock de produits finis (plateaux et cartons d'œufs conditionnés), valorisé aux tarifs calibrés en vigueur (Paramétrage → Tarifs conditionnement). Ce document reflète le stock réel au moment de l'édition, indépendamment de la période sélectionnée dans les filtres.</p>`;
 }
 
+// ── Corps : Entrées produits finis par calibre, ventilées par dépôt (flux de la période) ──
+function buildCorpsEntreesPFCalibre(data, cfg){
+  const dev = cfg.devise||'FCFA';
+  const depotBlocks = data.parDepot.map(d=>`
+    <div class="section">
+      <div class="section-title">🏬 Dépôt : ${esc(d.nom)}</div>
+      <table><thead><tr><th>Calibre</th><th style="text-align:right">Œufs</th><th style="text-align:right">Plateaux</th><th style="text-align:right">Cartons (12 plt)</th><th style="text-align:right">Valeur (${dev})</th></tr></thead>
+      <tbody>
+        ${d.calibres.map(c=>`<tr><td>${c.emoji} ${c.lbl}</td><td style="text-align:right">${c.oeufs.toLocaleString('fr-FR')}</td><td style="text-align:right">${c.plateaux}</td><td style="text-align:right">${c.cartons}</td><td style="text-align:right;font-weight:700;color:#166534">${Math.round(c.valeur).toLocaleString('fr-FR')}</td></tr>`).join('')}
+        <tr class="total-row"><td>Sous-total dépôt</td><td style="text-align:right">${d.oeufs.toLocaleString('fr-FR')}</td><td style="text-align:right">${d.plateaux}</td><td style="text-align:right">${d.cartons}</td><td style="text-align:right">${Math.round(d.valeur).toLocaleString('fr-FR')}</td></tr>
+      </tbody></table>
+    </div>`).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucune entrée de produits finis calibrés sur cette période.</p></div>';
+
+  const note = data.nonCalSessions>0
+    ? `<p style="font-size:10px;color:#888;margin-top:4px">${data.nonCalSessions} session(s) sans détail par calibre sur la période (${data.nonCalPlateaux} plateaux, ${data.nonCalCartons} cartons) — comptée(s) dans le total du dépôt concerné, hors ventilation par calibre.</p>`
+    : '';
+
+  return `
+  <div class="kpis">
+    <div class="kpi-box"><div class="kpi-val">${data.grandOeufs.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Œufs conditionnés</div></div>
+    <div class="kpi-box"><div class="kpi-val">${data.grandPlateaux.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Plateaux entrés</div></div>
+    <div class="kpi-box"><div class="kpi-val">${data.grandCartons.toLocaleString('fr-FR')}</div><div class="kpi-lbl">Cartons entrés (12 plt)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${Math.round(data.grandValeur).toLocaleString('fr-FR')}</div><div class="kpi-lbl">Valeur totale (${dev})</div></div>
+  </div>
+  <div class="section">
+    <div class="section-title">🏬 Détail par dépôt destination</div>
+    ${depotBlocks}
+  </div>
+  ${note}
+  <p style="font-size:10px;color:#888;margin-top:4px">Cumul des entrées en dépôt de produits finis calibrés (plateaux et cartons de 12 plateaux) sur la période sélectionnée, valorisées aux tarifs calibrés en vigueur (Paramétrage → Tarifs conditionnement). Ce document reflète le FLUX de la période — voir le rapport « Inventaire PF par calibre » pour le stock instantané.</p>`;
+}
+
 // ── Génération du texte du rapport ──
 function genRapportTexte(d, format='whatsapp'){
   const NL = '\n';
@@ -20953,7 +21084,7 @@ function getEtatPeriodFilters(){
 window.envoyerEtatWhatsApp=async function(type){
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
-  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET',mortalite:'☠️ SUIVI MORTALITÉ',invpf:'🏬🥚 INVENTAIRE PF PAR CALIBRE'};
+  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET',mortalite:'☠️ SUIVI MORTALITÉ',invpf:'🏬🥚 INVENTAIRE PF PAR CALIBRE',entreespf:'📥🥚 ENTRÉES PF PAR CALIBRE'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
   const entete = '*'+(titres[type]||'ÉTAT')+'*\n'+(cfg.nomExploitation||'Exploitation')+'\nPériode : '+dateMin+' au '+dateMax+'\n━━━━━━━━━━━━━━━━\n';
   const texte = entete + htmlEtatVersTexte(corps);
@@ -20996,6 +21127,10 @@ async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
   if(type==='appro') return buildCorpsApprovisionnement(await collectApprovisionnementData(dateMin, dateMax), cfg);
   if(type==='mortalite') return buildCorpsMortalite(await collectMortaliteData(dateMin, dateMax, lotId), cfg);
   if(type==='invpf') return buildCorpsInventairePFCalibre(await getInventairePFCalibreDetail(), cfg);
+  if(type==='entreespf'){
+    const {bat, lig} = getCondBatLigneFilters();
+    return buildCorpsEntreesPFCalibre(await collectEntreesPFData(dateMin, dateMax, lotId, bat, lig), cfg);
+  }
   return '';
 }
 
@@ -21020,7 +21155,7 @@ window.afficherEtatInline = async function(type){
   zone.scrollIntoView({behavior:'smooth',block:'nearest'});
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
-  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité',invpf:'🏬🥚 Inventaire PF par calibre'};
+  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité',invpf:'🏬🥚 Inventaire PF par calibre',entreespf:'📥🥚 Entrées PF par calibre'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
   zone.innerHTML = `<div class="card" style="border:1.5px solid var(--g3)">
     <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center">
@@ -21045,7 +21180,8 @@ function buildEnteteEtat(cfg, type, dateMin, dateMax){
     commercial:'ÉTAT COMMERCIAL',gmao:'ÉTAT GMAO',bilan:'BILAN COMPLET',
     prodcond:'PRODUCTION vs CONDITIONNEMENT (par ligne / bâtiment)',
     appro:'ÉTAT D\'APPROVISIONNEMENT', mortalite:'SUIVI DE MORTALITÉ PÉRIODIQUE',
-    invpf:'INVENTAIRE PRODUITS FINIS PAR CALIBRE (par dépôt)'
+    invpf:'INVENTAIRE PRODUITS FINIS PAR CALIBRE (par dépôt)',
+    entreespf:'ENTRÉES PRODUITS FINIS PAR CALIBRE (par dépôt, période)'
   }[type]||'ÉTAT PÉRIODIQUE';
   const fmtDate = d => d ? new Date(d).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}) : '—';
   return {logo, titreType, fmtDate, dateMin, dateMax};
