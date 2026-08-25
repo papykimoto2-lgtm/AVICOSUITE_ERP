@@ -9067,8 +9067,34 @@ async function renderProds(ca){
 
   const bodyHtml = vm==='grid' ? (cardsGrid||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit.</div></div>') : (tables||'<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Aucun produit. Créez-en un dans le catalogue.</div></div>');
   const nbDup=await countProdDuplicates();
-  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><div style="display:flex;gap:8px;align-items:center">${nbDup?`<button class="btn btn-a btn-sm" onclick="fusionnerDoublonsProds()"><i class="fas fa-code-merge"></i> Fusionner doublons (${nbDup})</button>`:''}${viewToggleHtml('prods',vm)}<button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div></div><div class="stock-page">${kpiBar}${bodyHtml}</div>`;
+  ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-tag" style="color:var(--g2)"></i> Catalogue produits</div><div style="display:flex;gap:8px;align-items:center">${nbDup?`<button class="btn btn-a btn-sm" onclick="fusionnerDoublonsProds()"><i class="fas fa-code-merge"></i> Fusionner doublons (${nbDup})</button>`:''}${viewToggleHtml('prods',vm)}<button class="btn btn-a btn-sm" onclick="creerProduitsCalibres()"><i class="fas fa-egg"></i> Créer produits calibrés</button><button class="btn btn-p btn-sm" onclick="openProdModal()"><i class="fas fa-plus"></i> Nouveau produit</button></div></div><div class="stock-page">${kpiBar}${bodyHtml}</div>`;
 }
+// ── Création en un clic des 8 produits calibrés (4 cartons + 4 plateaux) requis pour
+// pouvoir réserver/vendre/livrer par calibre — évite toute faute de frappe sur les refs
+// CAL-CAR-x / CAL-PLT-x dont dépend toute la logique calibreFromProduit().
+window.creerProduitsCalibres = async function(){
+  const [prods, deps] = await Promise.all([getAll(S.PRODUITS), getAll(S.DEPOTS)]);
+  const depotPF = deps.find(d=>/produit|fini|vente/i.test(d.nom||'')) || deps[0] || null;
+  const defs = [
+    {ref:'CAL-CAR-P',  nom:'Carton œufs Petit',      unite:'unité'},
+    {ref:'CAL-CAR-M',  nom:'Carton œufs Moyen',      unite:'unité'},
+    {ref:'CAL-CAR-G',  nom:'Carton œufs Gros',       unite:'unité'},
+    {ref:'CAL-CAR-TG', nom:'Carton œufs Très Gros',  unite:'unité'},
+    {ref:'CAL-PLT-P',  nom:'Plateau œufs Petit',     unite:'plateau'},
+    {ref:'CAL-PLT-M',  nom:'Plateau œufs Moyen',     unite:'plateau'},
+    {ref:'CAL-PLT-G',  nom:'Plateau œufs Gros',      unite:'plateau'},
+    {ref:'CAL-PLT-TG', nom:'Plateau œufs Très Gros', unite:'plateau'}
+  ];
+  const aCreer = defs.filter(d=>!prods.find(p=>p.ref===d.ref));
+  if(!aCreer.length){ toast('Les 8 produits calibrés existent déjà'); return; }
+  if(!confirm(`Créer ${aCreer.length} produit(s) calibré(s) manquant(s) ?\nCatégorie "Œufs", stade "Produit fini", dépôt "${depotPF?depotPF.nom:'à définir'}". Vous pourrez ajuster prix/dépôt ensuite dans Produits.`)) return;
+  for(const d of aCreer){
+    await addRec(S.PRODUITS,{nom:d.nom, categorie:'oeuf', stade:'produit_fini', depotAffecteId:depotPF?depotPF.id:null, unite:d.unite, prix:0, seuil:0, fournId:null, ref:d.ref, description:'Créé automatiquement — utilisé pour réservation/vente/livraison par calibre.', alerteDesactivee:false});
+  }
+  toast(`✅ ${aCreer.length} produit(s) calibré(s) créé(s) — pensez à renseigner le prix de vente dans Produits`);
+  await render();
+};
+
 async function openProdModal(id=null){
   const[fourns,deps]=await Promise.all([getAll(S.FOURNISSEURS),getAll(S.DEPOTS)]);document.getElementById('prodId').value=id||'';document.getElementById('mProdTitle').textContent=id?'Modifier':'Nouveau produit';
   document.getElementById('prodFourn').innerHTML='<option value="">—</option>'+fourns.map(f=>`<option value="${f.id}">${f.nom}</option>`).join('');
