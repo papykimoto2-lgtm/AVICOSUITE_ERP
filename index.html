@@ -2880,6 +2880,31 @@ async function getStockTotal(){
   for(const[k,v] of Object.entries(bal)){const pid=parseInt(k.split('_')[0]);tot[pid]=(tot[pid]||0)+v;}
   return tot;
 }
+
+// ── Solde AVANT/APRÈS par mouvement — rejoue l'historique complet (produit+dépôt) dans
+// l'ordre chronologique réel (ts croissant), indépendamment des filtres affichés, pour que
+// le stock initial/final de chaque ligne du journal soit exact même si on filtre par période.
+// Un transfert impacte deux dépôts : on garde la vue "source" (sortie) comme référence
+// principale, et la vue destination (entrée) à part pour ne pas mélanger deux soldes.
+function computeMvtRunningBalances(allMvts){
+  const sorted=allMvts.slice().sort((a,b)=>a.ts-b.ts);
+  const bal={}; const out={};
+  for(const m of sorted){
+    if(m.type==='entree'||m.type==='inventaire'){
+      const k=`${m.produitId}_${m.depotDestId}`;const avant=bal[k]||0;const apres=avant+m.quantite;bal[k]=apres;
+      out[m.id]={avant,apres,depotId:m.depotDestId};
+    } else if(m.type==='sortie'){
+      const k=`${m.produitId}_${m.depotSrcId}`;const avant=bal[k]||0;const apres=avant-m.quantite;bal[k]=apres;
+      out[m.id]={avant,apres,depotId:m.depotSrcId};
+    } else if(m.type==='transfert'){
+      const ks=`${m.produitId}_${m.depotSrcId}`;const kd=`${m.produitId}_${m.depotDestId}`;
+      const avantSrc=bal[ks]||0;const apresSrc=avantSrc-m.quantite;bal[ks]=apresSrc;
+      const avantDest=bal[kd]||0;const apresDest=avantDest+m.quantite;bal[kd]=apresDest;
+      out[m.id]={avant:avantSrc,apres:apresSrc,depotId:m.depotSrcId,avantDest,apresDest,depotDestId:m.depotDestId};
+    }
+  }
+  return out;
+}
 // Un produit est "en alerte stock critique" si sa quantité est sous le seuil ET
 // que l'alerte n'a pas été désactivée manuellement pour ce produit (S.PRODUITS.alerteDesactivee).
 function stockEnAlerte(p,qty){
@@ -2914,6 +2939,29 @@ const MVT_CADRES={
   collecte:'Collecte ponte',inventaire:'Inventaire physique',transfert:'Transfert inter-dépôt',
   ajustement:'Ajustement/correction'
 };
+// ── Contrôle de disponibilité avant commande/livraison — compare la quantité demandée
+// de chaque ligne au stock réellement disponible dans le dépôt d'affectation du produit.
+// Utilisé pour bloquer (avec message clair) toute commande ou livraison portant sur un
+// produit fini dont le stock est insuffisant. Les produits sans dépôt d'affectation ne
+// sont pas contrôlables ici (cas déjà signalé séparément via "sansDepot").
+async function checkStockDisponibleLignes(lignes, prods){
+  const bal = await getBalance();
+  const problems = [];
+  for(const l of (lignes||[])){
+    const p = prods.find(x=>x.id===l.produitId);
+    if(!p || !p.depotAffecteId) continue;
+    const dispo = bal[`${l.produitId}_${p.depotAffecteId}`] || 0;
+    if(l.qte > dispo + 0.0001){
+      problems.push({designation:l.designation||p.nom, demande:l.qte, dispo, unite:l.unite||p.unite||''});
+    }
+  }
+  return problems;
+}
+window.checkStockDisponibleLignes = checkStockDisponibleLignes;
+function formatStockProblemes(probs){
+  return probs.map(x=>`• ${x.designation} : demandé ${x.demande} ${x.unite}, disponible ${Math.round(x.dispo*100)/100} ${x.unite}`).join('\n');
+}
+
 async function mvtNumero(date){
   const d=(date||new Date().toISOString().slice(0,10)).replace(/-/g,'');
   const mvts=await getAll(S.MVTS);
@@ -7999,13 +8047,25 @@ function applyMvtFilters(mvts,prods){
 }
 async function renderMvts(ca,p=1){
   const[allMvts,prods,deps,fourns]=await Promise.all([getAll(S.MVTS),getAll(S.PRODUITS),getAll(S.DEPOTS),getAll(S.FOURNISSEURS)]);
+  const runningBal=computeMvtRunningBalances(allMvts);
   const mvts=applyMvtFilters(allMvts,prods);
   const sorted=mvts.slice().sort((a,b)=>b.ts-a.ts);const PAGE=15;const total=sorted.length;const pages=Math.max(1,Math.ceil(total/PAGE));
   const slice=sorted.slice((p-1)*PAGE,p*PAGE);
   const typeLbl={entree:'Entrée',sortie:'Sortie',transfert:'Transfert',inventaire:'Inventaire'};
   const typeCls={entree:'b-g',sortie:'b-r',transfert:'b-bl',inventaire:'b-gr'};
   const typeArtIconShort={produit_fini:'🥚',matiere_premiere:'🌾',encours:'⚙️',consommable:'📦',autre:'❓'};
-  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><span title="${TYPE_ARTICLE_LBL[classifierArticle(pr)]||''}">${typeArtIconShort[classifierArticle(pr)]||''}</span> <strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> ${canDelete('stock')?`<button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}`:''}</td></tr>`;}).join('');
+  const rows=slice.map(m=>{const pr=prods.find(x=>x.id===m.produitId);const ds=deps.find(x=>x.id===m.depotSrcId);const dd=deps.find(x=>x.id===m.depotDestId);const f=fourns.find(x=>x.id===m.fournId);const manuel=m.cadre==='manuel'||m.cadre==='ajustement'||m.cadre==='inventaire'||m.cadre==='transfert'||m.cadre==='reception'||m.cadre==='vente'||!m.cadre;
+    const rb=runningBal[m.id]||{};
+    const fmt=v=>v==null?'—':(Math.round(v*100)/100)+' '+(m.unite||'');
+    let stockAvantHtml, stockApresHtml;
+    if(m.type==='transfert'){
+      stockAvantHtml=`<div title="Dépôt source">${fmt(rb.avant)}</div><div style="font-size:9px;color:var(--text3)" title="Dépôt destination">↳ ${fmt(rb.avantDest)}</div>`;
+      stockApresHtml=`<div title="Dépôt source">${fmt(rb.apres)}</div><div style="font-size:9px;color:var(--text3)" title="Dépôt destination">↳ ${fmt(rb.apresDest)}</div>`;
+    } else {
+      stockAvantHtml=fmt(rb.avant);
+      stockApresHtml=`<span style="color:${rb.apres<0?'var(--red)':'inherit'}">${fmt(rb.apres)}</span>`;
+    }
+    return `<tr><td style="font-size:10px;color:var(--text3);white-space:nowrap"><strong>${m.piece||'—'}</strong><br>${m.date||'—'}</td><td><span class="badge ${typeCls[m.type]||'b-gr'}">${typeLbl[m.type]||m.type}</span><br><span style="font-size:9px;color:var(--text3)">${esc(m.cadreLabel||m.cadre||'—')}</span></td><td><span title="${TYPE_ARTICLE_LBL[classifierArticle(pr)]||''}">${typeArtIconShort[classifierArticle(pr)]||''}</span> <strong>${pr?esc(pr.nom):'—'}</strong></td><td style="font-size:11px;color:var(--text3);white-space:nowrap">${stockAvantHtml}</td><td style="font-weight:700;color:${m.type==='sortie'?'var(--red)':m.type==='entree'?'var(--g2)':'inherit'}">${m.type==='sortie'?'−':'+'}${m.quantite} ${m.unite||''}</td><td style="font-size:11px;font-weight:700;white-space:nowrap">${stockApresHtml}</td><td style="font-size:11px;color:var(--text3)">${ds?'De: '+esc(ds.nom.split(' ').slice(0,2).join(' ')):''}${dd?' → '+esc(dd.nom.split(' ').slice(0,2).join(' ')):''}</td><td style="font-size:11px;color:var(--text3)">${f?esc(f.nom):'—'}</td><td style="font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(m.motif||'—')}</td><td style="font-size:10px;color:var(--text3)">${esc(m.auteur||'—')}</td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" title="Aperçu" onclick="mvtApercu(${m.id})"><i class="fas fa-eye"></i></button> ${manuel?`<button class="btn btn-xs btn-gh" title="Modifier" onclick="mvtEdit(${m.id})"><i class="fas fa-pen"></i></button> ${canDelete('stock')?`<button class="btn btn-xs btn-gh" title="Supprimer" onclick="mvtDelete(${m.id})"><i class="fas fa-trash" style="color:var(--red)"></i></button>`:''}`:''}</td></tr>`;}).join('');
   const pagerBtns=[`<button ${p<=1?'disabled':''} onclick="mvtPage=${p-1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p-1})">‹</button>`,...Array.from({length:Math.min(pages,5)},(_,i)=>Math.max(1,p-2)+i).filter(n=>n<=pages).map(n=>`<button class="${n===p?'on':''}" onclick="mvtPage=${n};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${n})">${n}</button>`),`<button ${p>=pages?'disabled':''} onclick="mvtPage=${p+1};renderMvts(document.getElementById('stockTabContent')||document.getElementById('contentArea'),${p+1})">›</button>`].join('');
   const depOpts='<option value="">Tous dépôts</option>'+deps.map(d=>`<option value="${d.id}" ${mvtFilters.depotId==String(d.id)?'selected':''}>${esc(d.nom)}</option>`).join('');
   const prodOpts='<option value="">Tous produits</option>'+prods.map(pr=>`<option value="${pr.id}" ${mvtFilters.produitId==String(pr.id)?'selected':''}>${esc(pr.nom)}</option>`).join('');
@@ -8023,7 +8083,7 @@ async function renderMvts(ca,p=1){
     <div style="display:flex;gap:6px"><button class="btn btn-p btn-sm" onclick="applyMvtFilterForm()"><i class="fas fa-filter"></i> Filtrer</button><button class="btn btn-gh btn-sm" onclick="resetMvtFilters()">Réinit.</button></div>
   </div></div>`;
   ca.innerHTML=`<div class="page-header"><div class="page-header-title"><i class="fas fa-right-left" style="color:var(--g2)"></i> Mouvements de stock</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm btn-gh" onclick="exportMvtCSV()"><i class="fas fa-download"></i> CSV</button><button class="btn btn-sm btn-gh" onclick="mvtJournalApercu()"><i class="fas fa-eye"></i> Aperçu journal</button><button class="btn btn-sm btn-gh" onclick="mvtJournalPrint()"><i class="fas fa-print"></i> Imprimer journal</button><button class="btn btn-p btn-sm" onclick="openMvtModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div><div class="stock-page">${filterBar}
-    <div class="card"><div class="card-hd">Mouvements filtrés (${total})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Type/Cadre</th><th>Produit</th><th>Quantité</th><th>Dépôt</th><th>Fournisseur</th><th>Motif</th><th>Auteur</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun mouvement pour ces filtres</td></tr>'}</tbody></table><div class="pager">${pagerBtns}<span style="font-size:11px;color:var(--text3)">${total} enregistrements</span></div></div></div></div>`;
+    <div class="card"><div class="card-hd">Mouvements filtrés (${total})</div><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Pièce/Date</th><th>Type/Cadre</th><th>Produit</th><th>Stock initial</th><th>Quantité</th><th>Stock final</th><th>Dépôt</th><th>Fournisseur</th><th>Motif</th><th>Auteur</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--text3)">Aucun mouvement pour ces filtres</td></tr>'}</tbody></table><div class="pager">${pagerBtns}<span style="font-size:11px;color:var(--text3)">${total} enregistrements</span></div></div></div></div>`;
 }
 window.applyMvtFilterForm=function(){
   mvtFilters={
@@ -8346,11 +8406,13 @@ window.livrerTourneeStock=async function(){
   if(!confirm(`Confirmer l'enlèvement de ${ids.length} commande(s) par le camion ?\nLe stock sera décrémenté pour chacune et un bon de livraison généré par commande.`)) return;
   const tourneeRef = 'TOURNEE-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+String(Date.now()).slice(-4);
   const problemes=[];
+  const bloquees=[];
   for(const id of ids){
-    const sansDepot = await livrerVente(id, tourneeRef, true);
-    if(sansDepot && sansDepot.length) problemes.push(...sansDepot);
+    const res = await livrerVente(id, tourneeRef, true);
+    if(res && res.blocked) bloquees.push(res.ref);
+    else if(res && res.length) problemes.push(...res);
   }
-  toast(`✅ Tournée ${tourneeRef} — ${ids.length} commande(s) livrée(s)`+(problemes.length?` (⚠ ${problemes.length} article(s) sans dépôt)`:''));
+  toast(`✅ Tournée ${tourneeRef} — ${ids.length-bloquees.length} commande(s) livrée(s)`+(problemes.length?` (⚠ ${problemes.length} article(s) sans dépôt)`:'')+(bloquees.length?` (⛔ ${bloquees.length} bloquée(s) pour stock insuffisant : ${bloquees.join(', ')})`:''));
   await render();
   await imprimerFeuilleTournee(tourneeRef);
 };
@@ -10379,6 +10441,15 @@ async function saveSale() {
     });
 
   if (!lignes.length) { toast('Ajoutez au moins une ligne produit', 'err'); return; }
+
+  // ── Blocage commande si stock insuffisant sur un produit fini (dépôt d'affectation) ──
+  var probsStock = await checkStockDisponibleLignes(lignes, prods);
+  if (probsStock.length) {
+    alert('⛔ Commande bloquée — stock insuffisant :\n\n' + formatStockProblemes(probsStock));
+    toast('⛔ Commande bloquée — stock insuffisant', 'err');
+    return;
+  }
+
 
   var sousTotal = lignes.reduce(function(a,l){ return a + l.totalLigne; }, 0);
   var remiseMt  = Math.round(sousTotal * remisePct / 100);
@@ -15561,6 +15632,17 @@ window.livrerVente = async function(id, tourneeRef, silent) {
     var sales = await getAll(S.SALES);
     var s = sales.find(function(x){return x.id===id;});
     if (!s) return;
+    // ── Blocage livraison si stock insuffisant (ré-vérifié ici : le stock a pu bouger
+    // depuis la création de la commande) ──
+    var prodsChk = await getAll(S.PRODUITS);
+    var probsStock = await checkStockDisponibleLignes(s.lignes||[], prodsChk);
+    if (probsStock.length) {
+      if(!silent){
+        alert('⛔ Livraison bloquée — stock insuffisant :\n\n' + formatStockProblemes(probsStock));
+        toast('⛔ Livraison bloquée — stock insuffisant','err');
+      }
+      return {blocked:true, ref:s.ref, probs:probsStock};
+    }
     var numBL = s.numBL || await genNumBL();
     var dateLiv = new Date().toISOString().slice(0,10);
     var patch = {statut:'delivered',numBL:numBL,dateLiv:dateLiv,ts:Date.now()};
