@@ -2887,6 +2887,21 @@ function stockEnAlerte(p,qty){
   return qty<=(p.seuil||0);
 }
 
+// ── Tableau de stock produits finis en temps réel — affiché en haut des onglets
+// Réservations et Commandes pour donner une visibilité immédiate au commercial au
+// moment de saisir une ligne, sans devoir aller consulter le module Stock à part.
+async function buildStockPFTableHtml(){
+  const [prods, tot] = await Promise.all([getAll(S.PRODUITS), getStockTotal()]);
+  const pf = prods.filter(p=>p.stade==='produit_fini').sort((a,b)=>(a.nom||'').localeCompare(b.nom||''));
+  const rows = pf.map(p=>{
+    const q = Math.round((tot[p.id]||0)*100)/100;
+    const al = stockEnAlerte(p,q);
+    return `<tr><td>${esc(libelleProduitAvecCalibre(p))}</td><td style="font-size:11px;color:var(--text3)">${esc(p.ref||'—')}</td><td style="font-weight:700;color:${al?'var(--red)':'inherit'}">${q} ${esc(p.unite||'')}</td><td>${al?'<span class="badge b-r">⚠ Faible</span>':'<span class="badge b-g">OK</span>'}</td></tr>`;
+  }).join('');
+  return `<div class="card" style="margin-bottom:14px"><details open><summary style="cursor:pointer;padding:12px 16px;font-weight:700;font-size:13px;list-style:none;border-bottom:1px solid var(--border)"><i class="fas fa-boxes-stacked" style="color:var(--g2)"></i> Stock produits finis (temps réel) <span style="font-weight:400;font-size:11px;color:var(--text3)">— ${pf.length} référence(s)</span></summary><div class="card-bd tbl-wrap" style="max-height:260px;overflow-y:auto"><table class="tbl"><thead><tr><th>Produit</th><th>Réf.</th><th>Stock dispo</th><th>État</th></tr></thead><tbody>${rows||'<tr><td colspan="4" style="text-align:center;color:var(--text3)">Aucun produit fini</td></tr>'}</tbody></table></div></details></div>`;
+}
+window.buildStockPFTableHtml = buildStockPFTableHtml;
+
 // ════════════════════════════════════════════════════════
 //  MOTEUR CENTRAL MOUVEMENTS STOCK — point d'écriture unique
 //  Tout mouvement (manuel ou automatique) passe par regMvt().
@@ -9595,7 +9610,8 @@ async function renderReservations(ca){
       </td>
     </tr>`;
   }).join('');
-  ca.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+  const stockPFHtml = await buildStockPFTableHtml();
+  ca.innerHTML=`${stockPFHtml}<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
     <div class="g4" style="flex:1;min-width:280px">
       <div class="kpi kpi-bl"><div class="kpi-lbl">Réservations actives</div><div class="kpi-val">${actives.length}</div></div>
       <div class="kpi kpi-g"><div class="kpi-lbl">Valeur retenue</div><div class="kpi-val" style="font-size:14px">${Math.round(valeurActive).toLocaleString('fr-FR')} F</div></div>
@@ -10053,6 +10069,7 @@ async function renderCommandes(ca){
       </td>
     </tr>`;
   }).join('');
+  const stockPFHtml = await buildStockPFTableHtml();
   ca.innerHTML=`
     <div class="page-header">
       <div class="page-header-title"><i class="fas fa-shopping-cart" style="color:var(--g2)"></i> Commandes clients</div>
@@ -10064,6 +10081,7 @@ async function renderCommandes(ca){
       </div>
     </div>
     <div class="stock-page">
+      ${stockPFHtml}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
         <div class="kpi kpi-g"><div class="kpi-lbl">CA encaissé</div><div class="kpi-val">${Math.round(totalCA/1000)}K</div><div class="kpi-sub">FCFA total payé</div></div>
         <div class="kpi kpi-a"><div class="kpi-lbl">En cours livraison</div><div class="kpi-val">${Math.round(enCours/1000)}K</div><div class="kpi-sub">FCFA à encaisser</div></div>
