@@ -21592,9 +21592,13 @@ function buildDocumentImprimable(ent, corps, cfg, type, dateMin, dateMax, previe
 // ── Corps : Production ──
 // ── CONSO PAR POULE vs STANDARD — pondeuses, sur la période (poule-jours réels, jours avec saisie d'aliment) ──
 async function collectConsoStdData(dateMin, dateMax, lotId){
-  const [buildings,lines,flocks,feeds,mort,refo,vente,slaug,nutr]=await Promise.all([
+  const [buildings,lines,flocks,feeds,mort,refo,vente,slaug,nutr,chargesAl]=await Promise.all([
     getAll(S.BUILDINGS),getAll(S.LINES),getAll(S.FLOCKS),getAll(S.FEEDING),getAll(S.MORTALITE),
-    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.NUTRITION)]);
+    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.NUTRITION),getAll(S.CHARGES)]);
+  // Prix de valorisation de l'aliment : moyenne pondérée des achats saisis (charges « aliment » en kg), sinon prix par défaut du paramétrage Finance.
+  const achatsKg=chargesAl.filter(c=>c.categorie==='aliment'&&/^kg/i.test(c.unite||'')&&c.qte>0&&c.montant>0);
+  const qKg=achatsKg.reduce((a,c)=>a+c.qte,0), mKg=achatsKg.reduce((a,c)=>a+c.montant,0);
+  const prix=qKg>0?mKg/qKg:FINANCE_PARAMS.prixAlimentDefaut, prixSource=qKg>0?'moyenne des achats saisis ('+Math.round(qKg).toLocaleString('fr-FR')+' kg)':'prix par défaut (Paramétrage → Finance)';
   const day=d=>(d||'').slice(0,10);
   const addDays=(d,n)=>{ const x=new Date(d+'T00:00:00Z'); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); };
   const rows=[];
@@ -21625,25 +21629,32 @@ async function collectConsoStdData(dateMin, dateMax, lotId){
     const bat=buildings.find(b=>b.id===(f.buildingId||(line?line.buildingId:null)));
     rows.push({id:f.id,nom:f.nom||'—',batiment:bat?bat.nom:'Non affecté',ligne:line?line.nom:'—',souche,age,
       effMoy:pouleJours/joursSaisis.length,jours:joursSaisis.length,kg,pouleJours,gpj,stdGPD,ecart,
-      kgStd:stdGPD?stdGPD*pouleJours/1000:null});
+      kgStd:stdGPD?stdGPD*pouleJours/1000:null,
+      ecartKg:stdGPD?kg-stdGPD*pouleJours/1000:null, valeur:stdGPD?(kg-stdGPD*pouleJours/1000)*prix:null});
   });
   const bats={}; rows.forEach(r=>{ (bats[r.batiment]=bats[r.batiment]||[]).push(r); });
   const agg=a=>{ const pj=a.reduce((t,r)=>t+r.pouleJours,0), kg=a.reduce((t,r)=>t+r.kg,0), ks=a.reduce((t,r)=>t+(r.kgStd||0),0), pjStd=a.filter(r=>r.kgStd!=null).reduce((t,r)=>t+r.pouleJours,0);
-    const gpj=pj>0?kg*1000/pj:0, std=pjStd>0?ks*1000/pjStd:null; return {pj,kg,gpj,std,ecart:std?(gpj-std)/std*100:null,eff:a.reduce((t,r)=>t+r.effMoy,0)}; };
-  return {dateMin,dateMax,rows,parBatiment:Object.keys(bats).sort().map(n=>({nom:n,rows:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:agg(bats[n])})),total:agg(rows)};
+    const gpj=pj>0?kg*1000/pj:0, std=pjStd>0?ks*1000/pjStd:null;
+    const ev=a.filter(r=>r.valeur!=null);
+    return {pj,kg,gpj,std,ecart:std?(gpj-std)/std*100:null,eff:a.reduce((t,r)=>t+r.effMoy,0),
+      ecartKg:ev.reduce((t,r)=>t+r.ecartKg,0), valeur:ev.reduce((t,r)=>t+r.valeur,0),
+      perte:ev.reduce((t,r)=>t+Math.max(0,r.valeur),0), economie:ev.reduce((t,r)=>t+Math.min(0,r.valeur),0)}; };
+  return {dateMin,dateMax,prix,prixSource,rows,parBatiment:Object.keys(bats).sort().map(n=>({nom:n,rows:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:agg(bats[n])})),total:agg(rows)};
 }
 function buildCorpsConsoStd(d, cfg){
   const N=(v,dec=0)=>(v==null||isNaN(v))?'—':(+v).toLocaleString('fr-FR',{minimumFractionDigits:dec,maximumFractionDigits:dec});
   const col=e=>e==null?'#888':Math.abs(e)<=CONSO_SEUIL_ATTENTION?'#166534':Math.abs(e)<=CONSO_SEUIL_CRITIQUE?'#92400e':'#c1121f';
   const stat=e=>e==null?'—':Math.abs(e)<=CONSO_SEUIL_ATTENTION?'✓ Conforme':Math.abs(e)<=CONSO_SEUIL_CRITIQUE?'⚠ Écart':'⛔ Critique';
   const ec=e=>e==null?'—':(e>=0?'+':'')+e.toFixed(1)+'%';
-  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Souche</th><th style="text-align:right">Âge (j)</th><th style="text-align:right">Effectif moy.</th><th style="text-align:right">Jours saisis</th><th style="text-align:right">Aliment (kg)</th><th style="text-align:right">g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th>Statut</th></tr></thead>';
-  const row=r=>`<tr><td>${esc(r.ligne)}</td><td><strong>${esc(r.nom)}</strong></td><td>${esc(r.souche)}</td><td style="text-align:right">${r.age}</td><td style="text-align:right">${N(r.effMoy)}</td><td style="text-align:right">${r.jours}</td><td style="text-align:right">${N(r.kg,1)}</td><td style="text-align:right;font-weight:700">${N(r.gpj,1)}</td><td style="text-align:right">${r.stdGPD?N(r.stdGPD,0):'—'}</td><td style="text-align:right;font-weight:700;color:${col(r.ecart)}">${ec(r.ecart)}</td><td style="color:${col(r.ecart)}">${stat(r.ecart)}</td></tr>`;
+  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Souche</th><th style="text-align:right">Âge (j)</th><th style="text-align:right">Effectif moy.</th><th style="text-align:right">Jours saisis</th><th style="text-align:right">Aliment (kg)</th><th style="text-align:right">g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th style="text-align:right">Écart (kg)</th><th style="text-align:right">Valeur écart (F)</th><th>Statut</th></tr></thead>';
+  const sg=v=>v==null||isNaN(v)?'—':(v>=0?'+':'−')+Math.abs(Math.round(v)).toLocaleString('fr-FR');
+  const colV=v=>v==null?'#888':v>0?'#c1121f':'#166534';
+  const row=r=>`<tr><td>${esc(r.ligne)}</td><td><strong>${esc(r.nom)}</strong></td><td>${esc(r.souche)}</td><td style="text-align:right">${r.age}</td><td style="text-align:right">${N(r.effMoy)}</td><td style="text-align:right">${r.jours}</td><td style="text-align:right">${N(r.kg,1)}</td><td style="text-align:right;font-weight:700">${N(r.gpj,1)}</td><td style="text-align:right">${r.stdGPD?N(r.stdGPD,0):'—'}</td><td style="text-align:right;font-weight:700;color:${col(r.ecart)}">${ec(r.ecart)}</td><td style="text-align:right">${sg(r.ecartKg)}</td><td style="text-align:right;font-weight:700;color:${colV(r.valeur)}">${sg(r.valeur)}</td><td style="color:${col(r.ecart)}">${stat(r.ecart)}</td></tr>`;
   const blocs=d.parBatiment.map(b=>`
     <div class="section">
       <div class="section-title">🏗️ ${esc(b.nom)} — ${N(b.t.gpj,1)} g/poule/j${b.t.std?' (standard '+N(b.t.std,0)+')':''}</div>
       <table>${th}<tbody>${b.rows.map(row).join('')}
-        <tr class="total-row"><td colspan="4"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.eff)}</td><td></td><td style="text-align:right">${N(b.t.kg,1)}</td><td style="text-align:right">${N(b.t.gpj,1)}</td><td style="text-align:right">${b.t.std?N(b.t.std,0):'—'}</td><td style="text-align:right;color:${col(b.t.ecart)}">${ec(b.t.ecart)}</td><td>${stat(b.t.ecart)}</td></tr>
+        <tr class="total-row"><td colspan="4"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.eff)}</td><td></td><td style="text-align:right">${N(b.t.kg,1)}</td><td style="text-align:right">${N(b.t.gpj,1)}</td><td style="text-align:right">${b.t.std?N(b.t.std,0):'—'}</td><td style="text-align:right;color:${col(b.t.ecart)}">${ec(b.t.ecart)}</td><td style="text-align:right">${sg(b.t.ecartKg)}</td><td style="text-align:right;color:${colV(b.t.valeur)}">${sg(b.t.valeur)}</td><td>${stat(b.t.ecart)}</td></tr>
       </tbody></table>
     </div>`).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucune saisie d\'aliment sur la période</p></div>';
   const t=d.total;
@@ -21653,9 +21664,12 @@ function buildCorpsConsoStd(d, cfg){
     <div class="kpi-box"><div class="kpi-val">${t.std?N(t.std,0)+' g':'—'}</div><div class="kpi-lbl">Standard (pondéré)</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${col(t.ecart)}">${ec(t.ecart)}</div><div class="kpi-lbl">Écart vs standard</div></div>
     <div class="kpi-box"><div class="kpi-val">${N(t.kg,0)} kg</div><div class="kpi-lbl">Aliment consommé</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${N(t.perte,0)} F</div><div class="kpi-lbl">💸 Perte estimée (surconsommation)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${N(Math.abs(t.economie),0)} F</div><div class="kpi-lbl">Sous-consommation (économie apparente)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:${colV(t.valeur)}">${sg(t.valeur)} F</div><div class="kpi-lbl">Écart net valorisé</div></div>
   </div>
   ${blocs}
-  <p style="font-size:10px;color:#888;margin-top:6px">Période ${esc(d.dateMin)} au ${esc(d.dateMax)} · pondeuses uniquement. g/poule/j = aliment ÷ (effectif vivant × jours saisis), calculé sur les jours avec saisie d'aliment. Standard = table Nutrition (souche, âge à mi-période). Seuils : ±${CONSO_SEUIL_ATTENTION}% écart, ±${CONSO_SEUIL_CRITIQUE}% critique.</p>`;
+  <p style="font-size:10px;color:#888;margin-top:6px">Période ${esc(d.dateMin)} au ${esc(d.dateMax)} · pondeuses uniquement. g/poule/j = aliment ÷ (effectif vivant × jours saisis), calculé sur les jours avec saisie d'aliment. Standard = table Nutrition (souche, âge à mi-période). Valorisation : écart (kg) × ${N(d.prix,0)} F/kg (${esc(d.prixSource)}). Une sous-consommation n'est pas une économie certaine : elle peut traduire un défaut d'accès à l'aliment ou une baisse de ponte. Seuils : ±${CONSO_SEUIL_ATTENTION}% écart, ±${CONSO_SEUIL_CRITIQUE}% critique.</p>`;
 }
 
 // ── EFFECTIF POULES — vivants à ce jour, tous bâtiments (initial − mortalité − réforme − ventes − abattage direct) ──
@@ -21676,20 +21690,22 @@ async function collectEffectifData(lotId){
     parBatiment:Object.keys(bats).sort().map(n=>({nom:n,lots:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:tot(bats[n])})), tot};
 }
 function buildCorpsEffectif(d, cfg, cs){
-  const N=v=>(v||0).toLocaleString('fr-FR');
+  const N=v=>(v||0).toLocaleString('fr-FR',{maximumFractionDigits:0});
+  const sgv=v=>v==null||isNaN(v)?'—':(v>=0?'+':'−')+Math.abs(Math.round(v)).toLocaleString('fr-FR');
+  const colV=v=>v==null?'#888':v>0?'#c1121f':'#166534';
   const tp=d.tot(d.pondeuses), tc=d.tot(d.chair), tt=d.tot(d.lots);
   const cmap={}; ((cs&&cs.rows)||[]).forEach(r=>{ cmap[r.id]=r; });
   const D1=(v)=>v==null||isNaN(v)?'—':(+v).toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1});
   const ecC=e=>e==null?'#888':Math.abs(e)<=CONSO_SEUIL_ATTENTION?'#166534':Math.abs(e)<=CONSO_SEUIL_CRITIQUE?'#92400e':'#c1121f';
   const ecT=e=>e==null?'—':(e>=0?'+':'')+e.toFixed(1)+'%';
-  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Initial</th><th style="text-align:right">Mortalité</th><th style="text-align:right">Réforme/Ventes</th><th style="text-align:right">Vivants</th><th style="text-align:right">🌾 g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th></tr></thead>';
-  const row=l=>{ const c=cmap[l.id]; return `<tr><td>${esc(l.ligne)}</td><td><strong>${esc(l.nom)}</strong></td><td>${l.type==='layer'?'🥚 Ponte':'🍗 Chair'}</td><td style="text-align:right">${N(l.init)}</td><td style="text-align:right;color:#c1121f">${N(l.morts)}</td><td style="text-align:right">${N(l.ref+l.ven+l.aba)}</td><td style="text-align:right;font-weight:700">${N(l.vivants)}</td><td style="text-align:right;font-weight:700">${c?D1(c.gpj):'—'}</td><td style="text-align:right">${c&&c.stdGPD?N(c.stdGPD):'—'}</td><td style="text-align:right;font-weight:700;color:${ecC(c&&c.ecart)}">${c?ecT(c.ecart):'—'}</td></tr>`; };
-  const bTot=b=>{ const rs=b.lots.map(l=>cmap[l.id]).filter(Boolean); const pj=rs.reduce((t,r)=>t+r.pouleJours,0), kg=rs.reduce((t,r)=>t+r.kg,0), ks=rs.reduce((t,r)=>t+(r.kgStd||0),0), pjs=rs.filter(r=>r.kgStd!=null).reduce((t,r)=>t+r.pouleJours,0); const g=pj>0?kg*1000/pj:null, sd=pjs>0?ks*1000/pjs:null; return {g,sd,e:(g!=null&&sd)?(g-sd)/sd*100:null}; };
+  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Initial</th><th style="text-align:right">Mortalité</th><th style="text-align:right">Réforme/Ventes</th><th style="text-align:right">Vivants</th><th style="text-align:right">🌾 g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th style="text-align:right">💸 Valeur écart (F)</th></tr></thead>';
+  const row=l=>{ const c=cmap[l.id]; return `<tr><td>${esc(l.ligne)}</td><td><strong>${esc(l.nom)}</strong></td><td>${l.type==='layer'?'🥚 Ponte':'🍗 Chair'}</td><td style="text-align:right">${N(l.init)}</td><td style="text-align:right;color:#c1121f">${N(l.morts)}</td><td style="text-align:right">${N(l.ref+l.ven+l.aba)}</td><td style="text-align:right;font-weight:700">${N(l.vivants)}</td><td style="text-align:right;font-weight:700">${c?D1(c.gpj):'—'}</td><td style="text-align:right">${c&&c.stdGPD?N(c.stdGPD):'—'}</td><td style="text-align:right;font-weight:700;color:${ecC(c&&c.ecart)}">${c?ecT(c.ecart):'—'}</td><td style="text-align:right;font-weight:700;color:${colV(c&&c.valeur)}">${c?sgv(c.valeur):'—'}</td></tr>`; };
+  const bTot=b=>{ const rs=b.lots.map(l=>cmap[l.id]).filter(Boolean); const pj=rs.reduce((t,r)=>t+r.pouleJours,0), kg=rs.reduce((t,r)=>t+r.kg,0), ks=rs.reduce((t,r)=>t+(r.kgStd||0),0), pjs=rs.filter(r=>r.kgStd!=null).reduce((t,r)=>t+r.pouleJours,0); const g=pj>0?kg*1000/pj:null, sd=pjs>0?ks*1000/pjs:null; const val=rs.filter(r=>r.valeur!=null).reduce((t,r)=>t+r.valeur,0); return {g,sd,e:(g!=null&&sd)?(g-sd)/sd*100:null,val:rs.some(r=>r.valeur!=null)?val:null}; };
   const blocs=d.parBatiment.map(b=>`
     <div class="section">
       <div class="section-title">🏗️ ${esc(b.nom)} — ${N(b.t.vivants)} sujet(s) vivant(s)</div>
       <table>${th}<tbody>${b.lots.map(row).join('')}
-        <tr class="total-row"><td colspan="3"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.init)}</td><td style="text-align:right">${N(b.t.morts)}</td><td style="text-align:right">${N(b.t.ref+b.t.ven+b.t.aba)}</td><td style="text-align:right">${N(b.t.vivants)}</td>${(()=>{const x=bTot(b);return `<td style="text-align:right">${D1(x.g)}</td><td style="text-align:right">${x.sd?N(x.sd):'—'}</td><td style="text-align:right;color:${ecC(x.e)}">${ecT(x.e)}</td>`;})()}</tr>
+        <tr class="total-row"><td colspan="3"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.init)}</td><td style="text-align:right">${N(b.t.morts)}</td><td style="text-align:right">${N(b.t.ref+b.t.ven+b.t.aba)}</td><td style="text-align:right">${N(b.t.vivants)}</td>${(()=>{const x=bTot(b);return `<td style="text-align:right">${D1(x.g)}</td><td style="text-align:right">${x.sd?N(x.sd):'—'}</td><td style="text-align:right;color:${ecC(x.e)}">${ecT(x.e)}</td><td style="text-align:right;color:${colV(x.val)}">${sgv(x.val)}</td>`;})()}</tr>
       </tbody></table>
     </div>`).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucun lot actif</p></div>';
   return `
@@ -21700,14 +21716,16 @@ function buildCorpsEffectif(d, cfg, cs){
     <div class="kpi-box"><div class="kpi-val">${d.parBatiment.length}</div><div class="kpi-lbl">Bâtiments</div></div>
     ${cs&&cs.rows.length?`<div class="kpi-box"><div class="kpi-val">${D1(cs.total.gpj)} g</div><div class="kpi-lbl">🌾 Conso. / poule / jour</div></div>
     <div class="kpi-box"><div class="kpi-val">${cs.total.std?N(cs.total.std)+' g':'—'}</div><div class="kpi-lbl">Standard (norme)</div></div>
-    <div class="kpi-box"><div class="kpi-val" style="color:${ecC(cs.total.ecart)}">${ecT(cs.total.ecart)}</div><div class="kpi-lbl">Écart vs standard</div></div>`:''}
+    <div class="kpi-box"><div class="kpi-val" style="color:${ecC(cs.total.ecart)}">${ecT(cs.total.ecart)}</div><div class="kpi-lbl">Écart vs standard</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${N(cs.total.perte)} F</div><div class="kpi-lbl">💸 Perte estimée (surconsommation)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${N(Math.abs(cs.total.economie))} F</div><div class="kpi-lbl">Sous-consommation (économie apparente)</div></div>`:''}
   </div>
   ${blocs}
   <div class="section"><table><tbody>
     <tr class="total-row"><td><strong>TOTAL POULES PONDEUSES (tous bâtiments)</strong></td><td style="text-align:right">${N(tp.vivants)}</td></tr>
     <tr class="total-row"><td><strong>TOTAL GÉNÉRAL (tous sujets)</strong></td><td style="text-align:right">${N(tt.vivants)}</td></tr>
   </tbody></table>
-  <p style="font-size:10px;color:#888;margin-top:6px">Effectif : situation à ce jour (indépendante de la période) ; consommation par poule : période choisie, jours avec saisie d\'aliment, standard = table Nutrition. Effectif = initial − mortalité − réforme − ventes vivantes − abattage direct. Lots épuisés exclus.</p></div>`;
+  <p style="font-size:10px;color:#888;margin-top:6px">Effectif : situation à ce jour (indépendante de la période) ; consommation par poule : période choisie, jours avec saisie d\'aliment, standard = table Nutrition ; valeur de l\'écart = écart (kg) × prix aliment (${N(cs&&cs.prix)} F/kg, ${esc((cs&&cs.prixSource)||'')}). Effectif = initial − mortalité − réforme − ventes vivantes − abattage direct. Lots épuisés exclus.</p></div>`;
 }
 
 function buildCorpsProduction(data, cfg){
