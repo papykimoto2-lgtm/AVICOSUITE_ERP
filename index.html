@@ -2222,6 +2222,29 @@ h1,h2,h3,.modal h3,.page-header-title,.lot-title,.app-logo h1{font-family:var(--
 
 <script>
 // ── Utilitaires globaux (doivent être en tête de script) ──
+// ── Pagination client générique (listes longues) : pgSlice découpe, pgBar affiche la barre ──
+var _pg={}, _pgFn={};
+function pgReset(key){ if(_pg[key]) _pg[key].page=1; }
+function pgSlice(key,arr,size){
+  var st=_pg[key]=_pg[key]||{page:1,size:size||50};
+  var pages=Math.max(1,Math.ceil(arr.length/st.size)); if(st.page>pages) st.page=pages;
+  return arr.slice((st.page-1)*st.size, st.page*st.size);
+}
+function pgBar(key,total,rerender){
+  var st=_pg[key]||{page:1,size:50}; _pgFn[key]=rerender;
+  if(total<=25) return '';
+  var pages=Math.max(1,Math.ceil(total/st.size)), p=st.page;
+  var from=(p-1)*st.size+1, to=Math.min(total,p*st.size);
+  var nums=[]; for(var i=Math.max(1,p-2);i<=Math.min(pages,p+2);i++) nums.push(i);
+  var sizes=[25,50,100,200].map(function(n){return '<option value="'+n+'"'+(n===st.size?' selected':'')+'>'+n+'</option>';}).join('');
+  return '<div class="pager" style="flex-wrap:wrap"><span style="font-size:11px;color:var(--text3);margin-right:auto">'+from+'–'+to+' sur '+total+'</span>'
+    +'<button '+(p<=1?'disabled':'')+' onclick="pgGo(\''+key+'\',1)">«</button><button '+(p<=1?'disabled':'')+' onclick="pgGo(\''+key+'\','+(p-1)+')">‹</button>'
+    +nums.map(function(n){return '<button class="'+(n===p?'on':'')+'" onclick="pgGo(\''+key+'\','+n+')">'+n+'</button>';}).join('')
+    +'<button '+(p>=pages?'disabled':'')+' onclick="pgGo(\''+key+'\','+(p+1)+')">›</button><button '+(p>=pages?'disabled':'')+' onclick="pgGo(\''+key+'\','+pages+')">»</button>'
+    +'<select onchange="pgSize(\''+key+'\',this.value)" style="height:28px;border:1.5px solid var(--border);border-radius:5px;font-size:11px" title="Lignes par page">'+sizes+'</select></div>';
+}
+window.pgGo=function(key,n){ var st=_pg[key]; if(!st) return; st.page=Math.max(1,n); if(_pgFn[key]) _pgFn[key](); };
+window.pgSize=function(key,v){ var st=_pg[key]; if(!st) return; st.size=parseInt(v)||50; st.page=1; if(_pgFn[key]) _pgFn[key](); };
 function esc(s){
   return String(s||'').replace(/[&<>"']/g,function(m){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
@@ -3291,6 +3314,10 @@ var PAIE_CI = {
 // aliment d'un lot UNIQUEMENT si aucune charge "aliment" n'a été saisie manuellement pour
 // ce lot. Configurable (Paramétrage > Finance) au lieu d'être figé dans le code.
 var FINANCE_PARAMS = { prixAlimentDefaut: 185, seuilAlerteDerive: 15 };
+// Recettes = ventes livrées, facturées ou soldées (fait générateur : livraison/facture, comme en compta).
+// 'pending' (en attente) et 'confirmed' (confirmée, non livrée) ne sont pas du chiffre d'affaires ; 'cancelled' jamais.
+var STATUTS_VENTE_COMPTABILISEE = ['delivered','invoiced','paid'];
+function venteComptabilisee(s){ return STATUTS_VENTE_COMPTABILISEE.indexOf(s.statut)>=0; }
 // ════════════════════════════════════════════════════════
 //  COMPTABILITÉ SYSCOHADA — Plan comptable + moteur de comptabilisation automatique
 //  ⚠️ Plan comptable simplifié adapté à l'activité avicole — à faire valider par un
@@ -5267,7 +5294,7 @@ async function computeKPIs(lot){
   const coutPinit=(lot.costPerChick||0)*lot.initialStock;
   const coutAliment=totalFeedKg*FINANCE_PARAMS.prixAlimentDefaut;
   const totalCharges=coutPinit+coutAliment;
-  const totalRecettesSales=sales.reduce((a,s)=>a+(s.totalHT||s.total||0),0);
+  const totalRecettesSales=sales.filter(venteComptabilisee).reduce((a,s)=>a+(s.totalHT||s.total||0),0);
   const totalRecettesReforme=reformes.reduce((a,r)=>a+(r.recetteTotale||0),0);
   const totalRecettesVivant=ventesVivantes.reduce((a,v)=>a+(v.recetteTotale||0),0);
   const totalRecettes=totalRecettesSales+totalRecettesReforme+totalRecettesVivant;
@@ -7781,8 +7808,10 @@ async function msgRenderSidebar(){
     </div>`).join('');
 }
 
+window.msgPlus=function(){ msgState.limit=(msgState.limit||100)+100; if(msgState.activeConvId) msgOuvrirConversation(msgState.activeConvId,true); };
 window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
   msgState.activeConvId=convId;
+  if(msgState._limitConv!==convId){ msgState._limitConv=convId; msgState.limit=100; }
   const [convs,msgs,users]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.MESSAGES),getAll(S.USERS)]);
   const conv=convs.find(c=>c.id===convId); if(!conv) return;
   // Marquer comme lus les messages reçus
@@ -7802,7 +7831,8 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
     sous=conv.participants.length+' membre(s)';
   }
 
-  const cMsgs=msgs.filter(m=>m.conversation_id===convId).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const cMsgsAll=msgs.filter(m=>m.conversation_id===convId).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const cMsgs=cMsgsAll.slice(-(msgState.limit||100)), msgMasques=cMsgsAll.length-cMsgs.length; // longues conversations : seuls les derniers messages sont rendus
   let lastDateSep='';
   const bulles=cMsgs.map(m=>{
     const sender=users.find(u=>u.id===m.expediteur_id);
@@ -7821,6 +7851,7 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
       </div>`;
   }).join('');
 
+  const bullesPlus = msgMasques>0 ? `<div style="text-align:center;padding:8px"><button class="btn btn-gh btn-sm" onclick="msgPlus()">⬆ Afficher les ${Math.min(100,msgMasques)} messages précédents (${msgMasques})</button></div>` : '';
   document.getElementById('msg-chat-inner').innerHTML = `
     <div class="msg-entete">
       <div class="msg-entete-avatar ${conv.type==='groupe'?'groupe':''}" style="background:${conv.type==='groupe'?'':avatarColor}">${conv.type==='groupe'?(conv.emoji||'👥'):msgInitiales(nom)}</div>
@@ -7828,7 +7859,7 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
       <div style="flex:1"></div>
       <button class="btn btn-gh btn-sm" onclick="msgVoirInfos()" title="Infos"><i class="fas fa-info-circle"></i></button>
     </div>
-    <div id="messages-liste" class="msg-messages">${bulles || '<div class="msg-empty">Aucun message. Dites bonjour 👋</div>'}</div>
+    <div id="messages-liste" class="msg-messages">${bullesPlus}${bulles || '<div class="msg-empty">Aucun message. Dites bonjour 👋</div>'}</div>
     <div class="msg-composer">
       <div class="msg-composer-inner">
         <textarea id="message-input" class="msg-textarea" placeholder="Écrivez votre message... (Entrée = envoyer)"
@@ -10160,14 +10191,8 @@ window.envoyerCommandeWhatsApp=async function(id){
 };
 
 // ══ COMMANDES CLIENTS ══
-async function renderCommandes(ca){
-  const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
-  const sorted=sales.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const totalCA=sales.filter(s=>s.statut==='paid').reduce((a,s)=>a+(s.totalHT||0),0);
-  const enCours=sales.filter(s=>s.statut==='confirmed'||s.statut==='delivered').reduce((a,s)=>a+(s.totalHT||0),0);
-  const enAttente=sales.filter(s=>s.statut==='pending').length;
-  const clientOpts=clients.map(c=>`<option value="${c.id}">${esc(c.nom)}</option>`).join('');
-  const rows=sorted.map(s=>{
+function cmdRowsHtml(list,clients){
+  return list.map(s=>{
     const c=clients.find(x=>x.id===s.clientId);
     return `<tr>
       <td><strong>${s.ref||'—'}</strong><div style="font-size:10px;color:var(--text3)">${s.date||'—'}</div></td>
@@ -10191,6 +10216,25 @@ async function renderCommandes(ca){
       </td>
     </tr>`;
   }).join('');
+}
+let cmdFiltreClient='';
+async function renderCmdTable(){
+  const[sales,clients]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS)]);
+  const filtered=cmdFiltreClient?sales.filter(x=>x.clientId===parseInt(cmdFiltreClient)):sales;
+  const sorted=filtered.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const tb=document.getElementById('cmdTbody'); if(!tb) return;
+  tb.innerHTML=cmdRowsHtml(pgSlice('cmd',sorted,25),clients)||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">'+(cmdFiltreClient?'Aucune commande pour ce client.':'Aucune commande enregistrée.')+'</td></tr>';
+  const pg=document.getElementById('cmdPager'); if(pg) pg.innerHTML=pgBar('cmd',sorted.length,renderCmdTable);
+  const hd=document.getElementById('cmdCount'); if(hd) hd.textContent=sorted.length;
+}
+async function renderCommandes(ca){
+  const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
+  const sorted=(cmdFiltreClient?sales.filter(x=>x.clientId===parseInt(cmdFiltreClient)):sales).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const totalCA=sales.filter(s=>s.statut==='paid').reduce((a,s)=>a+(s.totalHT||0),0);
+  const enCours=sales.filter(s=>s.statut==='confirmed'||s.statut==='delivered').reduce((a,s)=>a+(s.totalHT||0),0);
+  const enAttente=sales.filter(s=>s.statut==='pending').length;
+  const clientOpts=clients.map(c=>`<option value="${c.id}"${String(c.id)===cmdFiltreClient?' selected':''}>${esc(c.nom)}</option>`).join('');
+  const rows=cmdRowsHtml(pgSlice('cmd',sorted,25),clients);
   const stockPFHtml = await buildStockPFTableHtml();
   ca.innerHTML=`
     <div class="page-header">
@@ -10213,47 +10257,19 @@ async function renderCommandes(ca){
         <div class="kpi kpi-g"><div class="kpi-lbl">Clients actifs</div><div class="kpi-val">${clients.length}</div><div class="kpi-sub">enregistrés</div></div>
       </div>
       <div class="card" id="cmdTableCard">
-        <div class="card-hd"><span>📋 Historique des commandes (${sorted.length})</span></div>
+        <div class="card-hd"><span>📋 Historique des commandes (<span id="cmdCount">${sorted.length}</span>)</span></div>
         <div class="card-bd tbl-wrap">
           <table class="tbl" id="cmdTable">
             <thead><tr><th>Référence</th><th>Client</th><th>Produits</th><th>Lignes</th><th>Montant HT</th><th>Statut</th><th>Paiement</th><th>Actions</th></tr></thead>
             <tbody id="cmdTbody">${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">Aucune commande enregistrée.<br><button class="btn btn-p" style="margin-top:12px" onclick="openSaleModal()"><i class="fas fa-plus"></i> Créer la 1ère commande</button></td></tr>'}</tbody>
           </table>
+          <div id="cmdPager">${pgBar('cmd',sorted.length,renderCmdTable)}</div>
         </div>
       </div>
     </div>`;
 }
 
-window.filterCommandes=async function(clientId){
-  const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
-  const filtered=clientId?sales.filter(s=>s.clientId===parseInt(clientId)):sales;
-  const sorted=filtered.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const rows=sorted.map(s=>{
-    const c=clients.find(x=>x.id===s.clientId);
-    return `<tr>
-      <td><strong>${s.ref||'—'}</strong><div style="font-size:10px;color:var(--text3)">${s.date||'—'}</div></td>
-      <td>${c?`<strong>${esc(c.nom)}</strong><div style="font-size:10px;color:var(--text3)">${c.ville||''}</div>`:'—'}</td>
-      <td style="font-size:11px">${s.lignes&&s.lignes.length?s.lignes.slice(0,2).map(function(l){return '<div>'+esc(l.designation||'')+'</div>';}).join('')+(s.lignes.length>2?'<div style="color:var(--text3)">+'+( s.lignes.length-2)+' autres</div>':''):'—'}</td>
-      <td style="font-weight:700;text-align:center">${s.lignes?s.lignes.length:1}</td>
-      <td style="font-weight:700;color:var(--g2)">${(s.totalHT||0).toLocaleString()} F</td>
-      <td><span class="badge ${SALE_STATUT_CSS[s.statut]||'b-gr'}">${SALE_STATUT_LABEL[s.statut]||s.statut}</span></td>
-      <td style="color:var(--text3);font-size:11px">${PAIE_MODE_LABEL[s.paie]||s.paie||'—'}${s.dateEcheance?`<div style="font-size:10px;color:#5b21b6">Ech. ${s.dateEcheance}</div>`:''}</td>
-      <td style="white-space:nowrap">
-        ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'confirmed')" title="Confirmer"><i class="fas fa-check"></i></button> `:''}
-        ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
-        ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
-        ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
-        ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
-        <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
-        ${canDelete('commandes')?`<button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>`:''}
-      </td>
-    </tr>`;
-  }).join('');
-  const tbody=document.getElementById('cmdTbody');
-  if(tbody) tbody.innerHTML=rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucune commande pour ce client.</td></tr>';
-};
+window.filterCommandes=async function(clientId){ cmdFiltreClient=clientId||''; pgReset('cmd'); await renderCmdTable(); };
 
 
 // ════════════════════════════════════════════════════════════════════════
@@ -10560,6 +10576,7 @@ window.changeSaleStatut=async function(id,newStatut){
       try{
         const clients=await getAll(S.CLIENTS); const c=clients.find(x=>x.id===s.clientId);
         const today=new Date().toISOString().slice(0,10);
+        await syncTresoSource('VENTE-'+s.id,{type:'entree',date:today,categorie:'ventes',libelle:'Vente comptant '+(s.ref||'')+' — '+(c?.nom||''),montant:s.totalHT||0,ref:s.ref||'',flockId:s.flockId||null,ts:Date.now()});
         await annulerEcritures('VENTE-'+s.id);
         await passerEcriture({
           date:today, journal:'VE', libelle:'Vente comptant '+(s.ref||'')+' — '+(c?.nom||''),
@@ -12809,7 +12826,7 @@ async function computeFinanceGlobale(){
     var lsl=slaughtersAll.filter(function(s){return s.flockId===lot.id && !s.viaReforme;});
     // Recettes du lot : commandes/ventes non annulées + réforme (abattage) + vente d'animaux vivants
     // (ces deux dernières n'étaient jamais comptées dans Finance & Rentabilité).
-    var recettes=ls.filter(function(s){return s.statut!=='cancelled';}).reduce(function(a,s){return a+(s.totalHT||s.total||0);},0)
+    var recettes=ls.filter(venteComptabilisee).reduce(function(a,s){return a+(s.totalHT||s.total||0);},0)
       +lr.reduce(function(a,r){return a+(r.recetteTotale||0);},0)
       +lv.reduce(function(a,v){return a+(v.recetteTotale||0);},0);
     var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*FINANCE_PARAMS.prixAlimentDefaut;
@@ -12841,7 +12858,9 @@ async function computeFinanceGlobale(){
   // d'une réservation) : ignorées jusqu'ici car finLots n'agrège que par lot ⇒ recettes à 0 F
   // alors que des ventes existaient. Comptées désormais dans les recettes globales.
   var lotIds={}; lots.forEach(function(l){lotIds[l.id]=true;});
-  var ventesNonAffectees=sales.filter(function(s){return s.statut!=='cancelled' && (!s.flockId || !lotIds[s.flockId]);});
+  var ventesNonAffectees=sales.filter(function(s){return venteComptabilisee(s) && (!s.flockId || !lotIds[s.flockId]);});
+  var ventesAttente=sales.filter(function(s){return s.statut!=='cancelled' && !venteComptabilisee(s);});
+  var montantAttente=ventesAttente.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var recettesNonAffectees=ventesNonAffectees.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0)+recettesNonAffectees;
   var totalChLots=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
@@ -12865,7 +12884,7 @@ async function computeFinanceGlobale(){
   return{finLots:finLots,totalRecettes:totalRec,totalCharges:totalCh,margeGlobale:margeG,
     margePctGlobal:totalCh>0?margeG/totalCh*100:0,encaissements:encaiss,decaissements:decaiss,
     soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets,
-    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees};
+    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees,sales:sales,ventesEnAttente:ventesAttente.length,montantVentesEnAttente:montantAttente};
 }
 
 // ══════════════════════════════════════════════════════
@@ -12895,7 +12914,7 @@ window.ouvrirEtatCaisse=async function(){
   comptaTab='grandlivre'; comptaCompteSel='571';
   await renderCompta(document.getElementById('contentArea'));
 };
-window.switchComptaTab=async function(t){ comptaTab=t; document.querySelectorAll('#comptaTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchComptaTab('${t}')`)); await renderComptaTab(); };
+window.switchComptaTab=async function(t){ comptaTab=t; pgReset('cptjournal'); pgReset('cptgl'); document.querySelectorAll('#comptaTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchComptaTab('${t}')`)); await renderComptaTab(); };
 async function renderComptaTab(){
   const el=comptaCA(); if(!el) return;
   if(comptaTab==='journal') await renderComptaJournal(el);
@@ -12914,6 +12933,7 @@ function comptaFiltreBar(showCompte){
   </div></div>`;
 }
 window.comptaMajFiltre=function(){
+  pgReset('cptjournal'); pgReset('cptgl');
   comptaDateMin=document.getElementById('comptaDateMinInp')?.value||null;
   comptaDateMax=document.getElementById('comptaDateMaxInp')?.value||null;
   const cSel=document.getElementById('comptaCompteInp'); if(cSel) comptaCompteSel=cSel.value;
@@ -12927,7 +12947,7 @@ async function renderComptaJournal(el){
   const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.ts||0)-(b.ts||0));
   const totDebit=ecr.reduce((a,e)=>a+e.lignes.reduce((s,l)=>s+(l.debit||0),0),0);
   const totCredit=ecr.reduce((a,e)=>a+e.lignes.reduce((s,l)=>s+(l.credit||0),0),0);
-  const rows=ecr.map(e=>e.lignes.map((l,i)=>`<tr>
+  const rows=pgSlice('cptjournal',ecr,50).map(e=>e.lignes.map((l,i)=>`<tr>
     ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px;color:var(--text3)">${e.date}<br><strong>${esc(e.piece)}</strong></td>`:''}
     ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px"><span class="badge b-bl">${e.journal}</span></td>`:''}
     <td style="font-size:11px">${l.compte} — ${esc(l.libelle||PLAN_COMPTABLE[l.compte]?.lbl||'')}</td>
@@ -12944,7 +12964,7 @@ async function renderComptaJournal(el){
   </div>
   <div class="card"><div class="card-hd">Journal général (${dateMin} au ${dateMax})</div><div class="card-bd tbl-wrap"><table class="tbl">
     <thead><tr><th>Date/Pièce</th><th>Journal</th><th>Compte</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th>Libellé</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Aucune écriture sur cette période</td></tr>'}</tbody></table></div></div>`;
+    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Aucune écriture sur cette période</td></tr>'}</tbody></table>${pgBar('cptjournal',ecr.length,()=>renderComptaJournal(el))}</div></div>`;
 }
 
 // ── Grand Livre (par compte) ──
@@ -12958,12 +12978,13 @@ async function renderComptaGrandLivre(el){
     ecr.forEach(e=>e.lignes.forEach(l=>{ if(l.compte===comptaCompteSel) lignes.push({date:e.date,piece:e.piece,libelle:l.libelle||e.libelle,debit:l.debit||0,credit:l.credit||0,tiersNom:l.tiersNom}); }));
     lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
     let solde=0;
-    const rows=lignes.map(l=>{ solde+=l.debit-l.credit; return `<tr><td>${l.date}</td><td>${esc(l.piece)}</td><td style="font-size:11px">${esc(l.libelle)}${l.tiersNom?' — '+esc(l.tiersNom):''}</td><td style="text-align:right">${l.debit?fcfa(l.debit):''}</td><td style="text-align:right">${l.credit?fcfa(l.credit):''}</td><td style="text-align:right;font-weight:700">${fcfa(solde)}</td></tr>`; }).join('');
+    const rowsAll=lignes.map(l=>{ solde+=l.debit-l.credit; return `<tr><td>${l.date}</td><td>${esc(l.piece)}</td><td style="font-size:11px">${esc(l.libelle)}${l.tiersNom?' — '+esc(l.tiersNom):''}</td><td style="text-align:right">${l.debit?fcfa(l.debit):''}</td><td style="text-align:right">${l.credit?fcfa(l.credit):''}</td><td style="text-align:right;font-weight:700">${fcfa(solde)}</td></tr>`; });
+    const rows=pgSlice('cptgl',rowsAll,100).join('');
     const totDebit=lignes.reduce((a,l)=>a+l.debit,0), totCredit=lignes.reduce((a,l)=>a+l.credit,0);
     corps=`<div class="card"><div class="card-hd">${comptaCompteSel} — ${PLAN_COMPTABLE[comptaCompteSel]?.lbl||''} — Solde : <span style="color:${solde>=0?'var(--g2)':'var(--red)'}">${fcfa(solde)}</span></div><div class="card-bd tbl-wrap"><table class="tbl">
       <thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th style="text-align:right">Solde progressif</th></tr></thead>
       <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Aucun mouvement</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="3">TOTAL</td><td style="text-align:right">${fcfa(totDebit)}</td><td style="text-align:right">${fcfa(totCredit)}</td><td></td></tr></tfoot></table></div></div>`;
+      <tfoot><tr><td colspan="3">TOTAL</td><td style="text-align:right">${fcfa(totDebit)}</td><td style="text-align:right">${fcfa(totCredit)}</td><td></td></tr></tfoot></table>${pgBar('cptgl',rowsAll.length,()=>renderComptaGrandLivre(el))}</div></div>`;
   } else {
     corps=`<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Sélectionnez un compte pour afficher son grand livre.</div></div>`;
   }
@@ -13174,7 +13195,7 @@ async function renderFinance(ca){
     +'</div></div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0">'
     +'<div class="kpi '+(fin.margeGlobale>=0?'kpi-g':'kpi-r')+'"><div class="kpi-lbl">Marge globale</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.margeGlobale)+'">'+(fin.margeGlobale>=0?'+':'')+fcfa(fin.margeGlobale)+'</div><div class="kpi-sub">'+(margeCA===null?'CA nul':margeCA.toFixed(1)+'% du CA')+'</div></div>'
-    +'<div class="kpi kpi-g"><div class="kpi-lbl">Total recettes</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalRecettes)+'</div><div class="kpi-sub">'+fin.finLots.length+' lot(s)'+(fin.recettesNonAffectees>0?' · dont '+fcfa(fin.recettesNonAffectees)+' sans lot':'')+'</div></div>'
+    +'<div class="kpi kpi-g"><div class="kpi-lbl">Total recettes</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalRecettes)+'</div><div class="kpi-sub">'+fin.finLots.length+' lot(s)'+(fin.recettesNonAffectees>0?' · dont '+fcfa(fin.recettesNonAffectees)+' sans lot':'')+(fin.ventesEnAttente>0?' · '+fin.ventesEnAttente+' vente(s) non livrée(s) exclue(s) ('+fcfa(fin.montantVentesEnAttente)+')':'')+'</div></div>'
     +'<div class="kpi kpi-r"><div class="kpi-lbl">Total charges</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalCharges)+'</div><div class="kpi-sub">'+(fin.chargesEstimees>0?'dont '+fcfa(fin.chargesEstimees)+' estimés (poussins/aliment)':'Toutes categories')+'</div></div>'
     +'<div class="kpi '+(fin.soldeTreso>=0?'kpi-b':'kpi-r')+'"><div class="kpi-lbl">Solde tresorerie</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.soldeTreso)+'">'+(fin.soldeTreso>=0?'+':'')+fcfa(fin.soldeTreso)+'</div><div class="kpi-sub">Encaiss. - Decaiss.</div></div>'
     +'<div class="kpi kpi-a"><div class="kpi-lbl">Taux de charges</div><div class="kpi-val" style="font-size:16px">'+(txCh===null?'—':txCh.toFixed(1)+'%')+'</div><div class="kpi-sub">'+(txCh===null?'Aucune recette':'Charges / Recettes')+'</div></div>'
@@ -13322,10 +13343,11 @@ function renderFinCR(el,fin){
 async function renderFinCharges(el,fin){
   var lots=await getAll(S.FLOCKS);
   var charges=await getAll(S.CHARGES);
-  charges.sort(function(a,b){return b.ts-a.ts;});
+  charges.sort(function(a,b){return (b.ts||0)-(a.ts||0);});
+  var chF=charges.filter(function(c){return (!finChgLot||String(c.flockId||'')===finChgLot)&&(!finChgCat||(c.categorie||'')===finChgCat);});
   var lm={};
   lots.forEach(function(l){lm[l.id]=l.nom||'Lot '+l.id;});
-  var rows=charges.map(function(c){
+  var rows=pgSlice('fincharges',chF,50).map(function(c){
     var v=c.validation;
     var vBadge=!v?'<span style="color:var(--text3);font-size:10px">—</span>'
       :v.statut==='attente'?'<span class="badge b-a" style="font-size:9px" title="Envoyée à '+esc(v.destinataireNom||'')+'">⏳ Attente</span>'
@@ -13334,6 +13356,7 @@ async function renderFinCharges(el,fin){
     var canRepond=v&&v.statut==='attente'&&currentUser&&(currentUser.id===v.destinataireId||currentUser.role==='admin');
     var actions=c.paieRef?'<span style="color:var(--text3);font-size:10px">Voir RH &gt; Bulletins</span>':(
       '<button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> '
+      +(c.paye===false?'<button class="btn btn-xs btn-gh" style="color:#059669" onclick="payerCharge('+c.id+')" title="Marquer payée"><i class="fas fa-money-bill-wave"></i></button> ':'')
       +'<button class="btn btn-xs btn-gh" onclick="printChargeUnique('+c.id+')" title="Imprimer"><i class="fas fa-print"></i></button> '
       +'<button class="btn btn-xs btn-gh" style="color:#25D366" onclick="envoyerChargeWhatsApp('+c.id+')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button> '
       +(canRepond?('<button class="btn btn-xs btn-gh" style="color:#059669" onclick="validerCharge('+c.id+')" title="Valider"><i class="fas fa-check"></i></button> '
@@ -13347,12 +13370,12 @@ async function renderFinCharges(el,fin){
       +'<td><span class="badge b-gr">'+(CAT_ICONS[c.categorie]||'📦')+' '+(CAT_LABELS[c.categorie]||c.categorie||'—')+'</span></td>'
       +'<td>'+esc(c.libelle||'')+(c.paieRef?' <span class="badge b-bl" style="font-size:9px" title="Générée automatiquement par RH">🔗 Paie</span>':'')+'</td><td>'+(c.qte||'—')+'</td><td>'+esc(c.unite||'—')+'</td>'
       +'<td>'+(c.unitCost?fcfa(c.unitCost):'—')+'</td>'
-      +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+'</td>'
+      +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+(c.paye===false?' <span class="badge b-a" style="font-size:9px" title="Dette fournisseur (401) — non décaissée">À payer</span>':'')+'</td>'
       +'<td>'+vBadge+'</td>'
       +'<td style="white-space:nowrap">'+actions+'</td></tr>';
   }).join('');
-  var lo=lots.map(function(l){return '<option value="'+l.id+'">'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
-  var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'">'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
+  var lo=lots.map(function(l){return '<option value="'+l.id+'"'+(String(l.id)===finChgLot?' selected':'')+'>'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
+  var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'"'+(e[0]===finChgCat?' selected':'')+'>'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
   var synth=Object.entries(fin.chargesGlobCat).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];}).map(function(e){
     return '<div style="background:#f8f8f8;border-radius:8px;padding:10px;text-align:center;border-left:4px solid '+(CAT_COLORS[e[0]]||'#888')+'">'
       +'<div style="font-size:18px;margin-bottom:2px">'+(CAT_ICONS[e[0]]||'📦')+'</div>'
@@ -13360,21 +13383,23 @@ async function renderFinCharges(el,fin){
       +'<div style="font-size:14px;font-weight:700;margin-top:3px">'+fcfa(e[1])+'</div>'
       +'<div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+'</div></div>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+(chF.length===charges.length?charges.length:chF.length+' / '+charges.length)+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
     +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+pgBar('fincharges',chF.length,function(){renderFinCharges(el,fin);})+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
+var finChgLot='', finChgCat='';
 window.filtrerCharges=function(){
-  var lf=document.getElementById('filtreChargeLot')?.value;
-  var cf=document.getElementById('filtreChargeCat')?.value;
-  document.querySelectorAll('#tbodyCharges tr').forEach(function(tr){tr.style.display=(!lf||tr.dataset.lot===lf)&&(!cf||tr.dataset.cat===cf)?'':'none';});
+  finChgLot=document.getElementById('filtreChargeLot')?.value||'';
+  finChgCat=document.getElementById('filtreChargeCat')?.value||'';
+  pgReset('fincharges');
+  renderFinCharges(document.getElementById('finTabContent'),window._fin);
 };
 window.deleteCharge=async function(id){
   const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);
   if(c && c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — supprimez plutôt les bulletins correspondants dans RH > Bulletins','err');return;}
   if(!confirm('Supprimer ?')) return;
-  try{ await annulerEcritures('CHARGE-'+id); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
+  try{ await annulerEcritures('CHARGE-'+id); await annulerEcritures('CHARGEPAIE-'+id); await syncTresoSource('CHARGE-'+id,null); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
   await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
 };
 
@@ -13553,26 +13578,49 @@ window.printChargesEtat=async function(preview){
 };
 
 // ── 5. TRESORERIE ──
+// Charges payées et ventes comptant sans mouvement de trésorerie lié (saisies avant la liaison automatique).
+function nonRapproches(fin){
+  var liees={}; (fin.tresoData||[]).forEach(function(t){ if(t.srcRef) liees[t.srcRef]=1; });
+  var ch=(fin.charges||[]).filter(function(c){return c.paye!==false && chargeDecaissable(c) && !c.paieRef && c.montant>0 && !liees['CHARGE-'+c.id];});
+  var ve=(fin.sales||[]).filter(function(v){return v.statut==='paid' && !v.numFacture && !(v.paiements&&v.paiements.length) && (v.totalHT||0)>0 && !liees['VENTE-'+v.id];});
+  return {ch:ch,ve:ve,nbCh:ch.length,nbVe:ve.length,
+    mtCh:ch.reduce(function(a,c){return a+c.montant;},0), mtVe:ve.reduce(function(a,v){return a+(v.totalHT||0);},0)};
+}
+window.regulariserTreso=async function(){
+  var fin=window._fin; if(!fin) return;
+  var n=nonRapproches(fin);
+  if(!n.nbCh&&!n.nbVe){ toast('Rien à régulariser'); return; }
+  if(!confirm('Créer les mouvements de trésorerie manquants ?\n\n• '+n.nbCh+' charge(s) payée(s) : −'+fcfa(n.mtCh)+'\n• '+n.nbVe+' vente(s) comptant : +'+fcfa(n.mtVe)+'\n\nÀ ne faire qu\'une fois, si ces opérations n\'ont pas déjà été saisies à la main dans la trésorerie (sinon doublon).')) return;
+  for(const c of n.ch) await syncTresoSource('CHARGE-'+c.id,entreeTresoCharge(c,c.id));
+  for(const v of n.ve) await syncTresoSource('VENTE-'+v.id,{type:'entree',date:v.date,categorie:'ventes',libelle:'Vente comptant '+(v.ref||''),montant:v.totalHT||0,ref:v.ref||'',flockId:v.flockId||null,ts:Date.now()});
+  toast('✅ Trésorerie régularisée'); await renderFinance(document.getElementById('contentArea'));
+};
 function renderFinTreso(el,fin){
+  if(finCharts.treso){ try{finCharts.treso.destroy();}catch(e){} delete finCharts.treso; }
   var treso=fin.tresoData.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
   var moisMap={};
   treso.forEach(function(t){var m=(t.date||'').slice(0,7);if(!moisMap[m]) moisMap[m]={entree:0,sortie:0};moisMap[m][t.type]=(moisMap[m][t.type]||0)+(t.montant||0);});
   var mk=Object.keys(moisMap).sort();
-  var sol=0;
-  var rows=treso.map(function(t){sol+=t.type==='entree'?(t.montant||0):-(t.montant||0);return '<tr><td>'+(t.date||'—')+'</td><td><span class="badge '+(t.type==='entree'?'b-g':'b-r')+'">'+(t.type==='entree'?'📥 Encaiss.':'📤 Decaiss.')+'</span></td><td><span class="badge b-gr">'+esc(t.categorie||'—')+'</span></td><td>'+esc(t.libelle||'')+'</td><td style="color:var(--text3);font-size:11px">'+esc(t.ref||'—')+'</td><td style="font-weight:700;color:'+(t.type==='entree'?'#059669':'var(--red)')+'">'+( t.type==='entree'?'+':'−')+fcfa(t.montant)+'</td><td style="font-weight:600;color:'+(sol>=0?'#059669':'var(--red)')+';font-size:11px">'+(sol>=0?'+':'')+fcfa(sol)+'</td><td><button class="btn-del" onclick="deleteTreso('+t.id+')">✕</button></td></tr>';}).join('');
+  // Solde cumulé calculé dans l'ordre CHRONOLOGIQUE (avant : cumul sur la liste triée du plus récent au plus ancien ⇒ faux).
+  var soldeAu={}, cum=0;
+  treso.slice().sort(function(a,b){return (a.date||'').localeCompare(b.date||'')||(a.ts||0)-(b.ts||0);}).forEach(function(t){cum+=t.type==='entree'?(t.montant||0):-(t.montant||0);soldeAu[t.id]=cum;});
+  var rows=pgSlice('fintreso',treso,50).map(function(t){var sol=soldeAu[t.id];return '<tr><td>'+(t.date||'—')+'</td><td><span class="badge '+(t.type==='entree'?'b-g':'b-r')+'">'+(t.type==='entree'?'📥 Encaiss.':'📤 Decaiss.')+'</span></td><td><span class="badge b-gr">'+esc(t.categorie||'—')+'</span></td><td>'+esc(t.libelle||'')+'</td><td style="color:var(--text3);font-size:11px">'+esc(t.ref||'—')+'</td><td style="font-weight:700;color:'+(t.type==='entree'?'#059669':'var(--red)')+'">'+( t.type==='entree'?'+':'−')+fcfa(t.montant)+'</td><td style="font-weight:600;color:'+(sol>=0?'#059669':'var(--red)')+';font-size:11px">'+(sol>=0?'+':'')+fcfa(sol)+'</td><td><button class="btn-del" onclick="deleteTreso('+t.id+')">✕</button></td></tr>';}).join('');
 
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">💵 Tresorerie ('+treso.length+')</div><button class="btn btn-p btn-sm" onclick="openTresoModal()"><i class="fas fa-plus"></i> Nouveau</button></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">💵 Tresorerie ('+treso.length+')</div><div style="display:flex;gap:6px">'+(function(){var n=nonRapproches(fin);return n.nbCh+n.nbVe>0?'<button class="btn btn-sm btn-a" title="Charges payées et ventes comptant absentes de la trésorerie" onclick="regulariserTreso()"><i class="fas fa-link"></i> Régulariser ('+(n.nbCh+n.nbVe)+')</button>':'';})()+'<button class="btn btn-p btn-sm" onclick="openTresoModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">'
     +'<div class="kpi kpi-g"><div class="kpi-lbl">Encaissements</div><div class="kpi-val" style="font-size:15px;color:#059669">'+fcfa(fin.encaissements)+'</div></div>'
     +'<div class="kpi kpi-r"><div class="kpi-lbl">Decaissements</div><div class="kpi-val" style="font-size:15px;color:var(--red)">'+fcfa(fin.decaissements)+'</div></div>'
     +'<div class="kpi '+(fin.soldeTreso>=0?'kpi-b':'kpi-r')+'"><div class="kpi-lbl">Solde net</div><div class="kpi-val" style="font-size:15px;color:'+colorMarge(fin.soldeTreso)+'">'+(fin.soldeTreso>=0?'+':'')+fcfa(fin.soldeTreso)+'</div></div></div>'
     +(mk.length?'<div class="card" style="margin-bottom:14px"><div class="card-hd">📈 Flux mensuels</div><div class="card-bd" style="position:relative;height:160px"><canvas id="finChartTreso"></canvas></div></div>':'')
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Type</th><th>Cat.</th><th>Libelle</th><th>Ref.</th><th>Montant</th><th>Solde cumule</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+(treso.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucun mouvement.</div>')+'</div></div>';
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Type</th><th>Cat.</th><th>Libelle</th><th>Ref.</th><th>Montant</th><th>Solde cumule</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+pgBar('fintreso',treso.length,function(){renderFinTreso(el,fin);})+(treso.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucun mouvement.</div>')+'</div></div>';
 
   var ctxT=document.getElementById('finChartTreso');
   if(ctxT&&mk.length) finCharts.treso=new Chart(ctxT,{type:'bar',data:{labels:mk,datasets:[{label:'Encaissements',data:mk.map(function(m){return moisMap[m].entree||0;}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Decaissements',data:mk.map(function(m){return -(moisMap[m].sortie||0);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (Math.abs(v)/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
 }
-window.deleteTreso=async function(id){if(!confirm('Supprimer ?')) return;await delRec(S.TRESORERIE,id);toast('Mouvement supprime');await renderFinance(document.getElementById('contentArea'));};
+window.deleteTreso=async function(id){
+  const t=(await getAll(S.TRESORERIE)).find(function(x){return x.id===id;});
+  if(t&&t.srcRef){toast('⛔ Mouvement lié à une pièce ('+t.srcRef+') — modifiez ou supprimez la charge / la vente correspondante','err');return;}
+  if(!confirm('Supprimer ?')) return;await delRec(S.TRESORERIE,id);toast('Mouvement supprime');await renderFinance(document.getElementById('contentArea'));};
 
 // ── 6. BUDGET ──
 // ── CONTRÔLE DE GESTION — tendances consolidées multi-lots dans le temps ──
@@ -13603,7 +13651,7 @@ function calculerReestimations(fin){
 async function renderFinControle(el,fin){
   const[sales,charges,flocks]=await Promise.all([getAll(S.SALES),getAll(S.CHARGES),getAll(S.FLOCKS)]);
   const lotFilter = finControleLot ? parseInt(finControleLot) : null;
-  const salesF = lotFilter ? sales.filter(s=>s.flockId===lotFilter) : sales;
+  const salesF = (lotFilter ? sales.filter(s=>s.flockId===lotFilter) : sales).filter(venteComptabilisee);
   const chargesF = lotFilter ? charges.filter(c=>c.flockId===lotFilter) : charges;
 
   // ── Regroupement par mois (ou semaine) sur tout l'historique ──
@@ -13958,7 +14006,7 @@ window.toggleBudgetDetail = async function(budgetId, flockId, categorie){
       if(categorie==='recette'){
         const clientsAll = await getAll(S.CLIENTS);
         const [salesAll,refoAll,vvAll]=await Promise.all([getAll(S.SALES),getAll(S.REFORME),getAll(S.VENTE_VIVANT)]);
-        const sales = salesAll.filter(s=>s.flockId===flockId && s.statut!=='cancelled');
+        const sales = salesAll.filter(s=>s.flockId===flockId && venteComptabilisee(s));
         const autres = refoAll.filter(r=>r.flockId===flockId&&r.recetteTotale).map(r=>({date:r.date,ref:r.ref,nom:'Réforme (abattage)',m:r.recetteTotale}))
           .concat(vvAll.filter(v=>v.flockId===flockId&&v.recetteTotale).map(v=>({date:v.date,ref:v.ref,nom:'Vente d\'animaux vivants',m:v.recetteTotale})));
         const lignesV = sales.map(s=>{const c=clientsAll.find(x=>x.id===s.clientId);return {date:s.date,ref:s.ref,nom:c?c.nom:'—',m:s.totalHT||s.total||0};}).concat(autres);
@@ -13998,32 +14046,64 @@ async function openChargeManuelle(fid,editId){
   document.getElementById('chargePU').value = c ? (c.unitCost||'') : '';
   document.getElementById('chargeMontant').value = c ? (c.montant||'') : '';
   if(document.getElementById('chargeMode')) document.getElementById('chargeMode').value = c ? (c.mode||'virement') : 'virement';
+  if(document.getElementById('chargePaye')) document.getElementById('chargePaye').value = (c && c.paye===false) ? 'non' : 'oui';
   openOverlay('ovChargeManuelle');
 }
 window.openChargeManuelle=openChargeManuelle;
 window.editCharge=(id)=>openChargeManuelle(null,id);
 window.calcChargeMontant=function(){var q=parseFloat(document.getElementById('chargeQte').value)||0,pu=parseFloat(document.getElementById('chargePU').value)||0;if(q>0&&pu>0) document.getElementById('chargeMontant').value=Math.round(q*pu);};
+// Lien pièce source ⇄ mouvement de trésorerie (srcRef) : crée, met à jour ou supprime le mouvement correspondant.
+async function syncTresoSource(srcRef, entry){
+  const ex=(await getAll(S.TRESORERIE)).filter(function(t){return t.srcRef===srcRef;});
+  if(!entry){ for(const t of ex) await delRec(S.TRESORERIE,t.id); return; }
+  if(ex.length){ await updRec(S.TRESORERIE,ex[0].id,Object.assign({},ex[0],entry,{srcRef:srcRef})); for(const t of ex.slice(1)) await delRec(S.TRESORERIE,t.id); }
+  else await addRec(S.TRESORERIE,Object.assign({srcRef:srcRef},entry));
+}
+var CAT_TRESO_PAR_CHARGE={main_oeuvre:'salaire',entretien:'charge_fixe',assurance:'charge_fixe',autre:'autre'};
+// Les amortissements ne sont pas un décaissement.
+function chargeDecaissable(c){ return c.categorie!=='amortissement'; }
+function entreeTresoCharge(c,id){
+  return {type:'sortie',date:c.date,categorie:CAT_TRESO_PAR_CHARGE[c.categorie]||'achat',libelle:c.libelle,montant:c.montant,ref:'CHARGE-'+id,flockId:c.flockId||null,mode:c.mode,operatorId:currentUser?.id||1,ts:Date.now()};
+}
+// Écritures comptables d'une charge : payée ⇒ D charge / C trésorerie ; à payer ⇒ D charge / C 401 Fournisseurs.
+async function comptabiliserCharge(c,id){
+  await annulerEcritures('CHARGE-'+id); await annulerEcritures('CHARGEPAIE-'+id);
+  const compte=COMPTE_PAR_CATEGORIE[c.categorie]||'628', m=Math.round(c.montant);
+  const payee=c.paye!==false;
+  await passerEcriture({date:c.date,journal:'OD',libelle:c.libelle,
+    lignes:[{compte:compte,libelle:PLAN_COMPTABLE[compte]?.lbl||c.libelle,debit:m,credit:0},
+            payee?{compte:compteTresorerie(c.mode),libelle:'Décaissement '+c.mode,debit:0,credit:m}
+                 :{compte:'401',libelle:'Fournisseur — à payer',debit:0,credit:m}],
+    refSource:'CHARGE-'+id});
+}
+window.payerCharge=async function(id){
+  const c=(await getAll(S.CHARGES)).find(function(x){return x.id===id;}); if(!c) return;
+  if(c.paye!==false){ toast('Charge déjà payée'); return; }
+  const mode=c.mode||'virement';
+  if(!confirm('Marquer cette charge comme payée ('+fcfa(c.montant)+', '+mode+') ?\nUn décaissement de trésorerie sera enregistré.')) return;
+  const today=new Date().toISOString().slice(0,10), m=Math.round(c.montant);
+  await updRec(S.CHARGES,id,Object.assign({},c,{paye:true,datePaiement:today,ts:Date.now()}));
+  try{
+    await annulerEcritures('CHARGEPAIE-'+id);
+    await passerEcriture({date:today,journal:'BQ',libelle:'Règlement fournisseur — '+c.libelle,
+      lignes:[{compte:'401',libelle:'Fournisseur',debit:m,credit:0},{compte:compteTresorerie(mode),libelle:'Décaissement '+mode,debit:0,credit:m}],
+      refSource:'CHARGEPAIE-'+id});
+  }catch(e){ console.warn('Comptabilisation règlement échouée :',e.message); }
+  if(chargeDecaissable(c)) await syncTresoSource('CHARGE-'+id,Object.assign(entreeTresoCharge(c,id),{date:today}));
+  toast('✅ Charge payée — décaissement enregistré'); await renderFinance(document.getElementById('contentArea'));
+};
 window.saveChargeManuelle=async function(){
   var editId=parseInt(document.getElementById('chargeId').value)||null;
-  var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0,mode=document.getElementById('chargeMode')?.value||'virement';
+  var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0,mode=document.getElementById('chargeMode')?.value||'virement',paye=(document.getElementById('chargePaye')?.value||'oui')!=='non';
   if(!date||!montant||!lib){toast('Date, libelle et montant requis','err');return;}
-  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,mode:mode,operatorId:currentUser?.id||1,ts:Date.now()};
+  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,mode:mode,paye:paye,operatorId:currentUser?.id||1,ts:Date.now()};
+  if(!(montant>0)){toast('Le montant doit être positif','err');return;}
   var chargeId=editId;
   if(editId) await updRec(S.CHARGES,editId,data);
   else chargeId=await addRec(S.CHARGES,data);
-  // ── Comptabilisation automatique : compte de charge (débit) / 571 Caisse ou 521 Banque (crédit) ──
-  try{
-    const compte=COMPTE_PAR_CATEGORIE[cat]||'628';
-    await annulerEcritures('CHARGE-'+chargeId);
-    await passerEcriture({
-      date, journal:'OD', libelle:lib,
-      lignes:[
-        {compte, libelle:PLAN_COMPTABLE[compte]?.lbl||lib, debit:Math.round(montant), credit:0},
-        {compte:compteTresorerie(mode), libelle:'Décaissement '+mode, debit:0, credit:Math.round(montant)}
-      ],
-      refSource:'CHARGE-'+chargeId
-    });
-  }catch(e){ console.warn('Comptabilisation charge échouée :', e.message); }
+  // ── Comptabilisation + trésorerie liées (payée : décaissement ; à payer : dette fournisseur 401) ──
+  try{ await comptabiliserCharge(data,chargeId); }catch(e){ console.warn('Comptabilisation charge échouée :', e.message); }
+  try{ await syncTresoSource('CHARGE-'+chargeId,(paye&&chargeDecaissable(data))?entreeTresoCharge(data,chargeId):null); }catch(e){ console.warn('Trésorerie charge échouée :', e.message); }
   closeOverlay('ovChargeManuelle');toast(editId?'Charge modifiée : '+fcfa(montant):'Charge: '+fcfa(montant));
   await renderFinance(document.getElementById('contentArea'));
 };
@@ -14203,6 +14283,10 @@ window.exportFinanceCSV=function(fin){
       <div class="fg">
         <label>Mode de règlement</label>
         <select id="chargeMode"><option value="virement">Virement</option><option value="cheque">Chèque</option><option value="especes">Espèces (caisse)</option><option value="mobile_money">Mobile Money</option></select>
+      </div>
+      <div class="fg">
+        <label>Règlement</label>
+        <select id="chargePaye"><option value="oui">Payée (décaissement immédiat)</option><option value="non">À payer (dette fournisseur)</option></select>
       </div>
     </div>
     <div class="modal-footer">
@@ -21508,9 +21592,13 @@ function buildDocumentImprimable(ent, corps, cfg, type, dateMin, dateMax, previe
 // ── Corps : Production ──
 // ── CONSO PAR POULE vs STANDARD — pondeuses, sur la période (poule-jours réels, jours avec saisie d'aliment) ──
 async function collectConsoStdData(dateMin, dateMax, lotId){
-  const [buildings,lines,flocks,feeds,mort,refo,vente,slaug,nutr]=await Promise.all([
+  const [buildings,lines,flocks,feeds,mort,refo,vente,slaug,nutr,chargesAl]=await Promise.all([
     getAll(S.BUILDINGS),getAll(S.LINES),getAll(S.FLOCKS),getAll(S.FEEDING),getAll(S.MORTALITE),
-    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.NUTRITION)]);
+    getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.NUTRITION),getAll(S.CHARGES)]);
+  // Prix de valorisation de l'aliment : moyenne pondérée des achats saisis (charges « aliment » en kg), sinon prix par défaut du paramétrage Finance.
+  const achatsKg=chargesAl.filter(c=>c.categorie==='aliment'&&/^kg/i.test(c.unite||'')&&c.qte>0&&c.montant>0);
+  const qKg=achatsKg.reduce((a,c)=>a+c.qte,0), mKg=achatsKg.reduce((a,c)=>a+c.montant,0);
+  const prix=qKg>0?mKg/qKg:FINANCE_PARAMS.prixAlimentDefaut, prixSource=qKg>0?'moyenne des achats saisis ('+Math.round(qKg).toLocaleString('fr-FR')+' kg)':'prix par défaut (Paramétrage → Finance)';
   const day=d=>(d||'').slice(0,10);
   const addDays=(d,n)=>{ const x=new Date(d+'T00:00:00Z'); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); };
   const rows=[];
@@ -21541,25 +21629,32 @@ async function collectConsoStdData(dateMin, dateMax, lotId){
     const bat=buildings.find(b=>b.id===(f.buildingId||(line?line.buildingId:null)));
     rows.push({id:f.id,nom:f.nom||'—',batiment:bat?bat.nom:'Non affecté',ligne:line?line.nom:'—',souche,age,
       effMoy:pouleJours/joursSaisis.length,jours:joursSaisis.length,kg,pouleJours,gpj,stdGPD,ecart,
-      kgStd:stdGPD?stdGPD*pouleJours/1000:null});
+      kgStd:stdGPD?stdGPD*pouleJours/1000:null,
+      ecartKg:stdGPD?kg-stdGPD*pouleJours/1000:null, valeur:stdGPD?(kg-stdGPD*pouleJours/1000)*prix:null});
   });
   const bats={}; rows.forEach(r=>{ (bats[r.batiment]=bats[r.batiment]||[]).push(r); });
   const agg=a=>{ const pj=a.reduce((t,r)=>t+r.pouleJours,0), kg=a.reduce((t,r)=>t+r.kg,0), ks=a.reduce((t,r)=>t+(r.kgStd||0),0), pjStd=a.filter(r=>r.kgStd!=null).reduce((t,r)=>t+r.pouleJours,0);
-    const gpj=pj>0?kg*1000/pj:0, std=pjStd>0?ks*1000/pjStd:null; return {pj,kg,gpj,std,ecart:std?(gpj-std)/std*100:null,eff:a.reduce((t,r)=>t+r.effMoy,0)}; };
-  return {dateMin,dateMax,rows,parBatiment:Object.keys(bats).sort().map(n=>({nom:n,rows:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:agg(bats[n])})),total:agg(rows)};
+    const gpj=pj>0?kg*1000/pj:0, std=pjStd>0?ks*1000/pjStd:null;
+    const ev=a.filter(r=>r.valeur!=null);
+    return {pj,kg,gpj,std,ecart:std?(gpj-std)/std*100:null,eff:a.reduce((t,r)=>t+r.effMoy,0),
+      ecartKg:ev.reduce((t,r)=>t+r.ecartKg,0), valeur:ev.reduce((t,r)=>t+r.valeur,0),
+      perte:ev.reduce((t,r)=>t+Math.max(0,r.valeur),0), economie:ev.reduce((t,r)=>t+Math.min(0,r.valeur),0)}; };
+  return {dateMin,dateMax,prix,prixSource,rows,parBatiment:Object.keys(bats).sort().map(n=>({nom:n,rows:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:agg(bats[n])})),total:agg(rows)};
 }
 function buildCorpsConsoStd(d, cfg){
   const N=(v,dec=0)=>(v==null||isNaN(v))?'—':(+v).toLocaleString('fr-FR',{minimumFractionDigits:dec,maximumFractionDigits:dec});
   const col=e=>e==null?'#888':Math.abs(e)<=CONSO_SEUIL_ATTENTION?'#166534':Math.abs(e)<=CONSO_SEUIL_CRITIQUE?'#92400e':'#c1121f';
   const stat=e=>e==null?'—':Math.abs(e)<=CONSO_SEUIL_ATTENTION?'✓ Conforme':Math.abs(e)<=CONSO_SEUIL_CRITIQUE?'⚠ Écart':'⛔ Critique';
   const ec=e=>e==null?'—':(e>=0?'+':'')+e.toFixed(1)+'%';
-  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Souche</th><th style="text-align:right">Âge (j)</th><th style="text-align:right">Effectif moy.</th><th style="text-align:right">Jours saisis</th><th style="text-align:right">Aliment (kg)</th><th style="text-align:right">g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th>Statut</th></tr></thead>';
-  const row=r=>`<tr><td>${esc(r.ligne)}</td><td><strong>${esc(r.nom)}</strong></td><td>${esc(r.souche)}</td><td style="text-align:right">${r.age}</td><td style="text-align:right">${N(r.effMoy)}</td><td style="text-align:right">${r.jours}</td><td style="text-align:right">${N(r.kg,1)}</td><td style="text-align:right;font-weight:700">${N(r.gpj,1)}</td><td style="text-align:right">${r.stdGPD?N(r.stdGPD,0):'—'}</td><td style="text-align:right;font-weight:700;color:${col(r.ecart)}">${ec(r.ecart)}</td><td style="color:${col(r.ecart)}">${stat(r.ecart)}</td></tr>`;
+  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Souche</th><th style="text-align:right">Âge (j)</th><th style="text-align:right">Effectif moy.</th><th style="text-align:right">Jours saisis</th><th style="text-align:right">Aliment (kg)</th><th style="text-align:right">g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th style="text-align:right">Écart (kg)</th><th style="text-align:right">Valeur écart (F)</th><th>Statut</th></tr></thead>';
+  const sg=v=>v==null||isNaN(v)?'—':(v>=0?'+':'−')+Math.abs(Math.round(v)).toLocaleString('fr-FR');
+  const colV=v=>v==null?'#888':v>0?'#c1121f':'#166534';
+  const row=r=>`<tr><td>${esc(r.ligne)}</td><td><strong>${esc(r.nom)}</strong></td><td>${esc(r.souche)}</td><td style="text-align:right">${r.age}</td><td style="text-align:right">${N(r.effMoy)}</td><td style="text-align:right">${r.jours}</td><td style="text-align:right">${N(r.kg,1)}</td><td style="text-align:right;font-weight:700">${N(r.gpj,1)}</td><td style="text-align:right">${r.stdGPD?N(r.stdGPD,0):'—'}</td><td style="text-align:right;font-weight:700;color:${col(r.ecart)}">${ec(r.ecart)}</td><td style="text-align:right">${sg(r.ecartKg)}</td><td style="text-align:right;font-weight:700;color:${colV(r.valeur)}">${sg(r.valeur)}</td><td style="color:${col(r.ecart)}">${stat(r.ecart)}</td></tr>`;
   const blocs=d.parBatiment.map(b=>`
     <div class="section">
       <div class="section-title">🏗️ ${esc(b.nom)} — ${N(b.t.gpj,1)} g/poule/j${b.t.std?' (standard '+N(b.t.std,0)+')':''}</div>
       <table>${th}<tbody>${b.rows.map(row).join('')}
-        <tr class="total-row"><td colspan="4"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.eff)}</td><td></td><td style="text-align:right">${N(b.t.kg,1)}</td><td style="text-align:right">${N(b.t.gpj,1)}</td><td style="text-align:right">${b.t.std?N(b.t.std,0):'—'}</td><td style="text-align:right;color:${col(b.t.ecart)}">${ec(b.t.ecart)}</td><td>${stat(b.t.ecart)}</td></tr>
+        <tr class="total-row"><td colspan="4"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.eff)}</td><td></td><td style="text-align:right">${N(b.t.kg,1)}</td><td style="text-align:right">${N(b.t.gpj,1)}</td><td style="text-align:right">${b.t.std?N(b.t.std,0):'—'}</td><td style="text-align:right;color:${col(b.t.ecart)}">${ec(b.t.ecart)}</td><td style="text-align:right">${sg(b.t.ecartKg)}</td><td style="text-align:right;color:${colV(b.t.valeur)}">${sg(b.t.valeur)}</td><td>${stat(b.t.ecart)}</td></tr>
       </tbody></table>
     </div>`).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucune saisie d\'aliment sur la période</p></div>';
   const t=d.total;
@@ -21569,9 +21664,12 @@ function buildCorpsConsoStd(d, cfg){
     <div class="kpi-box"><div class="kpi-val">${t.std?N(t.std,0)+' g':'—'}</div><div class="kpi-lbl">Standard (pondéré)</div></div>
     <div class="kpi-box"><div class="kpi-val" style="color:${col(t.ecart)}">${ec(t.ecart)}</div><div class="kpi-lbl">Écart vs standard</div></div>
     <div class="kpi-box"><div class="kpi-val">${N(t.kg,0)} kg</div><div class="kpi-lbl">Aliment consommé</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${N(t.perte,0)} F</div><div class="kpi-lbl">💸 Perte estimée (surconsommation)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${N(Math.abs(t.economie),0)} F</div><div class="kpi-lbl">Sous-consommation (économie apparente)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:${colV(t.valeur)}">${sg(t.valeur)} F</div><div class="kpi-lbl">Écart net valorisé</div></div>
   </div>
   ${blocs}
-  <p style="font-size:10px;color:#888;margin-top:6px">Période ${esc(d.dateMin)} au ${esc(d.dateMax)} · pondeuses uniquement. g/poule/j = aliment ÷ (effectif vivant × jours saisis), calculé sur les jours avec saisie d'aliment. Standard = table Nutrition (souche, âge à mi-période). Seuils : ±${CONSO_SEUIL_ATTENTION}% écart, ±${CONSO_SEUIL_CRITIQUE}% critique.</p>`;
+  <p style="font-size:10px;color:#888;margin-top:6px">Période ${esc(d.dateMin)} au ${esc(d.dateMax)} · pondeuses uniquement. g/poule/j = aliment ÷ (effectif vivant × jours saisis), calculé sur les jours avec saisie d'aliment. Standard = table Nutrition (souche, âge à mi-période). Valorisation : écart (kg) × ${N(d.prix,0)} F/kg (${esc(d.prixSource)}). Une sous-consommation n'est pas une économie certaine : elle peut traduire un défaut d'accès à l'aliment ou une baisse de ponte. Seuils : ±${CONSO_SEUIL_ATTENTION}% écart, ±${CONSO_SEUIL_CRITIQUE}% critique.</p>`;
 }
 
 // ── EFFECTIF POULES — vivants à ce jour, tous bâtiments (initial − mortalité − réforme − ventes − abattage direct) ──
@@ -21592,20 +21690,22 @@ async function collectEffectifData(lotId){
     parBatiment:Object.keys(bats).sort().map(n=>({nom:n,lots:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:tot(bats[n])})), tot};
 }
 function buildCorpsEffectif(d, cfg, cs){
-  const N=v=>(v||0).toLocaleString('fr-FR');
+  const N=v=>(v||0).toLocaleString('fr-FR',{maximumFractionDigits:0});
+  const sgv=v=>v==null||isNaN(v)?'—':(v>=0?'+':'−')+Math.abs(Math.round(v)).toLocaleString('fr-FR');
+  const colV=v=>v==null?'#888':v>0?'#c1121f':'#166534';
   const tp=d.tot(d.pondeuses), tc=d.tot(d.chair), tt=d.tot(d.lots);
   const cmap={}; ((cs&&cs.rows)||[]).forEach(r=>{ cmap[r.id]=r; });
   const D1=(v)=>v==null||isNaN(v)?'—':(+v).toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1});
   const ecC=e=>e==null?'#888':Math.abs(e)<=CONSO_SEUIL_ATTENTION?'#166534':Math.abs(e)<=CONSO_SEUIL_CRITIQUE?'#92400e':'#c1121f';
   const ecT=e=>e==null?'—':(e>=0?'+':'')+e.toFixed(1)+'%';
-  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Initial</th><th style="text-align:right">Mortalité</th><th style="text-align:right">Réforme/Ventes</th><th style="text-align:right">Vivants</th><th style="text-align:right">🌾 g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th></tr></thead>';
-  const row=l=>{ const c=cmap[l.id]; return `<tr><td>${esc(l.ligne)}</td><td><strong>${esc(l.nom)}</strong></td><td>${l.type==='layer'?'🥚 Ponte':'🍗 Chair'}</td><td style="text-align:right">${N(l.init)}</td><td style="text-align:right;color:#c1121f">${N(l.morts)}</td><td style="text-align:right">${N(l.ref+l.ven+l.aba)}</td><td style="text-align:right;font-weight:700">${N(l.vivants)}</td><td style="text-align:right;font-weight:700">${c?D1(c.gpj):'—'}</td><td style="text-align:right">${c&&c.stdGPD?N(c.stdGPD):'—'}</td><td style="text-align:right;font-weight:700;color:${ecC(c&&c.ecart)}">${c?ecT(c.ecart):'—'}</td></tr>`; };
-  const bTot=b=>{ const rs=b.lots.map(l=>cmap[l.id]).filter(Boolean); const pj=rs.reduce((t,r)=>t+r.pouleJours,0), kg=rs.reduce((t,r)=>t+r.kg,0), ks=rs.reduce((t,r)=>t+(r.kgStd||0),0), pjs=rs.filter(r=>r.kgStd!=null).reduce((t,r)=>t+r.pouleJours,0); const g=pj>0?kg*1000/pj:null, sd=pjs>0?ks*1000/pjs:null; return {g,sd,e:(g!=null&&sd)?(g-sd)/sd*100:null}; };
+  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Initial</th><th style="text-align:right">Mortalité</th><th style="text-align:right">Réforme/Ventes</th><th style="text-align:right">Vivants</th><th style="text-align:right">🌾 g/poule/j</th><th style="text-align:right">Standard</th><th style="text-align:right">Écart</th><th style="text-align:right">💸 Valeur écart (F)</th></tr></thead>';
+  const row=l=>{ const c=cmap[l.id]; return `<tr><td>${esc(l.ligne)}</td><td><strong>${esc(l.nom)}</strong></td><td>${l.type==='layer'?'🥚 Ponte':'🍗 Chair'}</td><td style="text-align:right">${N(l.init)}</td><td style="text-align:right;color:#c1121f">${N(l.morts)}</td><td style="text-align:right">${N(l.ref+l.ven+l.aba)}</td><td style="text-align:right;font-weight:700">${N(l.vivants)}</td><td style="text-align:right;font-weight:700">${c?D1(c.gpj):'—'}</td><td style="text-align:right">${c&&c.stdGPD?N(c.stdGPD):'—'}</td><td style="text-align:right;font-weight:700;color:${ecC(c&&c.ecart)}">${c?ecT(c.ecart):'—'}</td><td style="text-align:right;font-weight:700;color:${colV(c&&c.valeur)}">${c?sgv(c.valeur):'—'}</td></tr>`; };
+  const bTot=b=>{ const rs=b.lots.map(l=>cmap[l.id]).filter(Boolean); const pj=rs.reduce((t,r)=>t+r.pouleJours,0), kg=rs.reduce((t,r)=>t+r.kg,0), ks=rs.reduce((t,r)=>t+(r.kgStd||0),0), pjs=rs.filter(r=>r.kgStd!=null).reduce((t,r)=>t+r.pouleJours,0); const g=pj>0?kg*1000/pj:null, sd=pjs>0?ks*1000/pjs:null; const val=rs.filter(r=>r.valeur!=null).reduce((t,r)=>t+r.valeur,0); return {g,sd,e:(g!=null&&sd)?(g-sd)/sd*100:null,val:rs.some(r=>r.valeur!=null)?val:null}; };
   const blocs=d.parBatiment.map(b=>`
     <div class="section">
       <div class="section-title">🏗️ ${esc(b.nom)} — ${N(b.t.vivants)} sujet(s) vivant(s)</div>
       <table>${th}<tbody>${b.lots.map(row).join('')}
-        <tr class="total-row"><td colspan="3"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.init)}</td><td style="text-align:right">${N(b.t.morts)}</td><td style="text-align:right">${N(b.t.ref+b.t.ven+b.t.aba)}</td><td style="text-align:right">${N(b.t.vivants)}</td>${(()=>{const x=bTot(b);return `<td style="text-align:right">${D1(x.g)}</td><td style="text-align:right">${x.sd?N(x.sd):'—'}</td><td style="text-align:right;color:${ecC(x.e)}">${ecT(x.e)}</td>`;})()}</tr>
+        <tr class="total-row"><td colspan="3"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.init)}</td><td style="text-align:right">${N(b.t.morts)}</td><td style="text-align:right">${N(b.t.ref+b.t.ven+b.t.aba)}</td><td style="text-align:right">${N(b.t.vivants)}</td>${(()=>{const x=bTot(b);return `<td style="text-align:right">${D1(x.g)}</td><td style="text-align:right">${x.sd?N(x.sd):'—'}</td><td style="text-align:right;color:${ecC(x.e)}">${ecT(x.e)}</td><td style="text-align:right;color:${colV(x.val)}">${sgv(x.val)}</td>`;})()}</tr>
       </tbody></table>
     </div>`).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucun lot actif</p></div>';
   return `
@@ -21616,14 +21716,16 @@ function buildCorpsEffectif(d, cfg, cs){
     <div class="kpi-box"><div class="kpi-val">${d.parBatiment.length}</div><div class="kpi-lbl">Bâtiments</div></div>
     ${cs&&cs.rows.length?`<div class="kpi-box"><div class="kpi-val">${D1(cs.total.gpj)} g</div><div class="kpi-lbl">🌾 Conso. / poule / jour</div></div>
     <div class="kpi-box"><div class="kpi-val">${cs.total.std?N(cs.total.std)+' g':'—'}</div><div class="kpi-lbl">Standard (norme)</div></div>
-    <div class="kpi-box"><div class="kpi-val" style="color:${ecC(cs.total.ecart)}">${ecT(cs.total.ecart)}</div><div class="kpi-lbl">Écart vs standard</div></div>`:''}
+    <div class="kpi-box"><div class="kpi-val" style="color:${ecC(cs.total.ecart)}">${ecT(cs.total.ecart)}</div><div class="kpi-lbl">Écart vs standard</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#c1121f">${N(cs.total.perte)} F</div><div class="kpi-lbl">💸 Perte estimée (surconsommation)</div></div>
+    <div class="kpi-box"><div class="kpi-val" style="color:#166534">${N(Math.abs(cs.total.economie))} F</div><div class="kpi-lbl">Sous-consommation (économie apparente)</div></div>`:''}
   </div>
   ${blocs}
   <div class="section"><table><tbody>
     <tr class="total-row"><td><strong>TOTAL POULES PONDEUSES (tous bâtiments)</strong></td><td style="text-align:right">${N(tp.vivants)}</td></tr>
     <tr class="total-row"><td><strong>TOTAL GÉNÉRAL (tous sujets)</strong></td><td style="text-align:right">${N(tt.vivants)}</td></tr>
   </tbody></table>
-  <p style="font-size:10px;color:#888;margin-top:6px">Effectif : situation à ce jour (indépendante de la période) ; consommation par poule : période choisie, jours avec saisie d\'aliment, standard = table Nutrition. Effectif = initial − mortalité − réforme − ventes vivantes − abattage direct. Lots épuisés exclus.</p></div>`;
+  <p style="font-size:10px;color:#888;margin-top:6px">Effectif : situation à ce jour (indépendante de la période) ; consommation par poule : période choisie, jours avec saisie d\'aliment, standard = table Nutrition ; valeur de l\'écart = écart (kg) × prix aliment (${N(cs&&cs.prix)} F/kg, ${esc((cs&&cs.prixSource)||'')}). Effectif = initial − mortalité − réforme − ventes vivantes − abattage direct. Lots épuisés exclus.</p></div>`;
 }
 
 function buildCorpsProduction(data, cfg){
