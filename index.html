@@ -20294,6 +20294,16 @@ async function renderRapports(ca){
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:0;border-left:4px solid #b45309">
+        <div style="padding:11px 14px 4px;font-weight:700;font-size:13px">🐔 Effectif poules</div>
+        <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Total · Par bâtiment · Ligne · Lot</div>
+        <div style="padding:0 10px 12px;display:flex;gap:7px">
+          <button style="flex:1;padding:11px 0;background:#b45309;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px" onclick="printEtatPeriodique('effectif')"><i class="fas fa-print"></i> Imprimer</button>
+          <button style="padding:11px 14px;background:#fff;color:#b45309;border:1.5px solid #fcd34d;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="afficherEtatInline('effectif')"><i class="fas fa-eye"></i></button>
+          <button style="padding:11px 14px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:44px" onclick="envoyerEtatWhatsApp('effectif')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom:0;border-left:4px solid #0f766e">
         <div style="padding:11px 14px 4px;font-weight:700;font-size:13px">🥚📦 Production vs Conditionnement</div>
         <div style="padding:2px 14px 10px;font-size:11px;color:var(--text3)">Par ligne · Bâtiment · Taux conditionné & casse</div>
@@ -21265,7 +21275,7 @@ function getEtatPeriodFilters(){
 window.envoyerEtatWhatsApp=async function(type){
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
-  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',bilan:'📊 BILAN COMPLET',mortalite:'☠️ SUIVI MORTALITÉ',invpf:'🏬🥚 INVENTAIRE PF PAR CALIBRE',entreespf:'📥🥚 ENTRÉES PF PAR CALIBRE'};
+  const titres  = {production:'🐔 PRODUCTION',stocks:'📦 STOCKS',appro:'🚚 APPROVISIONNEMENT',finance:'💰 FINANCE',commercial:'🛒 COMMERCIAL',gmao:'🔧 GMAO',prodcond:'🥚📦 PRODUCTION vs CONDITIONNEMENT',effectif:'🐔 EFFECTIF POULES',bilan:'📊 BILAN COMPLET',mortalite:'☠️ SUIVI MORTALITÉ',invpf:'🏬🥚 INVENTAIRE PF PAR CALIBRE',entreespf:'📥🥚 ENTRÉES PF PAR CALIBRE'};
   const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
   const entete = '*'+(titres[type]||'ÉTAT')+'*\n'+(cfg.nomExploitation||'Exploitation')+'\nPériode : '+dateMin+' au '+dateMax+'\n━━━━━━━━━━━━━━━━\n';
   const texte = entete + htmlEtatVersTexte(corps);
@@ -21301,6 +21311,7 @@ async function getEtatCorps(type, dateMin, dateMax, lotId, cfg){
   if(type==='commercial') return buildCorpsCommercial(data, cfg);
   if(type==='gmao') return buildCorpsGMAO(data, cfg);
   if(type==='bilan') return buildCorpsBilan(data, cfg);
+  if(type==='effectif') return buildCorpsEffectif(await collectEffectifData(lotId), cfg);
   if(type==='prodcond'){
     const {bat, lig} = getCondBatLigneFilters();
     return buildCorpsProdCond(await collectProdCondData(dateMin, dateMax, lotId, bat, lig), cfg);
@@ -21336,7 +21347,7 @@ window.afficherEtatInline = async function(type){
   zone.scrollIntoView({behavior:'smooth',block:'nearest'});
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
-  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité',invpf:'🏬🥚 Inventaire PF par calibre',entreespf:'📥🥚 Entrées PF par calibre'};
+  const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',effectif:'🐔 Effectif poules',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité',invpf:'🏬🥚 Inventaire PF par calibre',entreespf:'📥🥚 Entrées PF par calibre'};
   let corps;
   try{ corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg); }
   catch(e){ console.error('afficherEtatInline',e); zone.innerHTML='<div class="card"><div class="card-bd" style="text-align:center;padding:20px;color:#b91c1c">Erreur de chargement : '+String(e&&e.message||e).replace(/</g,'&lt;')+'</div></div>'; return; }
@@ -21362,6 +21373,7 @@ function buildEnteteEtat(cfg, type, dateMin, dateMax){
     production:'ÉTAT DE PRODUCTION',finance:'ÉTAT FINANCIER',stocks:'ÉTAT DES STOCKS',
     commercial:'ÉTAT COMMERCIAL',gmao:'ÉTAT GMAO',bilan:'BILAN COMPLET',
     prodcond:'PRODUCTION vs CONDITIONNEMENT (par ligne / bâtiment)',
+    effectif:'EFFECTIF POULES (tous bâtiments)',
     appro:'ÉTAT D\'APPROVISIONNEMENT', mortalite:'SUIVI DE MORTALITÉ PÉRIODIQUE',
     invpf:'INVENTAIRE PRODUITS FINIS PAR CALIBRE (par dépôt)',
     entreespf:'ENTRÉES PRODUITS FINIS PAR CALIBRE (par dépôt, période)'
@@ -21456,6 +21468,50 @@ function buildDocumentImprimable(ent, corps, cfg, type, dateMin, dateMax, previe
 }
 
 // ── Corps : Production ──
+// ── EFFECTIF POULES — vivants à ce jour, tous bâtiments (initial − mortalité − réforme − ventes − abattage direct) ──
+async function collectEffectifData(lotId){
+  const [flocks,buildings,lines,mort,refo,vente,slaug]=await Promise.all([
+    getAll(S.FLOCKS),getAll(S.BUILDINGS),getAll(S.LINES),getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER)]);
+  const sum=(arr,k,f)=>{ const m={}; arr.forEach(r=>{ if(f&&!f(r)) return; m[r.flockId]=(m[r.flockId]||0)+(+r[k]||0); }); return m; };
+  const mM=sum(mort,'nbMorts'), mR=sum(refo,'nbTetes'), mV=sum(vente,'nbTetes'), mA=sum(slaug,'nbAnimaux',r=>!r.viaReforme);
+  const bNom=id=>(buildings.find(b=>b.id===id)||{}).nom||'Sans bâtiment';
+  const lNom=id=>(lines.find(l=>l.id===id)||{}).nom||'—';
+  const lots=flocks.filter(f=>!lotId||String(f.id)===String(lotId)).map(f=>{
+    const init=f.initialStock||0, morts=mM[f.id]||0, ref=mR[f.id]||0, ven=mV[f.id]||0, aba=mA[f.id]||0;
+    return {id:f.id,nom:f.nom||'—',type:f.type,batiment:bNom(f.buildingId),ligne:lNom(f.lineId),init,morts,ref,ven,aba,vivants:Math.max(0,init-morts-ref-ven-aba)};
+  }).filter(l=>l.vivants>0);
+  const tot=a=>a.reduce((t,l)=>({init:t.init+l.init,morts:t.morts+l.morts,ref:t.ref+l.ref,ven:t.ven+l.ven,aba:t.aba+l.aba,vivants:t.vivants+l.vivants}),{init:0,morts:0,ref:0,ven:0,aba:0,vivants:0});
+  const bats={}; lots.forEach(l=>{ (bats[l.batiment]=bats[l.batiment]||[]).push(l); });
+  return {lots, pondeuses:lots.filter(l=>l.type==='layer'), chair:lots.filter(l=>l.type!=='layer'),
+    parBatiment:Object.keys(bats).sort().map(n=>({nom:n,lots:bats[n].sort((a,b)=>a.ligne.localeCompare(b.ligne)||a.nom.localeCompare(b.nom)),t:tot(bats[n])})), tot};
+}
+function buildCorpsEffectif(d, cfg){
+  const N=v=>(v||0).toLocaleString('fr-FR');
+  const tp=d.tot(d.pondeuses), tc=d.tot(d.chair), tt=d.tot(d.lots);
+  const th='<thead><tr><th>Ligne</th><th>Lot</th><th>Type</th><th style="text-align:right">Initial</th><th style="text-align:right">Mortalité</th><th style="text-align:right">Réforme/Ventes</th><th style="text-align:right">Vivants</th></tr></thead>';
+  const row=l=>`<tr><td>${esc(l.ligne)}</td><td><strong>${esc(l.nom)}</strong></td><td>${l.type==='layer'?'🥚 Ponte':'🍗 Chair'}</td><td style="text-align:right">${N(l.init)}</td><td style="text-align:right;color:#c1121f">${N(l.morts)}</td><td style="text-align:right">${N(l.ref+l.ven+l.aba)}</td><td style="text-align:right;font-weight:700">${N(l.vivants)}</td></tr>`;
+  const blocs=d.parBatiment.map(b=>`
+    <div class="section">
+      <div class="section-title">🏗️ ${esc(b.nom)} — ${N(b.t.vivants)} sujet(s) vivant(s)</div>
+      <table>${th}<tbody>${b.lots.map(row).join('')}
+        <tr class="total-row"><td colspan="3"><strong>TOTAL BÂTIMENT</strong></td><td style="text-align:right">${N(b.t.init)}</td><td style="text-align:right">${N(b.t.morts)}</td><td style="text-align:right">${N(b.t.ref+b.t.ven+b.t.aba)}</td><td style="text-align:right">${N(b.t.vivants)}</td></tr>
+      </tbody></table>
+    </div>`).join('') || '<div class="section"><p style="text-align:center;color:#aaa">Aucun lot actif</p></div>';
+  return `
+  <div class="kpis">
+    <div class="kpi-box"><div class="kpi-val">${N(tp.vivants)}</div><div class="kpi-lbl">🐔 Poules pondeuses vivantes</div></div>
+    <div class="kpi-box"><div class="kpi-val">${N(tc.vivants)}</div><div class="kpi-lbl">🍗 Poulets de chair</div></div>
+    <div class="kpi-box"><div class="kpi-val">${N(tt.vivants)}</div><div class="kpi-lbl">Total tous sujets</div></div>
+    <div class="kpi-box"><div class="kpi-val">${d.parBatiment.length}</div><div class="kpi-lbl">Bâtiments</div></div>
+  </div>
+  ${blocs}
+  <div class="section"><table><tbody>
+    <tr class="total-row"><td><strong>TOTAL POULES PONDEUSES (tous bâtiments)</strong></td><td style="text-align:right">${N(tp.vivants)}</td></tr>
+    <tr class="total-row"><td><strong>TOTAL GÉNÉRAL (tous sujets)</strong></td><td style="text-align:right">${N(tt.vivants)}</td></tr>
+  </tbody></table>
+  <p style="font-size:10px;color:#888;margin-top:6px">Situation à ce jour (indépendante de la période) : effectif initial − mortalité − réforme − ventes vivantes − abattage direct. Lots épuisés exclus.</p></div>`;
+}
+
 function buildCorpsProduction(data, cfg){
   const dev = cfg.devise||'FCFA';
   const oeufRows = data.oeufsByLot.map(b=>`
