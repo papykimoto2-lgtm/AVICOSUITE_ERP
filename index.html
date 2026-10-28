@@ -2429,7 +2429,7 @@ async function flushPendingOps(){
   if(_flushing || !supa || !currentUser) return; // rien à tenter tant que non authentifié
   const q=loadQueue();
   if(!q.length) return;
-  _flushing=true;
+  _flushing=true; invalidateGetAll();
   const remaining=[];
   let okCount=0, dropped=0;
   for(const op of q){
@@ -2526,6 +2526,7 @@ function setupRealtimeSync(){
   }
   _dashSyncChannel = supa.channel('avico_dash_sync')
     .on('postgres_changes', {event:'*', schema:'public', table:'avico_records', filter:'org_id=eq.'+SUPA_ORG}, ()=>{
+      invalidateGetAll();
       clearTimeout(window._rtDebounce);
       window._rtDebounce=setTimeout(async ()=>{
         lastSyncTime = new Date();
@@ -2601,7 +2602,7 @@ async function _fetchStorePage(st, from, PAGE){
   return data || [];
 }
 
-function getAll(st){return new Promise(async res=>{
+function _getAllRaw(st){return new Promise(async res=>{
   let serverRows=[];
   if(supa){
     try{
@@ -2629,6 +2630,20 @@ function getAll(st){return new Promise(async res=>{
     .map(r=> pendingUpds[r.id] ? {...pendingUpds[r.id], id:r.id, _pending:true} : r);
   res([...merged, ...pendingAdds]);
 });}
+// Perf : cache mémoire court + dédoublonnage des lectures simultanées d'un même store.
+// Invalidé à chaque écriture locale, flush de file et évènement realtime.
+const _getAllMemo=new Map(); const _GETALL_TTL=15000;
+function invalidateGetAll(){ _getAllMemo.clear(); }
+function getAll(st){
+  const m=_getAllMemo.get(st);
+  if(m && (m.p || Date.now()-m.t<_GETALL_TTL)){
+    return (m.p||Promise.resolve(m.rows)).then(rows=>rows.map(r=>({...r})));
+  }
+  const e={t:Date.now(),rows:null,p:null};
+  e.p=_getAllRaw(st).then(rows=>{ e.rows=rows; e.t=Date.now(); e.p=null; return rows; },err=>{ if(_getAllMemo.get(st)===e) _getAllMemo.delete(st); throw err; });
+  _getAllMemo.set(st,e);
+  return e.p.then(rows=>rows.map(r=>({...r})));
+}
 function getByIdx(st,idx,val){return new Promise(async res=>{
   try{ const all=await getAll(st); res(all.filter(rec=>rec[idx]===val)); }
   catch(e){console.error('getByIdx error on store ['+st+']:',e.message);res([]);}
@@ -2696,6 +2711,8 @@ function delRec(st,id){return new Promise(async res=>{
   }
   catch(e){ console.warn('delRec hors-ligne :',e.message); queueOp({op:'del',store:st,id,ts:Date.now()}); toast('📶 Hors-ligne — suppression mise en attente de synchronisation','err'); res(); }
 });}
+
+['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(){ invalidateGetAll(); return f.apply(this,arguments).then(r=>{ invalidateGetAll(); return r; }); }; });
 
 // ════════════════════════════════════════════════════════
 //  DDL SQL PRODUCTION — Supabase
@@ -21282,7 +21299,9 @@ window.afficherEtatInline = async function(type){
   const {dateMin, dateMax, lotId} = getEtatPeriodFilters();
   const cfg     = await getExploitationSettings();
   const titres  = {production:'🐔 Production',stocks:'📦 Stocks',appro:'🚚 Approvisionnement',finance:'💰 Finance',commercial:'🛒 Commercial',gmao:'🔧 GMAO',prodcond:'🥚📦 Production vs Conditionnement',bilan:'📊 Bilan complet',mortalite:'☠️ Suivi mortalité',invpf:'🏬🥚 Inventaire PF par calibre',entreespf:'📥🥚 Entrées PF par calibre'};
-  const corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg);
+  let corps;
+  try{ corps = await getEtatCorps(type, dateMin, dateMax, lotId, cfg); }
+  catch(e){ console.error('afficherEtatInline',e); zone.innerHTML='<div class="card"><div class="card-bd" style="text-align:center;padding:20px;color:#b91c1c">Erreur de chargement : '+String(e&&e.message||e).replace(/</g,'&lt;')+'</div></div>'; return; }
   zone.innerHTML = `<div class="card" style="border:1.5px solid var(--g3)">
     <div class="card-hd" style="display:flex;justify-content:space-between;align-items:center">
       <span>${titres[type]||'État'} — ${dateMin} au ${dateMax}</span>
