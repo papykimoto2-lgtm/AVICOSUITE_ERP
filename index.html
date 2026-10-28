@@ -24,8 +24,11 @@
 <meta property="og:description" content="Gestion intelligente de votre élevage avicole — Sanix Africa Technologies">
 <meta property="og:type" content="website">
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></noscript>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root{
@@ -2493,8 +2496,8 @@ function openDB(){
 
 // Charge le profil membre (org + rôle) — source de vérité côté serveur,
 // jamais user_metadata qui est modifiable par le client lui-même.
-async function loadMembership(){
-  const { data:{ user } } = await supa.auth.getUser();
+async function loadMembership(knownUser){
+  const user = knownUser || (await supa.auth.getUser()).data.user;
   if(!user) return null;
   const { data, error } = await supa.from('avico_members')
     .select('org_id,role,nom,email,actif').eq('user_id', user.id).maybeSingle();
@@ -3636,6 +3639,7 @@ window.doLogin = async function(){
       return;
     }
 
+    [S.FLOCKS,S.SETTINGS_APP,S.PRODUITS,S.DEPOTS,S.MVTS,S.FOURNISSEURS,S.BCS,S.CONVERSATIONS].forEach(st=>{ getAll(st).catch(()=>{}); });
     const me = await loadMembership();
     if(!me){
       await supa.auth.signOut();
@@ -12704,7 +12708,10 @@ window.onload=async()=>{
     // ── Session Supabase existante — reconnexion silencieuse (refresh token géré par le SDK) ──
     const { data:{ session } } = await supa.auth.getSession();
     if(session){
-      const me = await loadMembership();
+      // Préchargement parallèle des stores du tableau de bord pendant la vérification d'appartenance
+      // (alimente le cache getAll : render() ne refait plus ces requêtes en série).
+      [S.FLOCKS,S.SETTINGS_APP,S.PRODUITS,S.DEPOTS,S.MVTS,S.FOURNISSEURS,S.BCS,S.CONVERSATIONS].forEach(st=>{ getAll(st).catch(()=>{}); });
+      const me = await loadMembership(session.user);
       if(me && me.org_id === SUPA_ORG){
         currentUser = me;
         startSync();
@@ -12712,8 +12719,8 @@ window.onload=async()=>{
         updateNavUser();
         document.getElementById('lotsPanel').classList.remove('hidden');
         await loadRoleOverrides();
-        await renderLotSidebar();
-        const lots=await getAll(S.FLOCKS); if(lots.length) curLotId=lots[0].id;
+        const [, lots] = await Promise.all([renderLotSidebar(), getAll(S.FLOCKS)]);
+        if(lots.length) curLotId=lots[0].id;
         await render();
         return;
       }
