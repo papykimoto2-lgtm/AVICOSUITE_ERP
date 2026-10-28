@@ -13373,10 +13373,13 @@ async function renderFinCharges(el,fin){
   var lots=await getAll(S.FLOCKS);
   var charges=await getAll(S.CHARGES);
   charges.sort(function(a,b){return (b.ts||0)-(a.ts||0);});
-  var chF=charges.filter(function(c){return (!finChgLot||String(c.flockId||'')===finChgLot)&&(!finChgCat||(c.categorie||'')===finChgCat);});
+  var chF=charges.filter(function(c){return (!finChgLot||String(c.flockId||'')===finChgLot)&&(!finChgCat||(c.categorie||'')===finChgCat)&&(!finChgVal||chgValStatut(c)===finChgVal);});
+  window._chgFilteredIds=chF.map(function(c){return c.id;});
   var lm={};
   lots.forEach(function(l){lm[l.id]=l.nom||'Lot '+l.id;});
-  var rows=pgSlice('fincharges',chF,50).map(function(c){
+  var pageChg=pgSlice('fincharges',chF,50);
+  window._chgPageIds=pageChg.map(function(c){return c.id;});
+  var rows=pageChg.map(function(c){
     var v=c.validation;
     var vBadge=!v?'<span style="color:var(--text3);font-size:10px">—</span>'
       :v.statut==='attente'?'<span class="badge b-a" style="font-size:9px" title="Envoyée à '+esc(v.destinataireNom||'')+'">⏳ Attente</span>'
@@ -13394,6 +13397,7 @@ async function renderFinCharges(el,fin){
       +'<button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button>'
     );
     return '<tr data-lot="'+(c.flockId||'')+'" data-cat="'+(c.categorie||'')+'">'
+      +'<td><input type="checkbox" '+(finChgSel[c.id]?'checked ':'')+(c.paieRef?'disabled title="Charge de paie : non soumise à validation" ':'')+'onchange="chgToggleSel('+c.id+',this.checked)"></td>'
       +'<td>'+(c.date||'—')+'</td>'
       +'<td>'+(c.flockId?esc(lm[c.flockId]||'—'):'<span style="color:var(--text3)">Global</span>')+'</td>'
       +'<td><span class="badge b-gr">'+(CAT_ICONS[c.categorie]||'📦')+' '+(CAT_LABELS[c.categorie]||c.categorie||'—')+'</span></td>'
@@ -13413,11 +13417,13 @@ async function renderFinCharges(el,fin){
       +'<div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+'</div></div>';
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+(chF.length===charges.length?charges.length:chF.length+' / '+charges.length)+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
-    +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+pgBar('fincharges',chF.length,function(){renderFinCharges(el,fin);})+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
+    +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select><select id="filtreChargeVal" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes validations</option>'
+      +[['none','Non soumises'],['attente','⏳ En attente'],['validee','✅ Validées'],['rejetee','❌ Rejetées']].map(function(o){return '<option value="'+o[0]+'"'+(o[0]===finChgVal?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div>'
+    +'<div id="chgBar">'+chgBarHtml(charges)+'</div>'
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th style="width:28px"><input type="checkbox" onchange="chgToggleAllPage(this.checked)" title="Sélectionner la page"></th><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+pgBar('fincharges',chF.length,function(){renderFinCharges(el,fin);})+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
-var finChgLot='', finChgCat='';
+var finChgLot='', finChgCat='', finChgVal='', finChgSel={};
 try{ window.FIN_REPARTIR = localStorage.getItem('fin_repartir')==='1'; }catch(e){ window.FIN_REPARTIR=false; }
 window.toggleRepartVentes=function(){
   window.FIN_REPARTIR=!window.FIN_REPARTIR;
@@ -13427,6 +13433,7 @@ window.toggleRepartVentes=function(){
 window.filtrerCharges=function(){
   finChgLot=document.getElementById('filtreChargeLot')?.value||'';
   finChgCat=document.getElementById('filtreChargeCat')?.value||'';
+  finChgVal=document.getElementById('filtreChargeVal')?.value||'';
   pgReset('fincharges');
   renderFinCharges(document.getElementById('finTabContent'),window._fin);
 };
@@ -13435,11 +13442,99 @@ window.deleteCharge=async function(id){
   if(c && c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — supprimez plutôt les bulletins correspondants dans RH > Bulletins','err');return;}
   if(!confirm('Supprimer ?')) return;
   try{ await annulerEcritures('CHARGE-'+id); await annulerEcritures('CHARGEPAIE-'+id); await syncTresoSource('CHARGE-'+id,null); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
-  await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
+  delete finChgSel[id]; await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
 };
 
 // ── Validation charges par personne habilitée (admin/manager) ──
+// ── VALIDATION GROUPÉE des charges : sélection multiple → envoi / validation / rejet en une opération ──
+function chgValStatut(c){ return c.validation?c.validation.statut:'none'; }
+function chgSoumettable(c){ return !c.paieRef && (!c.validation || c.validation.statut==='rejetee'); }
+function chgValidable(c){ return !!(c.validation && c.validation.statut==='attente' && currentUser && (currentUser.id===c.validation.destinataireId || currentUser.role==='admin')); }
+function chgSelection(){ var all=(window._fin&&window._fin.charges)||[]; return all.filter(function(c){return finChgSel[c.id];}); }
+function chgBarHtml(charges){
+  var sel=(charges||[]).filter(function(c){return finChgSel[c.id];});
+  if(!sel.length) return charges&&charges.length?'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">☑ Cochez des charges pour les <strong>envoyer en validation</strong>, les <strong>valider</strong> ou les <strong>rejeter</strong> en une seule opération (filtre « Statut de validation » pour cibler).</div>':'';
+  var tot=sel.reduce(function(a,c){return a+(c.montant||0);},0);
+  var nS=sel.filter(chgSoumettable).length, nV=sel.filter(chgValidable).length;
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#f0fdf4;border:1.5px solid #86efac;border-radius:9px;padding:8px 12px;margin-bottom:10px">'
+    +'<strong style="font-size:12px">'+sel.length+' charge(s) sélectionnée(s) · '+fcfa(tot)+'</strong>'
+    +'<button class="btn btn-xs btn-gh" onclick="chgSelectAllFiltered()">Tout sélectionner (filtre : '+((window._chgFilteredIds||[]).length)+')</button>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn btn-sm btn-p" '+(nS?'':'disabled ')+'onclick="ouvrirEnvoiValidationGroupe()"><i class="fas fa-paper-plane"></i> Envoyer pour validation ('+nS+')</button>'
+    +'<button class="btn btn-sm" style="background:#059669;color:#fff" '+(nV?'':'disabled ')+'onclick="validerChargesGroupe(false)"><i class="fas fa-check"></i> Valider ('+nV+')</button>'
+    +'<button class="btn btn-sm" style="background:#c1121f;color:#fff" '+(nV?'':'disabled ')+'onclick="validerChargesGroupe(true)"><i class="fas fa-times"></i> Rejeter ('+nV+')</button>'
+    +'<button class="btn btn-xs btn-gh" onclick="chgClearSel()">✕ Désélectionner</button></div>';
+}
+function chgRefreshBar(){ var el=document.getElementById('chgBar'); if(el) el.innerHTML=chgBarHtml((window._fin&&window._fin.charges)||[]); }
+window.chgToggleSel=function(id,on){ if(on) finChgSel[id]=1; else delete finChgSel[id]; chgRefreshBar(); };
+window.chgToggleAllPage=function(on){
+  var byId={}; ((window._fin&&window._fin.charges)||[]).forEach(function(c){byId[c.id]=c;});
+  (window._chgPageIds||[]).forEach(function(id){ if(byId[id]&&byId[id].paieRef) return; if(on) finChgSel[id]=1; else delete finChgSel[id]; });
+  renderFinCharges(document.getElementById('finTabContent'),window._fin);
+};
+window.chgSelectAllFiltered=function(){
+  var byId={}; ((window._fin&&window._fin.charges)||[]).forEach(function(c){byId[c.id]=c;});
+  (window._chgFilteredIds||[]).forEach(function(id){ if(byId[id]&&!byId[id].paieRef) finChgSel[id]=1; });
+  renderFinCharges(document.getElementById('finTabContent'),window._fin);
+};
+window.chgClearSel=function(){ finChgSel={}; renderFinCharges(document.getElementById('finTabContent'),window._fin); };
+function chgLignesMsg(list,lots){
+  var lm={}; lots.forEach(function(l){lm[l.id]=l.nom||('Lot '+l.id);});
+  var l=list.slice(0,30).map(function(c){return '• '+(CAT_LABELS[c.categorie]||c.categorie)+' · '+(c.flockId?(lm[c.flockId]||'Lot '+c.flockId):'Global')+' · '+(c.libelle||'')+' · '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F ('+(c.date||'')+')';});
+  if(list.length>30) l.push('… et '+(list.length-30)+' autre(s)');
+  return l.join('\n');
+}
+window.ouvrirEnvoiValidationGroupe=async function(){
+  var sel=chgSelection().filter(chgSoumettable);
+  if(!sel.length){ toast('Aucune charge sélectionnée à soumettre (déjà en attente/validée ou charge de paie)','err'); return; }
+  const users=await getAll(S.USERS);
+  const habilites=users.filter(u=>u.actif!==false&&(u.role==='admin'||u.role==='manager')&&u.id!==currentUser?.id);
+  if(!habilites.length){toast('Aucune personne habilitée (admin/manager) trouvée','err');return;}
+  document.getElementById('valChargeId').value='groupe';
+  document.getElementById('valChargeDest').innerHTML=habilites.map(u=>'<option value="'+u.id+'">'+esc(u.nom||'Utilisateur')+' — '+(ROLE_PERMS[u.role]?.label||u.role)+'</option>').join('');
+  var rs=document.getElementById('valChargeResume'); if(rs){ rs.style.display='block'; rs.textContent=sel.length+' charge(s) · total '+fcfa(sel.reduce(function(a,c){return a+(c.montant||0);},0))+' — une seule demande groupée sera envoyée.'; }
+  openOverlay('ovChargeValidation');
+};
+async function confirmerEnvoiValidationGroupe(){
+  var destId=parseInt(document.getElementById('valChargeDest').value);
+  var note=document.getElementById('valChargeNote').value.trim();
+  var sel=chgSelection().filter(chgSoumettable);
+  if(!sel.length){ toast('Rien à envoyer','err'); return; }
+  const users=await getAll(S.USERS); const dest=users.find(u=>u.id===destId); if(!dest){toast('Destinataire introuvable','err');return;}
+  const lots=await getAll(S.FLOCKS);
+  const groupeId='G'+Date.now(), now=new Date().toISOString();
+  for(const c of sel){
+    await updRec(S.CHARGES,c.id,{...c,validation:{statut:'attente',destinataireId:destId,destinataireNom:dest.nom,expediteurId:currentUser.id,expediteurNom:currentUser.nom,dateEnvoi:now,note,groupeId}});
+    delete finChgSel[c.id];
+  }
+  const tot=sel.reduce(function(a,c){return a+(c.montant||0);},0);
+  const convId=await msgGetOrCreateDirectConversation(destId);
+  await envoyerMessageInterne(convId,'📉 Demande de validation GROUPÉE — '+sel.length+' charge(s) · Total '+Math.round(tot).toLocaleString('fr-FR')+' F\n'+chgLignesMsg(sel,lots)+(note?'\nNote : '+note:''));
+  closeOverlay('ovChargeValidation'); toast(sel.length+' charge(s) envoyée(s) pour validation à '+dest.nom);
+  await renderFinance(document.getElementById('contentArea'));
+}
+window.validerChargesGroupe=async function(rejet){
+  var sel=chgSelection().filter(chgValidable);
+  if(!sel.length){ toast('Aucune charge sélectionnée que vous pouvez valider','err'); return; }
+  var tot=sel.reduce(function(a,c){return a+(c.montant||0);},0), motif='';
+  if(rejet){ var m=prompt('Motif du rejet (commun aux '+sel.length+' charge(s)) :'); if(m===null) return; motif=m; }
+  else if(!confirm('Valider '+sel.length+' charge(s) pour un total de '+fcfa(tot)+' ?')) return;
+  const lots=await getAll(S.FLOCKS), now=new Date().toISOString();
+  const parExp={};
+  for(const c of sel){
+    await updRec(S.CHARGES,c.id,{...c,validation:{...c.validation,statut:rejet?'rejetee':'validee',repondantId:currentUser.id,repondantNom:currentUser.nom,dateReponse:now,commentaire:rejet?motif:(c.validation.commentaire||'')}});
+    delete finChgSel[c.id];
+    var e=c.validation.expediteurId; if(e){ (parExp[e]=parExp[e]||[]).push(c); }
+  }
+  for(const eid of Object.keys(parExp)){
+    var l=parExp[eid], t=l.reduce(function(a,c){return a+(c.montant||0);},0);
+    var convId=await msgGetOrCreateDirectConversation(parseInt(eid));
+    await envoyerMessageInterne(convId,(rejet?'❌ ':'✅ ')+l.length+' charge(s) '+(rejet?'rejetée(s)':'validée(s)')+' — Total '+Math.round(t).toLocaleString('fr-FR')+' F\n'+chgLignesMsg(l,lots)+(rejet&&motif?'\nMotif : '+motif:''));
+  }
+  toast(sel.length+' charge(s) '+(rejet?'rejetée(s)':'validée(s)')); await renderFinance(document.getElementById('contentArea'));
+};
 window.ouvrirEnvoiValidationCharge=async function(id){
+  var rs0=document.getElementById('valChargeResume'); if(rs0) rs0.style.display='none';
   const users=await getAll(S.USERS);
   const habilites=users.filter(u=>u.actif!==false&&(u.role==='admin'||u.role==='manager')&&u.id!==currentUser?.id);
   if(!habilites.length){toast('Aucune personne habilitée (admin/manager) trouvée','err');return;}
@@ -13448,6 +13543,7 @@ window.ouvrirEnvoiValidationCharge=async function(id){
   openOverlay('ovChargeValidation');
 };
 window.confirmerEnvoiValidation=async function(){
+  if(document.getElementById('valChargeId').value==='groupe') return confirmerEnvoiValidationGroupe();
   const id=parseInt(document.getElementById('valChargeId').value);
   const destId=parseInt(document.getElementById('valChargeDest').value);
   const note=document.getElementById('valChargeNote').value.trim();
@@ -14336,6 +14432,7 @@ window.exportFinanceCSV=function(fin){
   <div class="modal">
     <h3>📤 Envoyer pour validation</h3>
     <input type="hidden" id="valChargeId">
+    <div id="valChargeResume" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:10px"></div>
     <div class="form-grid">
       <div class="fg fg-full">
         <label>Personne habilitée</label>
