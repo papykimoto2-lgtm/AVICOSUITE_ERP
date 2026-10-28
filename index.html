@@ -23281,9 +23281,9 @@ async function renderSimuBande(ca){
   <div class="simu-params-panel">
     <div class="simu-params-hd" onclick="simuToggleParams()">
       <span><i class="fas fa-sliders-h" style="color:var(--g2);margin-right:7px"></i>Paramètres de simulation</span>
-      <span id="simuParamChevron" style="font-size:12px;transition:.2s">▼ Modifier</span>
+      <span id="simuParamChevron" style="font-size:12px;transition:.2s">${window._simuParamsOpen?'▲ Fermer':'▼ Modifier'}</span>
     </div>
-    <div class="simu-params-body collapsed" id="simuParamsBody">
+    <div class="simu-params-body${window._simuParamsOpen?'':' collapsed'}" id="simuParamsBody">
       <!-- Col 1 : Cheptel -->
       <div style="grid-column:1/-1;font-size:11px;font-weight:700;color:var(--g1);padding:4px 0 2px;border-bottom:1px solid var(--border);margin-bottom:4px">🐔 Cheptel & Élevage</div>
       <div class="fg">
@@ -24259,8 +24259,9 @@ function simuBuildCharts(result, p){
 window.simuToggleParams = function(){
   const body = document.getElementById('simuParamsBody');
   const chev = document.getElementById('simuParamChevron');
-  const open = body.classList.toggle('collapsed');
-  chev.textContent = !open ? '▼ Modifier' : '▲ Fermer';
+  const collapsed = body.classList.toggle('collapsed');
+  window._simuParamsOpen = !collapsed;
+  chev.textContent = collapsed ? '▼ Modifier' : '▲ Fermer';
 };
 
 window.simuToggleDetail = function(id){
@@ -24329,7 +24330,15 @@ window.simuPrefillFromLot = async function(){
   if(ca) await renderSimuBande(ca);
 };
 
+// Saisie dans les paramètres : le recalcul est différé (anti-rebond) et l'état de l'écran est conservé
+// (panneau ouvert, champ actif + curseur, défilement). Avant, chaque frappe re-rendait toute la page :
+// le panneau se refermait et le champ perdait le focus (impossible de saisir deux chiffres de suite).
+var _simuTimer=null;
 window.simuRecalc = function(){
+  clearTimeout(_simuTimer);
+  _simuTimer=setTimeout(_simuRecalcNow,400);
+};
+async function _simuRecalcNow(){
   const p = Object.assign({}, SIMU_DEFAULTS, simuGetCurrentParams());
   // Valider
   if(!p.nbBetes || p.nbBetes < 1) return;
@@ -24339,8 +24348,13 @@ window.simuRecalc = function(){
   // et reset le select — rendant le changement de type impossible.
   try{ localStorage.setItem('avico_simu_params', JSON.stringify(p)); }catch(e){}
   const ca = document.getElementById('contentArea');
-  if(ca) renderSimuBande(ca);
-};
+  if(!ca) return;
+  const ae=document.activeElement, id=(ae&&ae.id&&ae.id.indexOf('sp_')===0)?ae.id:null;
+  const scEl=document.scrollingElement, sy=scEl?scEl.scrollTop:0, cy=ca.scrollTop;
+  await renderSimuBande(ca);
+  if(scEl) scEl.scrollTop=sy; ca.scrollTop=cy;
+  if(id){ const el=document.getElementById(id); if(el){ el.focus(); if(el.tagName==='INPUT'){ const v=el.value; el.value=''; el.value=v; } } }
+}
 
 window.simuSaveParams = function(){
   const p = simuGetCurrentParams();
