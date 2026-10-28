@@ -2587,31 +2587,39 @@ async function cacheRemove(st,id){
 // croyait la base vierge à CHAQUE chargement → réinjection systématique des démos,
 // même sans suppression. Détection dynamique + repli automatique.
 let _deletedAtSupported = true;
-async function _fetchStorePage(st, from, PAGE){
-  let q = supa.from('avico_records').select('id,data,version').eq('store',st).eq('org_id',SUPA_ORG);
+async function _fetchStorePage(st, from, PAGE, withCount){
+  let q = supa.from('avico_records').select('id,data,version',withCount?{count:'exact'}:undefined).eq('store',st).eq('org_id',SUPA_ORG);
   if(_deletedAtSupported) q = q.is('deleted_at', null);
-  const { data, error } = await q.order('id',{ascending:true}).range(from, from+PAGE-1);
+  const { data, error, count } = await q.order('id',{ascending:true}).range(from, from+PAGE-1);
   if(error){
     if(_deletedAtSupported && /deleted_at/i.test(error.message||'')){
       _deletedAtSupported = false;
       console.warn('⚠️ Colonne deleted_at absente — exécutez migration_v13.sql. Suppression définitive en attendant (pas de soft-delete).');
-      return _fetchStorePage(st, from, PAGE);
+      return _fetchStorePage(st, from, PAGE, withCount);
     }
     throw error;
   }
-  return data || [];
+  const out = data || []; if(withCount) out.total = count;
+  return out;
 }
 
 function _getAllRaw(st){return new Promise(async res=>{
   let serverRows=[];
   if(supa){
     try{
-      const PAGE=1000; let from=0; let page; const fetched=[];
-      do{
-        page = await _fetchStorePage(st, from, PAGE);
-        page.forEach(r=>{ _recVersions[st+':'+r.id]=r.version; fetched.push({...r.data,id:r.id}); });
-        from += PAGE;
-      }while(page.length===PAGE);
+      const PAGE=1000; const fetched=[];
+      const add=page=>page.forEach(r=>{ _recVersions[st+':'+r.id]=r.version; fetched.push({...r.data,id:r.id}); });
+      const first = await _fetchStorePage(st, 0, PAGE, true); add(first);
+      if(first.length===PAGE){
+        const total = first.total;
+        if(Number.isFinite(total) && total>PAGE){
+          // pages suivantes en parallèle (ordre conservé par id croissant)
+          const offs=[]; for(let o=PAGE;o<total;o+=PAGE) offs.push(o);
+          (await Promise.all(offs.map(o=>_fetchStorePage(st,o,PAGE)))).forEach(add);
+        }else{
+          let from=PAGE, page; do{ page=await _fetchStorePage(st,from,PAGE); add(page); from+=PAGE; }while(page.length===PAGE);
+        }
+      }
       serverRows=fetched;
       cacheWrite(st,serverRows); // snapshot rafraîchi pour la prochaine lecture hors-ligne
     }catch(e){
