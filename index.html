@@ -12807,7 +12807,11 @@ async function computeFinanceGlobale(){
     var lr=reformesAll.filter(function(r){return r.flockId===lot.id;});
     var lv=ventesAll.filter(function(v){return v.flockId===lot.id;});
     var lsl=slaughtersAll.filter(function(s){return s.flockId===lot.id && !s.viaReforme;});
-    var recettes=ls.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
+    // Recettes du lot : commandes/ventes non annulées + réforme (abattage) + vente d'animaux vivants
+    // (ces deux dernières n'étaient jamais comptées dans Finance & Rentabilité).
+    var recettes=ls.filter(function(s){return s.statut!=='cancelled';}).reduce(function(a,s){return a+(s.totalHT||s.total||0);},0)
+      +lr.reduce(function(a,r){return a+(r.recetteTotale||0);},0)
+      +lv.reduce(function(a,v){return a+(v.recetteTotale||0);},0);
     var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*FINANCE_PARAMS.prixAlimentDefaut;
     var cPBase=(lot.costPerChick||0)*lot.initialStock;
     var byCat={};
@@ -12818,6 +12822,7 @@ async function computeFinanceGlobale(){
     var cA=hasMAli?(byCat.aliment||0):cAlBase;
     var manuTotal=lc.reduce(function(a,c){return a+(c.montant||0);},0);
     var totalCh=(hasMPoussin?0:cPBase)+(hasMAli?0:cAlBase)+manuTotal;
+    var chEst=(hasMPoussin?0:cPBase)+(hasMAli?0:cAlBase);
     var marge=recettes-totalCh;
     var mortCum=lm.reduce(function(a,m){return a+(m.nbMorts||0);},0);
     var sortiesReformeF=lr.reduce(function(a,r){return a+(r.nbTetes||0);},0);
@@ -12827,13 +12832,20 @@ async function computeFinanceGlobale(){
     var lb=budgets.filter(function(b){return b.flockId===lot.id;});
     var bTot=lb.find(function(b){return b.categorie==='total';})||null;
     var bRec=lb.find(function(b){return b.categorie==='recette';})||null;
-    finLots.push({lot:lot,recettes:recettes,cAliment:cA,cPoussins:cP,chargesByCat:byCat,totalCharges:totalCh,marge:marge,vivants:vivants,mortCum:mortCum,
+    finLots.push({lot:lot,chargesEstimees:chEst,recettes:recettes,cAliment:cA,cPoussins:cP,chargesByCat:byCat,totalCharges:totalCh,marge:marge,vivants:vivants,mortCum:mortCum,
       budgetTotal:bTot?bTot.montantBudget:0,budgetRecette:bRec?bRec.montantBudget:0,
       ecartCharges:bTot?totalCh-bTot.montantBudget:null,
       margePct:totalCh>0?marge/totalCh*100:0,coutParSujet:vivants>0?totalCh/vivants:0});
   }
-  var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0);
+  // Ventes non rattachées à un lot (champ Lot vide, ex. vente d'œufs/produits finis, commande issue
+  // d'une réservation) : ignorées jusqu'ici car finLots n'agrège que par lot ⇒ recettes à 0 F
+  // alors que des ventes existaient. Comptées désormais dans les recettes globales.
+  var lotIds={}; lots.forEach(function(l){lotIds[l.id]=true;});
+  var ventesNonAffectees=sales.filter(function(s){return s.statut!=='cancelled' && (!s.flockId || !lotIds[s.flockId]);});
+  var recettesNonAffectees=ventesNonAffectees.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
+  var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0)+recettesNonAffectees;
   var totalChLots=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
+  var chargesEstimees=finLots.reduce(function(a,f){return a+f.chargesEstimees;},0);
   // Charges globales (sans lot assigné, ex: main d'œuvre mutualisée, paie) — ignorées
   // jusqu'ici car finLots ne les agrège que par lot. Sans ce correctif, une charge
   // enregistrée en "Global" n'apparaissait dans AUCUN total de Finance & Rentabilité.
@@ -12853,7 +12865,7 @@ async function computeFinanceGlobale(){
   return{finLots:finLots,totalRecettes:totalRec,totalCharges:totalCh,margeGlobale:margeG,
     margePctGlobal:totalCh>0?margeG/totalCh*100:0,encaissements:encaiss,decaissements:decaiss,
     soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets,
-    totalChargesGlobalesNonAffectees:totalChGlobal};
+    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees};
 }
 
 // ══════════════════════════════════════════════════════
@@ -13143,8 +13155,9 @@ async function renderFinance(ca){
   Object.values(finCharts).forEach(function(c){try{c.destroy();}catch(e){}});
   finCharts={};
   var fin=await computeFinanceGlobale();
-  var roi=fin.totalCharges>0?(fin.margeGlobale/fin.totalCharges*100):0;
-  var txCh=fin.totalRecettes>0?(fin.totalCharges/fin.totalRecettes*100):0;
+  var roi=fin.totalCharges>0?(fin.margeGlobale/fin.totalCharges*100):null;
+  var txCh=fin.totalRecettes>0?(fin.totalCharges/fin.totalRecettes*100):null;
+  var margeCA=fin.totalRecettes>0?(fin.margeGlobale/fin.totalRecettes*100):null;
   var tabHtml=['synthese','lots','cr','charges','tresorerie','budget','tiers','controle','aliments'].map(function(t){
     var labs={synthese:'📊 Synthese',lots:'🐔 Par lot',cr:'📄 Cpt Resultat',charges:'📉 Charges',tresorerie:'💵 Tresorerie',budget:'📋 Budget vs Reel',tiers:'👥 Comptes Tiers',controle:'📈 Contrôle de gestion',aliments:'🌾 Conso Aliments'};
     return '<button class="tab-btn '+(finTab===t?'on':'')+'" data-tab="'+t+'" onclick="switchFinTab(\''+t+'\')">'+labs[t]+'</button>';
@@ -13160,12 +13173,12 @@ async function renderFinance(ca){
     +'<button class="btn btn-sm btn-a" onclick="exportFinanceCSV(window._fin)"><i class="fas fa-file-csv"></i> Export CSV</button>'
     +'</div></div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0">'
-    +'<div class="kpi '+(fin.margeGlobale>=0?'kpi-g':'kpi-r')+'"><div class="kpi-lbl">Marge globale</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.margeGlobale)+'">'+(fin.margeGlobale>=0?'+':'')+fcfa(fin.margeGlobale)+'</div><div class="kpi-sub">'+fin.margePctGlobal.toFixed(1)+'% du CA</div></div>'
-    +'<div class="kpi kpi-g"><div class="kpi-lbl">Total recettes</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalRecettes)+'</div><div class="kpi-sub">'+fin.finLots.length+' lot(s)</div></div>'
-    +'<div class="kpi kpi-r"><div class="kpi-lbl">Total charges</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalCharges)+'</div><div class="kpi-sub">Toutes categories</div></div>'
+    +'<div class="kpi '+(fin.margeGlobale>=0?'kpi-g':'kpi-r')+'"><div class="kpi-lbl">Marge globale</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.margeGlobale)+'">'+(fin.margeGlobale>=0?'+':'')+fcfa(fin.margeGlobale)+'</div><div class="kpi-sub">'+(margeCA===null?'CA nul':margeCA.toFixed(1)+'% du CA')+'</div></div>'
+    +'<div class="kpi kpi-g"><div class="kpi-lbl">Total recettes</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalRecettes)+'</div><div class="kpi-sub">'+fin.finLots.length+' lot(s)'+(fin.recettesNonAffectees>0?' · dont '+fcfa(fin.recettesNonAffectees)+' sans lot':'')+'</div></div>'
+    +'<div class="kpi kpi-r"><div class="kpi-lbl">Total charges</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalCharges)+'</div><div class="kpi-sub">'+(fin.chargesEstimees>0?'dont '+fcfa(fin.chargesEstimees)+' estimés (poussins/aliment)':'Toutes categories')+'</div></div>'
     +'<div class="kpi '+(fin.soldeTreso>=0?'kpi-b':'kpi-r')+'"><div class="kpi-lbl">Solde tresorerie</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.soldeTreso)+'">'+(fin.soldeTreso>=0?'+':'')+fcfa(fin.soldeTreso)+'</div><div class="kpi-sub">Encaiss. - Decaiss.</div></div>'
-    +'<div class="kpi kpi-a"><div class="kpi-lbl">Taux de charges</div><div class="kpi-val" style="font-size:16px">'+txCh.toFixed(1)+'%</div><div class="kpi-sub">Charges / Recettes</div></div>'
-    +'<div class="kpi kpi-b"><div class="kpi-lbl">ROI estime</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.margeGlobale)+'">'+roi.toFixed(1)+'%</div><div class="kpi-sub">Retour sur invest.</div></div>'
+    +'<div class="kpi kpi-a"><div class="kpi-lbl">Taux de charges</div><div class="kpi-val" style="font-size:16px">'+(txCh===null?'—':txCh.toFixed(1)+'%')+'</div><div class="kpi-sub">'+(txCh===null?'Aucune recette':'Charges / Recettes')+'</div></div>'
+    +'<div class="kpi kpi-b"><div class="kpi-lbl">ROI estime</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.margeGlobale)+'">'+(roi===null?'—':roi.toFixed(1)+'%')+'</div><div class="kpi-sub">Marge / charges</div></div>'
     +'</div>'
     +'<div class="tab-nav" id="finTabNav" style="flex-shrink:0">'+tabHtml+'</div>'
     +'<div class="stock-page" id="finTabContent" style="flex:1;overflow-y:auto;padding:16px 20px"></div>'
@@ -13225,6 +13238,7 @@ function renderFinSynthese(el,fin){
   var cat=Object.entries(fin.chargesGlobCat).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
   var catBars=cat.map(function(e){return '<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span>'+(CAT_ICONS[e[0]]||'📦')+' '+(CAT_LABELS[e[0]]||e[0])+'</span><span style="font-weight:700">'+pctFin(e[1],fin.totalCharges)+'</span></div><div class="prog"><div class="prog-fill" style="width:'+pctFin(e[1],fin.totalCharges)+';background:'+(CAT_COLORS[e[0]]||'#888')+'"></div></div></div>';}).join('');
   var recap=fin.finLots.map(function(f){return '<tr><td><strong>'+esc(f.lot.nom||'')+'</strong></td><td><span class="badge '+(f.lot.type==='layer'?'b-a':'b-r')+'">'+(f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</span></td><td>'+f.vivants.toLocaleString()+'</td><td style="color:#059669;font-weight:600">'+fcfa(f.recettes)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(f.totalCharges)+'</td><td style="font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</td><td><span class="badge '+(f.margePct>=0?'b-g':'b-r')+'">'+f.margePct.toFixed(1)+'%</span></td><td>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</td></tr>';}).join('');
+  if(fin.recettesNonAffectees>0||fin.totalChargesGlobalesNonAffectees>0) recap+='<tr style="background:#fffbeb"><td colspan="2"><strong>Hors lot</strong> <span style="font-size:10px;color:var(--text3)">(ventes sans lot : '+(fin.nbVentesNonAffectees||0)+' · charges globales)</span></td><td>—</td><td style="color:#059669;font-weight:600">'+fcfa(fin.recettesNonAffectees)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(fin.totalChargesGlobalesNonAffectees)+'</td><td style="font-weight:700;color:'+colorMarge(fin.recettesNonAffectees-fin.totalChargesGlobalesNonAffectees)+'">'+fcfa(fin.recettesNonAffectees-fin.totalChargesGlobalesNonAffectees)+'</td><td>—</td><td>—</td></tr>';
   var top3=cat.slice(0,3).map(function(e){return '<div class="card" style="margin-bottom:0"><div class="card-bd" style="display:flex;align-items:center;gap:12px"><div style="width:40px;height:40px;border-radius:10px;background:'+(CAT_COLORS[e[0]]||'#888')+'22;display:flex;align-items:center;justify-content:center;font-size:20px">'+(CAT_ICONS[e[0]]||'📦')+'</div><div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase">'+(CAT_LABELS[e[0]]||e[0])+'</div><div style="font-size:16px;font-weight:700">'+fcfa(e[1])+'</div><div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+' charges</div></div></div></div>';}).join('');
 
   el.innerHTML=bannerAlertes+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
@@ -13894,7 +13908,7 @@ function renderFinBudget(el,fin){
   var totBudgetG=0, totReelG=0;
   fin.finLots.forEach(function(f){
     fin.budgets.filter(function(b){return b.flockId===f.lot.id;}).forEach(function(b){
-      var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
+      var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment:b.categorie==='poussin'?f.cPoussins:f.chargesByCat[b.categorie]||0;
       totBudgetG+=b.montantBudget; totReelG+=r;
     });
   });
@@ -13903,13 +13917,13 @@ function renderFinBudget(el,fin){
     var lb=fin.budgets.filter(function(b){return b.flockId===f.lot.id;});
     if(!lb.length) return '';
     var brows=lb.map(function(b){
-      var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
+      var r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment:b.categorie==='poussin'?f.cPoussins:f.chargesByCat[b.categorie]||0;
       var ec=r-b.montantBudget,pc=b.montantBudget>0?Math.min(200,r/b.montantBudget*100):0;
       var fav=b.categorie==='recette'?r>=b.montantBudget:r<=b.montantBudget;
       var ecartPct=b.montantBudget>0?(ec/b.montantBudget*100):0;
       var enDerive=!fav && Math.abs(ecartPct)>=FINANCE_PARAMS.seuilAlerteDerive;
       var rowId='budgRow'+b.id;
-      return '<tr'+(enDerive?' style="background:#fef2f2"':'')+'><td style="cursor:pointer" onclick="toggleBudgetDetail('+b.id+','+f.lot.id+',\''+b.categorie+'\')">'+(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie)+(enDerive?' <span class="badge b-r" style="font-size:9px">⚠ dérive</span>':'')+' <span style="font-size:9px;color:var(--text3)">▾ détail</span></td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+' <span style="font-size:10px;font-weight:400">('+(ecartPct>=0?'+':'')+ecartPct.toFixed(1)+'%)</span></td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="event.stopPropagation();openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="event.stopPropagation();delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>'
+      return '<tr'+(enDerive?' style="background:#fef2f2"':'')+'><td style="cursor:pointer" onclick="toggleBudgetDetail('+b.id+','+f.lot.id+',\''+b.categorie+'\')">'+(b.categorie==='recette'?'💰 Recettes':b.categorie==='total'?'📊 Total charges':(CAT_ICONS[b.categorie]||'📦')+' '+(CAT_LABELS[b.categorie]||b.categorie))+(enDerive?' <span class="badge b-r" style="font-size:9px">⚠ dérive</span>':'')+' <span style="font-size:9px;color:var(--text3)">▾ détail</span></td><td>'+fcfa(b.montantBudget)+'</td><td style="font-weight:600">'+fcfa(r)+'</td><td style="font-weight:700;color:'+(fav?'#059669':'var(--red)')+'">'+( ec>=0?'+':'')+fcfa(ec)+' <span style="font-size:10px;font-weight:400">('+(ecartPct>=0?'+':'')+ecartPct.toFixed(1)+'%)</span></td><td><div style="display:flex;align-items:center;gap:6px"><div class="prog" style="flex:1;max-width:80px"><div class="prog-fill" style="width:'+Math.min(100,pc)+'%;background:'+(pc>100?'var(--red)':pc>80?'var(--amber)':'var(--g3)')+'"></div></div><span style="font-size:11px;font-weight:600">'+pc.toFixed(0)+'%</span></div></td><td style="white-space:nowrap"><button class="btn btn-xs btn-gh" onclick="event.stopPropagation();openBudgetModal('+b.id+')" title="Modifier"><i class="fas fa-pen"></i></button> <button class="btn-del" onclick="event.stopPropagation();delBudget('+b.id+')" title="Supprimer"><i class="fas fa-trash"></i></button></td></tr>'
         +'<tr id="'+rowId+'" style="display:none"><td colspan="6" style="background:#f9fbf9;padding:0"><div id="'+rowId+'Body" style="padding:10px 16px;font-size:11px;color:var(--text3)">Chargement…</div></td></tr>';
     }).join('');
     var issuSimu = lb.some(function(b){return b.source==='simulation';});
@@ -13943,9 +13957,13 @@ window.toggleBudgetDetail = async function(budgetId, flockId, categorie){
       body.dataset.loaded='1';
       if(categorie==='recette'){
         const clientsAll = await getAll(S.CLIENTS);
-        const sales = (await getAll(S.SALES)).filter(s=>s.flockId===flockId && s.statut!=='cancelled');
-        body.innerHTML = sales.length ? '<table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Réf.</th><th>Client</th><th style="text-align:right">Montant</th></tr></thead><tbody>'
-          +await Promise.all(sales.map(async s=>{const c=clientsAll.find(x=>x.id===s.clientId);return `<tr><td>${s.date||'—'}</td><td>${esc(s.ref||'')}</td><td>${esc(c?c.nom:'—')}</td><td style="text-align:right">${fcfa(s.totalHT||s.total||0)}</td></tr>`;})).then(r=>r.join(''))
+        const [salesAll,refoAll,vvAll]=await Promise.all([getAll(S.SALES),getAll(S.REFORME),getAll(S.VENTE_VIVANT)]);
+        const sales = salesAll.filter(s=>s.flockId===flockId && s.statut!=='cancelled');
+        const autres = refoAll.filter(r=>r.flockId===flockId&&r.recetteTotale).map(r=>({date:r.date,ref:r.ref,nom:'Réforme (abattage)',m:r.recetteTotale}))
+          .concat(vvAll.filter(v=>v.flockId===flockId&&v.recetteTotale).map(v=>({date:v.date,ref:v.ref,nom:'Vente d\'animaux vivants',m:v.recetteTotale})));
+        const lignesV = sales.map(s=>{const c=clientsAll.find(x=>x.id===s.clientId);return {date:s.date,ref:s.ref,nom:c?c.nom:'—',m:s.totalHT||s.total||0};}).concat(autres);
+        body.innerHTML = lignesV.length ? '<table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Réf.</th><th>Client / Nature</th><th style="text-align:right">Montant</th></tr></thead><tbody>'
+          +lignesV.map(l=>`<tr><td>${l.date||'—'}</td><td>${esc(l.ref||'')}</td><td>${esc(l.nom||'—')}</td><td style="text-align:right">${fcfa(l.m)}</td></tr>`).join('')
           +'</tbody></table>' : 'Aucune vente enregistrée pour ce lot.';
       } else {
         const charges = (await getAll(S.CHARGES)).filter(c=>c.flockId===flockId && (categorie==='total' || c.categorie===categorie));
@@ -14076,7 +14094,7 @@ async function buildBudgetHtml(){
     if(!lb.length) return '';
     const issuSimu = lb.some(b=>b.source==='simulation');
     const rows = lb.map(b=>{
-      const r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment+(f.chargesByCat.aliment||0):b.categorie==='poussin'?f.cPoussins+(f.chargesByCat.poussin||0):f.chargesByCat[b.categorie]||0;
+      const r=b.categorie==='total'?f.totalCharges:b.categorie==='recette'?f.recettes:b.categorie==='aliment'?f.cAliment:b.categorie==='poussin'?f.cPoussins:f.chargesByCat[b.categorie]||0;
       const ec=r-b.montantBudget;
       totBudget+=b.montantBudget; totReel+=r;
       return `<tr><td>${CAT_LABELS[b.categorie]||b.categorie}</td><td style="text-align:right">${Math.round(b.montantBudget).toLocaleString('fr-FR')}</td><td style="text-align:right">${Math.round(r).toLocaleString('fr-FR')}</td><td style="text-align:right;color:${ec<=0?'#059669':'#c1121f'}">${ec>=0?'+':''}${Math.round(ec).toLocaleString('fr-FR')}</td></tr>`;
@@ -14123,10 +14141,12 @@ window.imprimerBudget = window.apercuBudget;
 
 window.exportFinanceCSV=function(fin){
   if(!fin) return;
-  var rows=['Lot,Recettes (F),Charges (F),Marge (F),Taux marge (%),Cout/tete (F)'];
-  fin.finLots.forEach(function(f){rows.push('"'+(f.lot.nom||'').replace(/"/g,"'")+'",'+(Math.round(f.recettes))+','+(Math.round(f.totalCharges))+','+(Math.round(f.marge))+','+f.margePct.toFixed(1)+','+(f.vivants>0?Math.round(f.coutParSujet):''));});
-  rows.push('TOTAL,'+Math.round(fin.totalRecettes)+','+Math.round(fin.totalCharges)+','+Math.round(fin.margeGlobale)+','+fin.margePctGlobal.toFixed(1)+',');
-  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv;charset=utf-8'}));a.download='finance_avicosuite_'+new Date().toISOString().slice(0,10)+'.csv';a.click();toast('Export CSV finance');
+  var safe=function(t){t=String(t==null?'':t);if(/^[=+\-@\t\r]/.test(t)) t="'"+t;return '"'+t.replace(/"/g,'""')+'"';}; // anti injection de formule Excel
+  var rows=['Lot,Recettes (F),Charges (F),dont estimées (F),Marge (F),Marge/charges (%),Cout/tete (F)'];
+  fin.finLots.forEach(function(f){rows.push(safe(f.lot.nom)+','+(Math.round(f.recettes))+','+(Math.round(f.totalCharges))+','+(Math.round(f.chargesEstimees||0))+','+(Math.round(f.marge))+','+f.margePct.toFixed(1)+','+(f.vivants>0?Math.round(f.coutParSujet):''));});
+  rows.push('HORS LOT,'+Math.round(fin.recettesNonAffectees||0)+','+Math.round(fin.totalChargesGlobalesNonAffectees||0)+',0,'+Math.round((fin.recettesNonAffectees||0)-(fin.totalChargesGlobalesNonAffectees||0))+',,');
+  rows.push('TOTAL,'+Math.round(fin.totalRecettes)+','+Math.round(fin.totalCharges)+','+Math.round(fin.chargesEstimees||0)+','+Math.round(fin.margeGlobale)+','+fin.margePctGlobal.toFixed(1)+',');
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv;charset=utf-8'}));a.download='finance_avicosuite_'+new Date().toISOString().slice(0,10)+'.csv';a.click();toast('Export CSV finance');
 };
 // ═══════════════ FIN MODULE FINANCE & RENTABILITE ═══════════════
 </script>
