@@ -2546,7 +2546,7 @@ function setupRealtimeSync(){
         if(msgTouched && typeof updateBadgeMessages==='function') await updateBadgeMessages();
       }, 800);
     })
-    .subscribe();
+    .subscribe(status=>{ _rtLive=(status==='SUBSCRIBED'); if(!_rtLive) invalidateGetAll(); });
 }
 
 // ── Cache local IndexedDB — snapshot dernier connu, lu quand Supabase est injoignable ──
@@ -2647,17 +2647,27 @@ function _getAllRaw(st){return new Promise(async res=>{
 });}
 // Perf : cache mémoire court + dédoublonnage des lectures simultanées d'un même store.
 // Invalidé à chaque écriture locale, flush de file et évènement realtime.
-const _getAllMemo=new Map(); const _GETALL_TTL=15000;
+const _getAllMemo=new Map(); let _rtLive=false;
+// Realtime connecté ⇒ toute modification externe invalide le cache : TTL long. Sinon TTL court.
+const _getAllTTL=()=>_rtLive?60000:15000;
 function invalidateGetAll(st){ if(st) _getAllMemo.delete(st); else _getAllMemo.clear(); }
 function getAll(st){
   const m=_getAllMemo.get(st);
-  if(m && (m.p || Date.now()-m.t<_GETALL_TTL)){
+  if(m && (m.p || Date.now()-m.t<_getAllTTL())){
     return (m.p||Promise.resolve(m.rows)).then(rows=>rows.map(r=>({...r})));
   }
   const e={t:Date.now(),rows:null,p:null};
   e.p=_getAllRaw(st).then(rows=>{ e.rows=rows; e.t=Date.now(); e.p=null; return rows; },err=>{ if(_getAllMemo.get(st)===e) _getAllMemo.delete(st); throw err; });
   _getAllMemo.set(st,e);
   return e.p.then(rows=>rows.map(r=>({...r})));
+}
+// Lecture de tous les stores par groupes de 6 requêtes parallèles (export / sauvegarde).
+async function getAllStoresParallel(){
+  const keys=Object.keys(S), out={};
+  for(let i=0;i<keys.length;i+=6){
+    await Promise.all(keys.slice(i,i+6).map(async k=>{ try{ out[k]=await getAll(S[k]); }catch{ out[k]=[]; } }));
+  }
+  return out;
 }
 function getByIdx(st,idx,val){return new Promise(async res=>{
   try{ const all=await getAll(st); res(all.filter(rec=>rec[idx]===val)); }
@@ -4990,16 +5000,7 @@ function renderSettingsData(isSuperAdmin){
 
 window.exportAllData = async function(){
   try{
-    const data = {};
-    const storeNames = Object.values(S);
-    for(const name of storeNames){
-      try{ data[name] = await getAll({FLOCKS:'flocks'}[name]||name); }catch(e){ data[name]=[]; }
-    }
-    // getAll with store names directly
-    const allData = {};
-    for(const key of Object.keys(S)){
-      try{ allData[key] = await getAll(S[key]); }catch{ allData[key]=[]; }
-    }
+    const allData = await getAllStoresParallel();
     const blob = new Blob([JSON.stringify({version:'SanixAviNest_v12',date:new Date().toISOString(),data:allData},null,2)],{type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -13941,9 +13942,10 @@ window.toggleBudgetDetail = async function(budgetId, flockId, categorie){
     if(body && body.dataset.loaded!=='1'){
       body.dataset.loaded='1';
       if(categorie==='recette'){
+        const clientsAll = await getAll(S.CLIENTS);
         const sales = (await getAll(S.SALES)).filter(s=>s.flockId===flockId && s.statut!=='cancelled');
         body.innerHTML = sales.length ? '<table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Réf.</th><th>Client</th><th style="text-align:right">Montant</th></tr></thead><tbody>'
-          +await Promise.all(sales.map(async s=>{const c=(await getAll(S.CLIENTS)).find(x=>x.id===s.clientId);return `<tr><td>${s.date||'—'}</td><td>${esc(s.ref||'')}</td><td>${esc(c?c.nom:'—')}</td><td style="text-align:right">${fcfa(s.totalHT||s.total||0)}</td></tr>`;})).then(r=>r.join(''))
+          +await Promise.all(sales.map(async s=>{const c=clientsAll.find(x=>x.id===s.clientId);return `<tr><td>${s.date||'—'}</td><td>${esc(s.ref||'')}</td><td>${esc(c?c.nom:'—')}</td><td style="text-align:right">${fcfa(s.totalHT||s.total||0)}</td></tr>`;})).then(r=>r.join(''))
           +'</tbody></table>' : 'Aucune vente enregistrée pour ce lot.';
       } else {
         const charges = (await getAll(S.CHARGES)).filter(c=>c.flockId===flockId && (categorie==='total' || c.categorie===categorie));
@@ -19084,10 +19086,7 @@ function renderSettingsCloud(cfg){
 
 window.doManualBackup = async function(){
   try{
-    const allData={};
-    for(const key of Object.keys(S)){
-      try{allData[key]=await getAll(S[key]);}catch{allData[key]=[];}
-    }
+    const allData = await getAllStoresParallel();
     const cloudCfg=JSON.parse(localStorage.getItem('sanixavi_cloud')||'{}');
     const fmt=cloudCfg.fileFormat==='version'?'v'+String(Date.now()).slice(-6):new Date().toISOString().slice(0,10);
     const blob=new Blob([JSON.stringify({version:'SanixAviNest_v12',date:new Date().toISOString(),data:allData},null,2)],{type:'application/json'});

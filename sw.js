@@ -1,4 +1,4 @@
-const CACHE='avinest-v12-2';
+const CACHE='avinest-v12-3';
 const CDN=['https://cdnjs.cloudflare.com','https://cdn.jsdelivr.net'];
 self.addEventListener('install',e=>{self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then(c=>{
@@ -15,9 +15,13 @@ self.addEventListener('fetch',e=>{
     return;
   }
   if(e.request.mode==='navigate'){
-    e.respondWith(fetch(e.request).then(r=>{
+    // Réseau d'abord, mais repli sur le cache après 3 s (réseau lent/instable) ; la réponse réseau met le cache à jour.
+    const net=fetch(e.request).then(r=>{
       const c=r.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));return r;
-    }).catch(()=>caches.match(e.request).then(r=>r||caches.match(self.registration.scope))));
+    });
+    net.catch(()=>{});
+    const cached=()=>caches.match(e.request).then(r=>r||caches.match(self.registration.scope));
+    e.respondWith(Promise.race([net,new Promise((_,rej)=>setTimeout(rej,3000))]).catch(()=>cached().then(r=>r||net)));
     return;
   }
   e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
