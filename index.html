@@ -3291,6 +3291,10 @@ var PAIE_CI = {
 // aliment d'un lot UNIQUEMENT si aucune charge "aliment" n'a été saisie manuellement pour
 // ce lot. Configurable (Paramétrage > Finance) au lieu d'être figé dans le code.
 var FINANCE_PARAMS = { prixAlimentDefaut: 185, seuilAlerteDerive: 15 };
+// Recettes = ventes livrées, facturées ou soldées (fait générateur : livraison/facture, comme en compta).
+// 'pending' (en attente) et 'confirmed' (confirmée, non livrée) ne sont pas du chiffre d'affaires ; 'cancelled' jamais.
+var STATUTS_VENTE_COMPTABILISEE = ['delivered','invoiced','paid'];
+function venteComptabilisee(s){ return STATUTS_VENTE_COMPTABILISEE.indexOf(s.statut)>=0; }
 // ════════════════════════════════════════════════════════
 //  COMPTABILITÉ SYSCOHADA — Plan comptable + moteur de comptabilisation automatique
 //  ⚠️ Plan comptable simplifié adapté à l'activité avicole — à faire valider par un
@@ -5267,7 +5271,7 @@ async function computeKPIs(lot){
   const coutPinit=(lot.costPerChick||0)*lot.initialStock;
   const coutAliment=totalFeedKg*FINANCE_PARAMS.prixAlimentDefaut;
   const totalCharges=coutPinit+coutAliment;
-  const totalRecettesSales=sales.reduce((a,s)=>a+(s.totalHT||s.total||0),0);
+  const totalRecettesSales=sales.filter(venteComptabilisee).reduce((a,s)=>a+(s.totalHT||s.total||0),0);
   const totalRecettesReforme=reformes.reduce((a,r)=>a+(r.recetteTotale||0),0);
   const totalRecettesVivant=ventesVivantes.reduce((a,v)=>a+(v.recetteTotale||0),0);
   const totalRecettes=totalRecettesSales+totalRecettesReforme+totalRecettesVivant;
@@ -10560,6 +10564,7 @@ window.changeSaleStatut=async function(id,newStatut){
       try{
         const clients=await getAll(S.CLIENTS); const c=clients.find(x=>x.id===s.clientId);
         const today=new Date().toISOString().slice(0,10);
+        await syncTresoSource('VENTE-'+s.id,{type:'entree',date:today,categorie:'ventes',libelle:'Vente comptant '+(s.ref||'')+' — '+(c?.nom||''),montant:s.totalHT||0,ref:s.ref||'',flockId:s.flockId||null,ts:Date.now()});
         await annulerEcritures('VENTE-'+s.id);
         await passerEcriture({
           date:today, journal:'VE', libelle:'Vente comptant '+(s.ref||'')+' — '+(c?.nom||''),
@@ -12809,7 +12814,7 @@ async function computeFinanceGlobale(){
     var lsl=slaughtersAll.filter(function(s){return s.flockId===lot.id && !s.viaReforme;});
     // Recettes du lot : commandes/ventes non annulées + réforme (abattage) + vente d'animaux vivants
     // (ces deux dernières n'étaient jamais comptées dans Finance & Rentabilité).
-    var recettes=ls.filter(function(s){return s.statut!=='cancelled';}).reduce(function(a,s){return a+(s.totalHT||s.total||0);},0)
+    var recettes=ls.filter(venteComptabilisee).reduce(function(a,s){return a+(s.totalHT||s.total||0);},0)
       +lr.reduce(function(a,r){return a+(r.recetteTotale||0);},0)
       +lv.reduce(function(a,v){return a+(v.recetteTotale||0);},0);
     var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*FINANCE_PARAMS.prixAlimentDefaut;
@@ -12841,7 +12846,9 @@ async function computeFinanceGlobale(){
   // d'une réservation) : ignorées jusqu'ici car finLots n'agrège que par lot ⇒ recettes à 0 F
   // alors que des ventes existaient. Comptées désormais dans les recettes globales.
   var lotIds={}; lots.forEach(function(l){lotIds[l.id]=true;});
-  var ventesNonAffectees=sales.filter(function(s){return s.statut!=='cancelled' && (!s.flockId || !lotIds[s.flockId]);});
+  var ventesNonAffectees=sales.filter(function(s){return venteComptabilisee(s) && (!s.flockId || !lotIds[s.flockId]);});
+  var ventesAttente=sales.filter(function(s){return s.statut!=='cancelled' && !venteComptabilisee(s);});
+  var montantAttente=ventesAttente.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var recettesNonAffectees=ventesNonAffectees.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0)+recettesNonAffectees;
   var totalChLots=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
@@ -12865,7 +12872,7 @@ async function computeFinanceGlobale(){
   return{finLots:finLots,totalRecettes:totalRec,totalCharges:totalCh,margeGlobale:margeG,
     margePctGlobal:totalCh>0?margeG/totalCh*100:0,encaissements:encaiss,decaissements:decaiss,
     soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets,
-    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees};
+    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees,sales:sales,ventesEnAttente:ventesAttente.length,montantVentesEnAttente:montantAttente};
 }
 
 // ══════════════════════════════════════════════════════
@@ -13174,7 +13181,7 @@ async function renderFinance(ca){
     +'</div></div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0">'
     +'<div class="kpi '+(fin.margeGlobale>=0?'kpi-g':'kpi-r')+'"><div class="kpi-lbl">Marge globale</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.margeGlobale)+'">'+(fin.margeGlobale>=0?'+':'')+fcfa(fin.margeGlobale)+'</div><div class="kpi-sub">'+(margeCA===null?'CA nul':margeCA.toFixed(1)+'% du CA')+'</div></div>'
-    +'<div class="kpi kpi-g"><div class="kpi-lbl">Total recettes</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalRecettes)+'</div><div class="kpi-sub">'+fin.finLots.length+' lot(s)'+(fin.recettesNonAffectees>0?' · dont '+fcfa(fin.recettesNonAffectees)+' sans lot':'')+'</div></div>'
+    +'<div class="kpi kpi-g"><div class="kpi-lbl">Total recettes</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalRecettes)+'</div><div class="kpi-sub">'+fin.finLots.length+' lot(s)'+(fin.recettesNonAffectees>0?' · dont '+fcfa(fin.recettesNonAffectees)+' sans lot':'')+(fin.ventesEnAttente>0?' · '+fin.ventesEnAttente+' vente(s) non livrée(s) exclue(s) ('+fcfa(fin.montantVentesEnAttente)+')':'')+'</div></div>'
     +'<div class="kpi kpi-r"><div class="kpi-lbl">Total charges</div><div class="kpi-val" style="font-size:16px">'+fcfa(fin.totalCharges)+'</div><div class="kpi-sub">'+(fin.chargesEstimees>0?'dont '+fcfa(fin.chargesEstimees)+' estimés (poussins/aliment)':'Toutes categories')+'</div></div>'
     +'<div class="kpi '+(fin.soldeTreso>=0?'kpi-b':'kpi-r')+'"><div class="kpi-lbl">Solde tresorerie</div><div class="kpi-val" style="font-size:16px;color:'+colorMarge(fin.soldeTreso)+'">'+(fin.soldeTreso>=0?'+':'')+fcfa(fin.soldeTreso)+'</div><div class="kpi-sub">Encaiss. - Decaiss.</div></div>'
     +'<div class="kpi kpi-a"><div class="kpi-lbl">Taux de charges</div><div class="kpi-val" style="font-size:16px">'+(txCh===null?'—':txCh.toFixed(1)+'%')+'</div><div class="kpi-sub">'+(txCh===null?'Aucune recette':'Charges / Recettes')+'</div></div>'
@@ -13334,6 +13341,7 @@ async function renderFinCharges(el,fin){
     var canRepond=v&&v.statut==='attente'&&currentUser&&(currentUser.id===v.destinataireId||currentUser.role==='admin');
     var actions=c.paieRef?'<span style="color:var(--text3);font-size:10px">Voir RH &gt; Bulletins</span>':(
       '<button class="btn btn-xs btn-gh" onclick="editCharge('+c.id+')" title="Modifier"><i class="fas fa-pen"></i></button> '
+      +(c.paye===false?'<button class="btn btn-xs btn-gh" style="color:#059669" onclick="payerCharge('+c.id+')" title="Marquer payée"><i class="fas fa-money-bill-wave"></i></button> ':'')
       +'<button class="btn btn-xs btn-gh" onclick="printChargeUnique('+c.id+')" title="Imprimer"><i class="fas fa-print"></i></button> '
       +'<button class="btn btn-xs btn-gh" style="color:#25D366" onclick="envoyerChargeWhatsApp('+c.id+')" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button> '
       +(canRepond?('<button class="btn btn-xs btn-gh" style="color:#059669" onclick="validerCharge('+c.id+')" title="Valider"><i class="fas fa-check"></i></button> '
@@ -13347,7 +13355,7 @@ async function renderFinCharges(el,fin){
       +'<td><span class="badge b-gr">'+(CAT_ICONS[c.categorie]||'📦')+' '+(CAT_LABELS[c.categorie]||c.categorie||'—')+'</span></td>'
       +'<td>'+esc(c.libelle||'')+(c.paieRef?' <span class="badge b-bl" style="font-size:9px" title="Générée automatiquement par RH">🔗 Paie</span>':'')+'</td><td>'+(c.qte||'—')+'</td><td>'+esc(c.unite||'—')+'</td>'
       +'<td>'+(c.unitCost?fcfa(c.unitCost):'—')+'</td>'
-      +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+'</td>'
+      +'<td style="font-weight:700;color:var(--red)">'+fcfa(c.montant)+(c.paye===false?' <span class="badge b-a" style="font-size:9px" title="Dette fournisseur (401) — non décaissée">À payer</span>':'')+'</td>'
       +'<td>'+vBadge+'</td>'
       +'<td style="white-space:nowrap">'+actions+'</td></tr>';
   }).join('');
@@ -13374,7 +13382,7 @@ window.deleteCharge=async function(id){
   const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);
   if(c && c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — supprimez plutôt les bulletins correspondants dans RH > Bulletins','err');return;}
   if(!confirm('Supprimer ?')) return;
-  try{ await annulerEcritures('CHARGE-'+id); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
+  try{ await annulerEcritures('CHARGE-'+id); await annulerEcritures('CHARGEPAIE-'+id); await syncTresoSource('CHARGE-'+id,null); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
   await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
 };
 
@@ -13553,6 +13561,23 @@ window.printChargesEtat=async function(preview){
 };
 
 // ── 5. TRESORERIE ──
+// Charges payées et ventes comptant sans mouvement de trésorerie lié (saisies avant la liaison automatique).
+function nonRapproches(fin){
+  var liees={}; (fin.tresoData||[]).forEach(function(t){ if(t.srcRef) liees[t.srcRef]=1; });
+  var ch=(fin.charges||[]).filter(function(c){return c.paye!==false && chargeDecaissable(c) && !c.paieRef && c.montant>0 && !liees['CHARGE-'+c.id];});
+  var ve=(fin.sales||[]).filter(function(v){return v.statut==='paid' && !v.numFacture && !(v.paiements&&v.paiements.length) && (v.totalHT||0)>0 && !liees['VENTE-'+v.id];});
+  return {ch:ch,ve:ve,nbCh:ch.length,nbVe:ve.length,
+    mtCh:ch.reduce(function(a,c){return a+c.montant;},0), mtVe:ve.reduce(function(a,v){return a+(v.totalHT||0);},0)};
+}
+window.regulariserTreso=async function(){
+  var fin=window._fin; if(!fin) return;
+  var n=nonRapproches(fin);
+  if(!n.nbCh&&!n.nbVe){ toast('Rien à régulariser'); return; }
+  if(!confirm('Créer les mouvements de trésorerie manquants ?\n\n• '+n.nbCh+' charge(s) payée(s) : −'+fcfa(n.mtCh)+'\n• '+n.nbVe+' vente(s) comptant : +'+fcfa(n.mtVe)+'\n\nÀ ne faire qu\'une fois, si ces opérations n\'ont pas déjà été saisies à la main dans la trésorerie (sinon doublon).')) return;
+  for(const c of n.ch) await syncTresoSource('CHARGE-'+c.id,entreeTresoCharge(c,c.id));
+  for(const v of n.ve) await syncTresoSource('VENTE-'+v.id,{type:'entree',date:v.date,categorie:'ventes',libelle:'Vente comptant '+(v.ref||''),montant:v.totalHT||0,ref:v.ref||'',flockId:v.flockId||null,ts:Date.now()});
+  toast('✅ Trésorerie régularisée'); await renderFinance(document.getElementById('contentArea'));
+};
 function renderFinTreso(el,fin){
   var treso=fin.tresoData.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
   var moisMap={};
@@ -13561,7 +13586,7 @@ function renderFinTreso(el,fin){
   var sol=0;
   var rows=treso.map(function(t){sol+=t.type==='entree'?(t.montant||0):-(t.montant||0);return '<tr><td>'+(t.date||'—')+'</td><td><span class="badge '+(t.type==='entree'?'b-g':'b-r')+'">'+(t.type==='entree'?'📥 Encaiss.':'📤 Decaiss.')+'</span></td><td><span class="badge b-gr">'+esc(t.categorie||'—')+'</span></td><td>'+esc(t.libelle||'')+'</td><td style="color:var(--text3);font-size:11px">'+esc(t.ref||'—')+'</td><td style="font-weight:700;color:'+(t.type==='entree'?'#059669':'var(--red)')+'">'+( t.type==='entree'?'+':'−')+fcfa(t.montant)+'</td><td style="font-weight:600;color:'+(sol>=0?'#059669':'var(--red)')+';font-size:11px">'+(sol>=0?'+':'')+fcfa(sol)+'</td><td><button class="btn-del" onclick="deleteTreso('+t.id+')">✕</button></td></tr>';}).join('');
 
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">💵 Tresorerie ('+treso.length+')</div><button class="btn btn-p btn-sm" onclick="openTresoModal()"><i class="fas fa-plus"></i> Nouveau</button></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">💵 Tresorerie ('+treso.length+')</div><div style="display:flex;gap:6px">'+(function(){var n=nonRapproches(fin);return n.nbCh+n.nbVe>0?'<button class="btn btn-sm btn-a" title="Charges payées et ventes comptant absentes de la trésorerie" onclick="regulariserTreso()"><i class="fas fa-link"></i> Régulariser ('+(n.nbCh+n.nbVe)+')</button>':'';})()+'<button class="btn btn-p btn-sm" onclick="openTresoModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">'
     +'<div class="kpi kpi-g"><div class="kpi-lbl">Encaissements</div><div class="kpi-val" style="font-size:15px;color:#059669">'+fcfa(fin.encaissements)+'</div></div>'
     +'<div class="kpi kpi-r"><div class="kpi-lbl">Decaissements</div><div class="kpi-val" style="font-size:15px;color:var(--red)">'+fcfa(fin.decaissements)+'</div></div>'
@@ -13572,7 +13597,10 @@ function renderFinTreso(el,fin){
   var ctxT=document.getElementById('finChartTreso');
   if(ctxT&&mk.length) finCharts.treso=new Chart(ctxT,{type:'bar',data:{labels:mk,datasets:[{label:'Encaissements',data:mk.map(function(m){return moisMap[m].entree||0;}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Decaissements',data:mk.map(function(m){return -(moisMap[m].sortie||0);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (Math.abs(v)/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
 }
-window.deleteTreso=async function(id){if(!confirm('Supprimer ?')) return;await delRec(S.TRESORERIE,id);toast('Mouvement supprime');await renderFinance(document.getElementById('contentArea'));};
+window.deleteTreso=async function(id){
+  const t=(await getAll(S.TRESORERIE)).find(function(x){return x.id===id;});
+  if(t&&t.srcRef){toast('⛔ Mouvement lié à une pièce ('+t.srcRef+') — modifiez ou supprimez la charge / la vente correspondante','err');return;}
+  if(!confirm('Supprimer ?')) return;await delRec(S.TRESORERIE,id);toast('Mouvement supprime');await renderFinance(document.getElementById('contentArea'));};
 
 // ── 6. BUDGET ──
 // ── CONTRÔLE DE GESTION — tendances consolidées multi-lots dans le temps ──
@@ -13603,7 +13631,7 @@ function calculerReestimations(fin){
 async function renderFinControle(el,fin){
   const[sales,charges,flocks]=await Promise.all([getAll(S.SALES),getAll(S.CHARGES),getAll(S.FLOCKS)]);
   const lotFilter = finControleLot ? parseInt(finControleLot) : null;
-  const salesF = lotFilter ? sales.filter(s=>s.flockId===lotFilter) : sales;
+  const salesF = (lotFilter ? sales.filter(s=>s.flockId===lotFilter) : sales).filter(venteComptabilisee);
   const chargesF = lotFilter ? charges.filter(c=>c.flockId===lotFilter) : charges;
 
   // ── Regroupement par mois (ou semaine) sur tout l'historique ──
@@ -13958,7 +13986,7 @@ window.toggleBudgetDetail = async function(budgetId, flockId, categorie){
       if(categorie==='recette'){
         const clientsAll = await getAll(S.CLIENTS);
         const [salesAll,refoAll,vvAll]=await Promise.all([getAll(S.SALES),getAll(S.REFORME),getAll(S.VENTE_VIVANT)]);
-        const sales = salesAll.filter(s=>s.flockId===flockId && s.statut!=='cancelled');
+        const sales = salesAll.filter(s=>s.flockId===flockId && venteComptabilisee(s));
         const autres = refoAll.filter(r=>r.flockId===flockId&&r.recetteTotale).map(r=>({date:r.date,ref:r.ref,nom:'Réforme (abattage)',m:r.recetteTotale}))
           .concat(vvAll.filter(v=>v.flockId===flockId&&v.recetteTotale).map(v=>({date:v.date,ref:v.ref,nom:'Vente d\'animaux vivants',m:v.recetteTotale})));
         const lignesV = sales.map(s=>{const c=clientsAll.find(x=>x.id===s.clientId);return {date:s.date,ref:s.ref,nom:c?c.nom:'—',m:s.totalHT||s.total||0};}).concat(autres);
@@ -13998,32 +14026,64 @@ async function openChargeManuelle(fid,editId){
   document.getElementById('chargePU').value = c ? (c.unitCost||'') : '';
   document.getElementById('chargeMontant').value = c ? (c.montant||'') : '';
   if(document.getElementById('chargeMode')) document.getElementById('chargeMode').value = c ? (c.mode||'virement') : 'virement';
+  if(document.getElementById('chargePaye')) document.getElementById('chargePaye').value = (c && c.paye===false) ? 'non' : 'oui';
   openOverlay('ovChargeManuelle');
 }
 window.openChargeManuelle=openChargeManuelle;
 window.editCharge=(id)=>openChargeManuelle(null,id);
 window.calcChargeMontant=function(){var q=parseFloat(document.getElementById('chargeQte').value)||0,pu=parseFloat(document.getElementById('chargePU').value)||0;if(q>0&&pu>0) document.getElementById('chargeMontant').value=Math.round(q*pu);};
+// Lien pièce source ⇄ mouvement de trésorerie (srcRef) : crée, met à jour ou supprime le mouvement correspondant.
+async function syncTresoSource(srcRef, entry){
+  const ex=(await getAll(S.TRESORERIE)).filter(function(t){return t.srcRef===srcRef;});
+  if(!entry){ for(const t of ex) await delRec(S.TRESORERIE,t.id); return; }
+  if(ex.length){ await updRec(S.TRESORERIE,ex[0].id,Object.assign({},ex[0],entry,{srcRef:srcRef})); for(const t of ex.slice(1)) await delRec(S.TRESORERIE,t.id); }
+  else await addRec(S.TRESORERIE,Object.assign({srcRef:srcRef},entry));
+}
+var CAT_TRESO_PAR_CHARGE={main_oeuvre:'salaire',entretien:'charge_fixe',assurance:'charge_fixe',autre:'autre'};
+// Les amortissements ne sont pas un décaissement.
+function chargeDecaissable(c){ return c.categorie!=='amortissement'; }
+function entreeTresoCharge(c,id){
+  return {type:'sortie',date:c.date,categorie:CAT_TRESO_PAR_CHARGE[c.categorie]||'achat',libelle:c.libelle,montant:c.montant,ref:'CHARGE-'+id,flockId:c.flockId||null,mode:c.mode,operatorId:currentUser?.id||1,ts:Date.now()};
+}
+// Écritures comptables d'une charge : payée ⇒ D charge / C trésorerie ; à payer ⇒ D charge / C 401 Fournisseurs.
+async function comptabiliserCharge(c,id){
+  await annulerEcritures('CHARGE-'+id); await annulerEcritures('CHARGEPAIE-'+id);
+  const compte=COMPTE_PAR_CATEGORIE[c.categorie]||'628', m=Math.round(c.montant);
+  const payee=c.paye!==false;
+  await passerEcriture({date:c.date,journal:'OD',libelle:c.libelle,
+    lignes:[{compte:compte,libelle:PLAN_COMPTABLE[compte]?.lbl||c.libelle,debit:m,credit:0},
+            payee?{compte:compteTresorerie(c.mode),libelle:'Décaissement '+c.mode,debit:0,credit:m}
+                 :{compte:'401',libelle:'Fournisseur — à payer',debit:0,credit:m}],
+    refSource:'CHARGE-'+id});
+}
+window.payerCharge=async function(id){
+  const c=(await getAll(S.CHARGES)).find(function(x){return x.id===id;}); if(!c) return;
+  if(c.paye!==false){ toast('Charge déjà payée'); return; }
+  const mode=c.mode||'virement';
+  if(!confirm('Marquer cette charge comme payée ('+fcfa(c.montant)+', '+mode+') ?\nUn décaissement de trésorerie sera enregistré.')) return;
+  const today=new Date().toISOString().slice(0,10), m=Math.round(c.montant);
+  await updRec(S.CHARGES,id,Object.assign({},c,{paye:true,datePaiement:today,ts:Date.now()}));
+  try{
+    await annulerEcritures('CHARGEPAIE-'+id);
+    await passerEcriture({date:today,journal:'BQ',libelle:'Règlement fournisseur — '+c.libelle,
+      lignes:[{compte:'401',libelle:'Fournisseur',debit:m,credit:0},{compte:compteTresorerie(mode),libelle:'Décaissement '+mode,debit:0,credit:m}],
+      refSource:'CHARGEPAIE-'+id});
+  }catch(e){ console.warn('Comptabilisation règlement échouée :',e.message); }
+  if(chargeDecaissable(c)) await syncTresoSource('CHARGE-'+id,Object.assign(entreeTresoCharge(c,id),{date:today}));
+  toast('✅ Charge payée — décaissement enregistré'); await renderFinance(document.getElementById('contentArea'));
+};
 window.saveChargeManuelle=async function(){
   var editId=parseInt(document.getElementById('chargeId').value)||null;
-  var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0,mode=document.getElementById('chargeMode')?.value||'virement';
+  var date=document.getElementById('chargeDate').value,lotId=document.getElementById('chargeLot').value,cat=document.getElementById('chargeCat').value,lib=document.getElementById('chargeLib').value.trim(),qte=parseFloat(document.getElementById('chargeQte').value)||0,unite=document.getElementById('chargeUnite').value.trim(),pu=parseFloat(document.getElementById('chargePU').value)||0,montant=parseFloat(document.getElementById('chargeMontant').value)||0,mode=document.getElementById('chargeMode')?.value||'virement',paye=(document.getElementById('chargePaye')?.value||'oui')!=='non';
   if(!date||!montant||!lib){toast('Date, libelle et montant requis','err');return;}
-  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,mode:mode,operatorId:currentUser?.id||1,ts:Date.now()};
+  var data={flockId:lotId?parseInt(lotId):null,date:date,categorie:cat,libelle:lib,qte:qte,unite:unite,unitCost:pu,montant:montant,mode:mode,paye:paye,operatorId:currentUser?.id||1,ts:Date.now()};
+  if(!(montant>0)){toast('Le montant doit être positif','err');return;}
   var chargeId=editId;
   if(editId) await updRec(S.CHARGES,editId,data);
   else chargeId=await addRec(S.CHARGES,data);
-  // ── Comptabilisation automatique : compte de charge (débit) / 571 Caisse ou 521 Banque (crédit) ──
-  try{
-    const compte=COMPTE_PAR_CATEGORIE[cat]||'628';
-    await annulerEcritures('CHARGE-'+chargeId);
-    await passerEcriture({
-      date, journal:'OD', libelle:lib,
-      lignes:[
-        {compte, libelle:PLAN_COMPTABLE[compte]?.lbl||lib, debit:Math.round(montant), credit:0},
-        {compte:compteTresorerie(mode), libelle:'Décaissement '+mode, debit:0, credit:Math.round(montant)}
-      ],
-      refSource:'CHARGE-'+chargeId
-    });
-  }catch(e){ console.warn('Comptabilisation charge échouée :', e.message); }
+  // ── Comptabilisation + trésorerie liées (payée : décaissement ; à payer : dette fournisseur 401) ──
+  try{ await comptabiliserCharge(data,chargeId); }catch(e){ console.warn('Comptabilisation charge échouée :', e.message); }
+  try{ await syncTresoSource('CHARGE-'+chargeId,(paye&&chargeDecaissable(data))?entreeTresoCharge(data,chargeId):null); }catch(e){ console.warn('Trésorerie charge échouée :', e.message); }
   closeOverlay('ovChargeManuelle');toast(editId?'Charge modifiée : '+fcfa(montant):'Charge: '+fcfa(montant));
   await renderFinance(document.getElementById('contentArea'));
 };
@@ -14203,6 +14263,10 @@ window.exportFinanceCSV=function(fin){
       <div class="fg">
         <label>Mode de règlement</label>
         <select id="chargeMode"><option value="virement">Virement</option><option value="cheque">Chèque</option><option value="especes">Espèces (caisse)</option><option value="mobile_money">Mobile Money</option></select>
+      </div>
+      <div class="fg">
+        <label>Règlement</label>
+        <select id="chargePaye"><option value="oui">Payée (décaissement immédiat)</option><option value="non">À payer (dette fournisseur)</option></select>
       </div>
     </div>
     <div class="modal-footer">
