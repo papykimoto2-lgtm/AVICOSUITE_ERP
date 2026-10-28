@@ -12813,7 +12813,7 @@ async function computeFinanceGlobale(){
       feeds=await getAll(S.FEEDING),budgets=await getAll(S.BUDGET),
       mort=await getAll(S.MORTALITE),
       reformesAll=await getAll(S.REFORME),ventesAll=await getAll(S.VENTE_VIVANT),
-      slaughtersAll=await getAll(S.SLAUGHTER);
+      slaughtersAll=await getAll(S.SLAUGHTER),eggsAll=await getAll(S.EGG_PROD);
   var finLots=[];
   for(var i=0;i<lots.length;i++){
     var lot=lots[i];
@@ -12862,6 +12862,21 @@ async function computeFinanceGlobale(){
   var ventesAttente=sales.filter(function(s){return s.statut!=='cancelled' && !venteComptabilisee(s);});
   var montantAttente=ventesAttente.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var recettesNonAffectees=ventesNonAffectees.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
+  // Détail des ventes par statut (transparence : qu'est-ce qui est compté, qu'est-ce qui ne l'est pas)
+  var detailVentes={};
+  sales.forEach(function(s){ var k=s.statut||'pending', m=s.totalHT||s.total||0; var d=detailVentes[k]=detailVentes[k]||{n:0,montant:0,sansLot:0}; d.n++; d.montant+=m; if(!s.flockId||!lotIds[s.flockId]) d.sansLot+=m; });
+  // Répartition ESTIMÉE (option) des ventes sans lot entre les lots pondeuses, au prorata des œufs produits (à défaut : des sujets vivants).
+  var recettesBrutesNA=recettesNonAffectees, recettesRepartiesTotal=0;
+  if(window.FIN_REPARTIR && recettesNonAffectees>0){
+    var layers=finLots.filter(function(f){return f.lot.type==='layer';});
+    var wts=layers.map(function(f){return eggsAll.filter(function(e){return e.flockId===f.lot.id;}).reduce(function(a,e){return a+(e.eggCount||0);},0);});
+    var wSum=wts.reduce(function(a,w){return a+w;},0);
+    if(wSum<=0){ wts=layers.map(function(f){return f.vivants||0;}); wSum=wts.reduce(function(a,w){return a+w;},0); }
+    if(layers.length && wSum>0){
+      layers.forEach(function(f,i){ var part=recettesNonAffectees*wts[i]/wSum; f.recettesRepartie=part; f.recettes+=part; f.marge=f.recettes-f.totalCharges; f.margePct=f.totalCharges>0?f.marge/f.totalCharges*100:0; });
+      recettesRepartiesTotal=recettesNonAffectees; recettesNonAffectees=0;
+    }
+  }
   var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0)+recettesNonAffectees;
   var totalChLots=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
   var chargesEstimees=finLots.reduce(function(a,f){return a+f.chargesEstimees;},0);
@@ -12884,7 +12899,7 @@ async function computeFinanceGlobale(){
   return{finLots:finLots,totalRecettes:totalRec,totalCharges:totalCh,margeGlobale:margeG,
     margePctGlobal:totalCh>0?margeG/totalCh*100:0,encaissements:encaiss,decaissements:decaiss,
     soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets,
-    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees,sales:sales,ventesEnAttente:ventesAttente.length,montantVentesEnAttente:montantAttente};
+    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees,sales:sales,detailVentes:detailVentes,recettesBrutesNonAffectees:recettesBrutesNA,recettesReparties:recettesRepartiesTotal,ventesEnAttente:ventesAttente.length,montantVentesEnAttente:montantAttente};
 }
 
 // ══════════════════════════════════════════════════════
@@ -13258,11 +13273,23 @@ function renderFinSynthese(el,fin){
     +'</div></div>' : '';
   var cat=Object.entries(fin.chargesGlobCat).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
   var catBars=cat.map(function(e){return '<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span>'+(CAT_ICONS[e[0]]||'📦')+' '+(CAT_LABELS[e[0]]||e[0])+'</span><span style="font-weight:700">'+pctFin(e[1],fin.totalCharges)+'</span></div><div class="prog"><div class="prog-fill" style="width:'+pctFin(e[1],fin.totalCharges)+';background:'+(CAT_COLORS[e[0]]||'#888')+'"></div></div></div>';}).join('');
-  var recap=fin.finLots.map(function(f){return '<tr><td><strong>'+esc(f.lot.nom||'')+'</strong></td><td><span class="badge '+(f.lot.type==='layer'?'b-a':'b-r')+'">'+(f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</span></td><td>'+f.vivants.toLocaleString()+'</td><td style="color:#059669;font-weight:600">'+fcfa(f.recettes)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(f.totalCharges)+'</td><td style="font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</td><td><span class="badge '+(f.margePct>=0?'b-g':'b-r')+'">'+f.margePct.toFixed(1)+'%</span></td><td>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</td></tr>';}).join('');
+  var recap=fin.finLots.map(function(f){return '<tr><td><strong>'+esc(f.lot.nom||'')+'</strong></td><td><span class="badge '+(f.lot.type==='layer'?'b-a':'b-r')+'">'+(f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</span></td><td>'+f.vivants.toLocaleString()+'</td><td style="color:#059669;font-weight:600">'+fcfa(f.recettes)+(f.recettesRepartie>0?' <span style="font-size:9px;color:var(--text3)" title="Dont part estimée des ventes sans lot">(≈'+fcfa(f.recettesRepartie)+' estimé)</span>':'')+'</td><td style="color:var(--red);font-weight:600">'+fcfa(f.totalCharges)+'</td><td style="font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</td><td><span class="badge '+(f.margePct>=0?'b-g':'b-r')+'">'+f.margePct.toFixed(1)+'%</span></td><td>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</td></tr>';}).join('');
   if(fin.recettesNonAffectees>0||fin.totalChargesGlobalesNonAffectees>0) recap+='<tr style="background:#fffbeb"><td colspan="2"><strong>Hors lot</strong> <span style="font-size:10px;color:var(--text3)">(ventes sans lot : '+(fin.nbVentesNonAffectees||0)+' · charges globales)</span></td><td>—</td><td style="color:#059669;font-weight:600">'+fcfa(fin.recettesNonAffectees)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(fin.totalChargesGlobalesNonAffectees)+'</td><td style="font-weight:700;color:'+colorMarge(fin.recettesNonAffectees-fin.totalChargesGlobalesNonAffectees)+'">'+fcfa(fin.recettesNonAffectees-fin.totalChargesGlobalesNonAffectees)+'</td><td>—</td><td>—</td></tr>';
   var top3=cat.slice(0,3).map(function(e){return '<div class="card" style="margin-bottom:0"><div class="card-bd" style="display:flex;align-items:center;gap:12px"><div style="width:40px;height:40px;border-radius:10px;background:'+(CAT_COLORS[e[0]]||'#888')+'22;display:flex;align-items:center;justify-content:center;font-size:20px">'+(CAT_ICONS[e[0]]||'📦')+'</div><div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase">'+(CAT_LABELS[e[0]]||e[0])+'</div><div style="font-size:16px;font-weight:700">'+fcfa(e[1])+'</div><div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+' charges</div></div></div></div>';}).join('');
 
-  el.innerHTML=bannerAlertes+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
+  var dv=fin.detailVentes||{}, lblV={delivered:'Livrées',invoiced:'Facturées',paid:'Soldées',confirmed:'Confirmées (non livrées)',pending:'En attente',cancelled:'Annulées'};
+  var ligneV=function(k,compte){ var d=dv[k]; if(!d) return ''; return '<tr'+(compte?'':' style="color:var(--text3)"')+'><td>'+(compte?'✅':'⏸')+' '+lblV[k]+'</td><td style="text-align:right">'+d.n+'</td><td style="text-align:right;font-weight:600">'+fcfa(d.montant)+'</td><td style="text-align:right">'+(compte&&d.sansLot?fcfa(d.sansLot)+' sans lot':'')+'</td></tr>'; };
+  var nbVentes=Object.keys(dv).reduce(function(a,k){return a+dv[k].n;},0);
+  var cardOrigine=nbVentes?'<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span>💰 Origine des recettes</span>'
+    +(fin.recettesBrutesNonAffectees>0?'<button class="btn btn-sm '+(window.FIN_REPARTIR?'btn-p':'btn-gh')+'" onclick="toggleRepartVentes()" title="Répartit les ventes sans lot entre les lots pondeuses, au prorata des œufs produits (estimation)"><i class="fas fa-share-nodes"></i> '+(window.FIN_REPARTIR?'Répartition estimée active — désactiver':'Répartir les ventes sans lot (estimation)')+'</button>':'')
+    +'</div><div class="card-bd"><table class="tbl" style="font-size:12px"><thead><tr><th>Statut des ventes</th><th style="text-align:right">Nb</th><th style="text-align:right">Montant HT</th><th style="text-align:right">Rattachement</th></tr></thead><tbody>'
+    +ligneV('delivered',1)+ligneV('invoiced',1)+ligneV('paid',1)+ligneV('confirmed',0)+ligneV('pending',0)+ligneV('cancelled',0)
+    +'</tbody></table>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Seules les ventes <strong>livrées, facturées ou soldées</strong> sont comptées en recettes. Une commande « En attente » ou « Confirmée » doit être livrée (Commandes clients → Livrer) pour apparaître ici. '
+    +(fin.recettesReparties>0?'<br>≈ '+fcfa(fin.recettesReparties)+' de ventes sans lot sont <strong>réparties par estimation</strong> entre les lots pondeuses (au prorata des œufs produits) : renseignez le champ « Lot » des ventes pour des chiffres exacts.'
+      :(fin.recettesNonAffectees>0?'<br>'+fcfa(fin.recettesNonAffectees)+' de recettes n\'ont pas de lot : elles figurent sur la ligne « Hors lot ».':''))
+    +'</div></div></div>':'';
+  el.innerHTML=bannerAlertes+cardOrigine+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
     +'<div class="card" style="margin-bottom:0"><div class="card-hd">📊 Repartition des charges</div><div class="card-bd" style="display:flex;gap:14px;align-items:center"><div style="position:relative;width:150px;height:150px;flex-shrink:0"><canvas id="finChartCharges"></canvas></div><div style="flex:1">'+catBars+'</div></div></div>'
     +'<div class="card" style="margin-bottom:0"><div class="card-hd">📈 Recettes vs Charges</div><div class="card-bd" style="position:relative;height:175px"><canvas id="finChartLots"></canvas></div></div>'
     +'</div>'
@@ -13275,7 +13302,9 @@ function renderFinSynthese(el,fin){
   var ctxC=document.getElementById('finChartCharges');
   if(ctxC&&cat.length) finCharts.charges=new Chart(ctxC,{type:'doughnut',data:{labels:cat.map(function(e){return CAT_LABELS[e[0]]||e[0];}),datasets:[{data:cat.map(function(e){return Math.round(e[1]);}),backgroundColor:cat.map(function(e){return CAT_COLORS[e[0]]||'#888';}),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
   var ctxL=document.getElementById('finChartLots');
-  if(ctxL&&fin.finLots.length) finCharts.lots=new Chart(ctxL,{type:'bar',data:{labels:fin.finLots.map(function(f){return f.lot.nom||'Lot';}),datasets:[{label:'Recettes',data:fin.finLots.map(function(f){return Math.round(f.recettes);}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Charges',data:fin.finLots.map(function(f){return Math.round(f.totalCharges);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (v/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
+  var chRows=fin.finLots.map(function(f){return {n:f.lot.nom||'Lot',r:f.recettes,c:f.totalCharges};});
+  if(fin.recettesNonAffectees>0||fin.totalChargesGlobalesNonAffectees>0) chRows.push({n:'Hors lot',r:fin.recettesNonAffectees,c:fin.totalChargesGlobalesNonAffectees});
+  if(ctxL&&chRows.length) finCharts.lots=new Chart(ctxL,{type:'bar',data:{labels:chRows.map(function(x){return x.n;}),datasets:[{label:'Recettes',data:chRows.map(function(x){return Math.round(x.r);}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Charges',data:chRows.map(function(x){return Math.round(x.c);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (v/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
 }
 
 // ── 2. PAR LOT ──
@@ -13389,6 +13418,12 @@ async function renderFinCharges(el,fin){
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
 var finChgLot='', finChgCat='';
+try{ window.FIN_REPARTIR = localStorage.getItem('fin_repartir')==='1'; }catch(e){ window.FIN_REPARTIR=false; }
+window.toggleRepartVentes=function(){
+  window.FIN_REPARTIR=!window.FIN_REPARTIR;
+  try{ localStorage.setItem('fin_repartir',window.FIN_REPARTIR?'1':'0'); }catch(e){}
+  renderFinance(document.getElementById('contentArea'));
+};
 window.filtrerCharges=function(){
   finChgLot=document.getElementById('filtreChargeLot')?.value||'';
   finChgCat=document.getElementById('filtreChargeCat')?.value||'';
