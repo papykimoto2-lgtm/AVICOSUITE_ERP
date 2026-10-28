@@ -12813,7 +12813,7 @@ async function computeFinanceGlobale(){
       feeds=await getAll(S.FEEDING),budgets=await getAll(S.BUDGET),
       mort=await getAll(S.MORTALITE),
       reformesAll=await getAll(S.REFORME),ventesAll=await getAll(S.VENTE_VIVANT),
-      slaughtersAll=await getAll(S.SLAUGHTER);
+      slaughtersAll=await getAll(S.SLAUGHTER),eggsAll=await getAll(S.EGG_PROD);
   var finLots=[];
   for(var i=0;i<lots.length;i++){
     var lot=lots[i];
@@ -12862,6 +12862,21 @@ async function computeFinanceGlobale(){
   var ventesAttente=sales.filter(function(s){return s.statut!=='cancelled' && !venteComptabilisee(s);});
   var montantAttente=ventesAttente.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var recettesNonAffectees=ventesNonAffectees.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
+  // Détail des ventes par statut (transparence : qu'est-ce qui est compté, qu'est-ce qui ne l'est pas)
+  var detailVentes={};
+  sales.forEach(function(s){ var k=s.statut||'pending', m=s.totalHT||s.total||0; var d=detailVentes[k]=detailVentes[k]||{n:0,montant:0,sansLot:0}; d.n++; d.montant+=m; if(!s.flockId||!lotIds[s.flockId]) d.sansLot+=m; });
+  // Répartition ESTIMÉE (option) des ventes sans lot entre les lots pondeuses, au prorata des œufs produits (à défaut : des sujets vivants).
+  var recettesBrutesNA=recettesNonAffectees, recettesRepartiesTotal=0;
+  if(window.FIN_REPARTIR && recettesNonAffectees>0){
+    var layers=finLots.filter(function(f){return f.lot.type==='layer';});
+    var wts=layers.map(function(f){return eggsAll.filter(function(e){return e.flockId===f.lot.id;}).reduce(function(a,e){return a+(e.eggCount||0);},0);});
+    var wSum=wts.reduce(function(a,w){return a+w;},0);
+    if(wSum<=0){ wts=layers.map(function(f){return f.vivants||0;}); wSum=wts.reduce(function(a,w){return a+w;},0); }
+    if(layers.length && wSum>0){
+      layers.forEach(function(f,i){ var part=recettesNonAffectees*wts[i]/wSum; f.recettesRepartie=part; f.recettes+=part; f.marge=f.recettes-f.totalCharges; f.margePct=f.totalCharges>0?f.marge/f.totalCharges*100:0; });
+      recettesRepartiesTotal=recettesNonAffectees; recettesNonAffectees=0;
+    }
+  }
   var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0)+recettesNonAffectees;
   var totalChLots=finLots.reduce(function(a,f){return a+f.totalCharges;},0);
   var chargesEstimees=finLots.reduce(function(a,f){return a+f.chargesEstimees;},0);
@@ -12884,7 +12899,7 @@ async function computeFinanceGlobale(){
   return{finLots:finLots,totalRecettes:totalRec,totalCharges:totalCh,margeGlobale:margeG,
     margePctGlobal:totalCh>0?margeG/totalCh*100:0,encaissements:encaiss,decaissements:decaiss,
     soldeTreso:encaiss-decaiss,chargesGlobCat:chargesGlobCat,tresoData:tresoData,charges:charges,budgets:budgets,
-    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees,sales:sales,ventesEnAttente:ventesAttente.length,montantVentesEnAttente:montantAttente};
+    totalChargesGlobalesNonAffectees:totalChGlobal,recettesNonAffectees:recettesNonAffectees,nbVentesNonAffectees:ventesNonAffectees.length,chargesEstimees:chargesEstimees,sales:sales,detailVentes:detailVentes,recettesBrutesNonAffectees:recettesBrutesNA,recettesReparties:recettesRepartiesTotal,ventesEnAttente:ventesAttente.length,montantVentesEnAttente:montantAttente};
 }
 
 // ══════════════════════════════════════════════════════
@@ -13258,11 +13273,23 @@ function renderFinSynthese(el,fin){
     +'</div></div>' : '';
   var cat=Object.entries(fin.chargesGlobCat).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
   var catBars=cat.map(function(e){return '<div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span>'+(CAT_ICONS[e[0]]||'📦')+' '+(CAT_LABELS[e[0]]||e[0])+'</span><span style="font-weight:700">'+pctFin(e[1],fin.totalCharges)+'</span></div><div class="prog"><div class="prog-fill" style="width:'+pctFin(e[1],fin.totalCharges)+';background:'+(CAT_COLORS[e[0]]||'#888')+'"></div></div></div>';}).join('');
-  var recap=fin.finLots.map(function(f){return '<tr><td><strong>'+esc(f.lot.nom||'')+'</strong></td><td><span class="badge '+(f.lot.type==='layer'?'b-a':'b-r')+'">'+(f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</span></td><td>'+f.vivants.toLocaleString()+'</td><td style="color:#059669;font-weight:600">'+fcfa(f.recettes)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(f.totalCharges)+'</td><td style="font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</td><td><span class="badge '+(f.margePct>=0?'b-g':'b-r')+'">'+f.margePct.toFixed(1)+'%</span></td><td>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</td></tr>';}).join('');
+  var recap=fin.finLots.map(function(f){return '<tr><td><strong>'+esc(f.lot.nom||'')+'</strong></td><td><span class="badge '+(f.lot.type==='layer'?'b-a':'b-r')+'">'+(f.lot.type==='layer'?'🥚 Ponte':'🍗 Chair')+'</span></td><td>'+f.vivants.toLocaleString()+'</td><td style="color:#059669;font-weight:600">'+fcfa(f.recettes)+(f.recettesRepartie>0?' <span style="font-size:9px;color:var(--text3)" title="Dont part estimée des ventes sans lot">(≈'+fcfa(f.recettesRepartie)+' estimé)</span>':'')+'</td><td style="color:var(--red);font-weight:600">'+fcfa(f.totalCharges)+'</td><td style="font-weight:700;color:'+colorMarge(f.marge)+'">'+(f.marge>=0?'+':'')+fcfa(f.marge)+'</td><td><span class="badge '+(f.margePct>=0?'b-g':'b-r')+'">'+f.margePct.toFixed(1)+'%</span></td><td>'+(f.vivants>0?fcfa(f.coutParSujet):'—')+'</td></tr>';}).join('');
   if(fin.recettesNonAffectees>0||fin.totalChargesGlobalesNonAffectees>0) recap+='<tr style="background:#fffbeb"><td colspan="2"><strong>Hors lot</strong> <span style="font-size:10px;color:var(--text3)">(ventes sans lot : '+(fin.nbVentesNonAffectees||0)+' · charges globales)</span></td><td>—</td><td style="color:#059669;font-weight:600">'+fcfa(fin.recettesNonAffectees)+'</td><td style="color:var(--red);font-weight:600">'+fcfa(fin.totalChargesGlobalesNonAffectees)+'</td><td style="font-weight:700;color:'+colorMarge(fin.recettesNonAffectees-fin.totalChargesGlobalesNonAffectees)+'">'+fcfa(fin.recettesNonAffectees-fin.totalChargesGlobalesNonAffectees)+'</td><td>—</td><td>—</td></tr>';
   var top3=cat.slice(0,3).map(function(e){return '<div class="card" style="margin-bottom:0"><div class="card-bd" style="display:flex;align-items:center;gap:12px"><div style="width:40px;height:40px;border-radius:10px;background:'+(CAT_COLORS[e[0]]||'#888')+'22;display:flex;align-items:center;justify-content:center;font-size:20px">'+(CAT_ICONS[e[0]]||'📦')+'</div><div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase">'+(CAT_LABELS[e[0]]||e[0])+'</div><div style="font-size:16px;font-weight:700">'+fcfa(e[1])+'</div><div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+' charges</div></div></div></div>';}).join('');
 
-  el.innerHTML=bannerAlertes+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
+  var dv=fin.detailVentes||{}, lblV={delivered:'Livrées',invoiced:'Facturées',paid:'Soldées',confirmed:'Confirmées (non livrées)',pending:'En attente',cancelled:'Annulées'};
+  var ligneV=function(k,compte){ var d=dv[k]; if(!d) return ''; return '<tr'+(compte?'':' style="color:var(--text3)"')+'><td>'+(compte?'✅':'⏸')+' '+lblV[k]+'</td><td style="text-align:right">'+d.n+'</td><td style="text-align:right;font-weight:600">'+fcfa(d.montant)+'</td><td style="text-align:right">'+(compte&&d.sansLot?fcfa(d.sansLot)+' sans lot':'')+'</td></tr>'; };
+  var nbVentes=Object.keys(dv).reduce(function(a,k){return a+dv[k].n;},0);
+  var cardOrigine=nbVentes?'<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span>💰 Origine des recettes</span>'
+    +(fin.recettesBrutesNonAffectees>0?'<button class="btn btn-sm '+(window.FIN_REPARTIR?'btn-p':'btn-gh')+'" onclick="toggleRepartVentes()" title="Répartit les ventes sans lot entre les lots pondeuses, au prorata des œufs produits (estimation)"><i class="fas fa-share-nodes"></i> '+(window.FIN_REPARTIR?'Répartition estimée active — désactiver':'Répartir les ventes sans lot (estimation)')+'</button>':'')
+    +'</div><div class="card-bd"><table class="tbl" style="font-size:12px"><thead><tr><th>Statut des ventes</th><th style="text-align:right">Nb</th><th style="text-align:right">Montant HT</th><th style="text-align:right">Rattachement</th></tr></thead><tbody>'
+    +ligneV('delivered',1)+ligneV('invoiced',1)+ligneV('paid',1)+ligneV('confirmed',0)+ligneV('pending',0)+ligneV('cancelled',0)
+    +'</tbody></table>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Seules les ventes <strong>livrées, facturées ou soldées</strong> sont comptées en recettes. Une commande « En attente » ou « Confirmée » doit être livrée (Commandes clients → Livrer) pour apparaître ici. '
+    +(fin.recettesReparties>0?'<br>≈ '+fcfa(fin.recettesReparties)+' de ventes sans lot sont <strong>réparties par estimation</strong> entre les lots pondeuses (au prorata des œufs produits) : renseignez le champ « Lot » des ventes pour des chiffres exacts.'
+      :(fin.recettesNonAffectees>0?'<br>'+fcfa(fin.recettesNonAffectees)+' de recettes n\'ont pas de lot : elles figurent sur la ligne « Hors lot ».':''))
+    +'</div></div></div>':'';
+  el.innerHTML=bannerAlertes+cardOrigine+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
     +'<div class="card" style="margin-bottom:0"><div class="card-hd">📊 Repartition des charges</div><div class="card-bd" style="display:flex;gap:14px;align-items:center"><div style="position:relative;width:150px;height:150px;flex-shrink:0"><canvas id="finChartCharges"></canvas></div><div style="flex:1">'+catBars+'</div></div></div>'
     +'<div class="card" style="margin-bottom:0"><div class="card-hd">📈 Recettes vs Charges</div><div class="card-bd" style="position:relative;height:175px"><canvas id="finChartLots"></canvas></div></div>'
     +'</div>'
@@ -13275,7 +13302,9 @@ function renderFinSynthese(el,fin){
   var ctxC=document.getElementById('finChartCharges');
   if(ctxC&&cat.length) finCharts.charges=new Chart(ctxC,{type:'doughnut',data:{labels:cat.map(function(e){return CAT_LABELS[e[0]]||e[0];}),datasets:[{data:cat.map(function(e){return Math.round(e[1]);}),backgroundColor:cat.map(function(e){return CAT_COLORS[e[0]]||'#888';}),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
   var ctxL=document.getElementById('finChartLots');
-  if(ctxL&&fin.finLots.length) finCharts.lots=new Chart(ctxL,{type:'bar',data:{labels:fin.finLots.map(function(f){return f.lot.nom||'Lot';}),datasets:[{label:'Recettes',data:fin.finLots.map(function(f){return Math.round(f.recettes);}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Charges',data:fin.finLots.map(function(f){return Math.round(f.totalCharges);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (v/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
+  var chRows=fin.finLots.map(function(f){return {n:f.lot.nom||'Lot',r:f.recettes,c:f.totalCharges};});
+  if(fin.recettesNonAffectees>0||fin.totalChargesGlobalesNonAffectees>0) chRows.push({n:'Hors lot',r:fin.recettesNonAffectees,c:fin.totalChargesGlobalesNonAffectees});
+  if(ctxL&&chRows.length) finCharts.lots=new Chart(ctxL,{type:'bar',data:{labels:chRows.map(function(x){return x.n;}),datasets:[{label:'Recettes',data:chRows.map(function(x){return Math.round(x.r);}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Charges',data:chRows.map(function(x){return Math.round(x.c);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (v/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
 }
 
 // ── 2. PAR LOT ──
@@ -13344,10 +13373,13 @@ async function renderFinCharges(el,fin){
   var lots=await getAll(S.FLOCKS);
   var charges=await getAll(S.CHARGES);
   charges.sort(function(a,b){return (b.ts||0)-(a.ts||0);});
-  var chF=charges.filter(function(c){return (!finChgLot||String(c.flockId||'')===finChgLot)&&(!finChgCat||(c.categorie||'')===finChgCat);});
+  var chF=charges.filter(function(c){return (!finChgLot||String(c.flockId||'')===finChgLot)&&(!finChgCat||(c.categorie||'')===finChgCat)&&(!finChgVal||chgValStatut(c)===finChgVal);});
+  window._chgFilteredIds=chF.map(function(c){return c.id;});
   var lm={};
   lots.forEach(function(l){lm[l.id]=l.nom||'Lot '+l.id;});
-  var rows=pgSlice('fincharges',chF,50).map(function(c){
+  var pageChg=pgSlice('fincharges',chF,50);
+  window._chgPageIds=pageChg.map(function(c){return c.id;});
+  var rows=pageChg.map(function(c){
     var v=c.validation;
     var vBadge=!v?'<span style="color:var(--text3);font-size:10px">—</span>'
       :v.statut==='attente'?'<span class="badge b-a" style="font-size:9px" title="Envoyée à '+esc(v.destinataireNom||'')+'">⏳ Attente</span>'
@@ -13365,6 +13397,7 @@ async function renderFinCharges(el,fin){
       +'<button class="btn-del" onclick="deleteCharge('+c.id+')" title="Supprimer">✕</button>'
     );
     return '<tr data-lot="'+(c.flockId||'')+'" data-cat="'+(c.categorie||'')+'">'
+      +'<td><input type="checkbox" '+(finChgSel[c.id]?'checked ':'')+(c.paieRef?'disabled title="Charge de paie : non soumise à validation" ':'')+'onchange="chgToggleSel('+c.id+',this.checked)"></td>'
       +'<td>'+(c.date||'—')+'</td>'
       +'<td>'+(c.flockId?esc(lm[c.flockId]||'—'):'<span style="color:var(--text3)">Global</span>')+'</td>'
       +'<td><span class="badge b-gr">'+(CAT_ICONS[c.categorie]||'📦')+' '+(CAT_LABELS[c.categorie]||c.categorie||'—')+'</span></td>'
@@ -13384,14 +13417,23 @@ async function renderFinCharges(el,fin){
       +'<div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+'</div></div>';
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+(chF.length===charges.length?charges.length:chF.length+' / '+charges.length)+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
-    +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+pgBar('fincharges',chF.length,function(){renderFinCharges(el,fin);})+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
+    +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select><select id="filtreChargeVal" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes validations</option>'
+      +[['none','Non soumises'],['attente','⏳ En attente'],['validee','✅ Validées'],['rejetee','❌ Rejetées']].map(function(o){return '<option value="'+o[0]+'"'+(o[0]===finChgVal?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div>'
+    +'<div id="chgBar">'+chgBarHtml(charges)+'</div>'
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th style="width:28px"><input type="checkbox" onchange="chgToggleAllPage(this.checked)" title="Sélectionner la page"></th><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+pgBar('fincharges',chF.length,function(){renderFinCharges(el,fin);})+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
-var finChgLot='', finChgCat='';
+var finChgLot='', finChgCat='', finChgVal='', finChgSel={};
+try{ window.FIN_REPARTIR = localStorage.getItem('fin_repartir')==='1'; }catch(e){ window.FIN_REPARTIR=false; }
+window.toggleRepartVentes=function(){
+  window.FIN_REPARTIR=!window.FIN_REPARTIR;
+  try{ localStorage.setItem('fin_repartir',window.FIN_REPARTIR?'1':'0'); }catch(e){}
+  renderFinance(document.getElementById('contentArea'));
+};
 window.filtrerCharges=function(){
   finChgLot=document.getElementById('filtreChargeLot')?.value||'';
   finChgCat=document.getElementById('filtreChargeCat')?.value||'';
+  finChgVal=document.getElementById('filtreChargeVal')?.value||'';
   pgReset('fincharges');
   renderFinCharges(document.getElementById('finTabContent'),window._fin);
 };
@@ -13400,11 +13442,99 @@ window.deleteCharge=async function(id){
   if(c && c.paieRef){toast('⛔ Charge générée par la paie ('+c.paieRef+') — supprimez plutôt les bulletins correspondants dans RH > Bulletins','err');return;}
   if(!confirm('Supprimer ?')) return;
   try{ await annulerEcritures('CHARGE-'+id); await annulerEcritures('CHARGEPAIE-'+id); await syncTresoSource('CHARGE-'+id,null); }catch(e){ console.warn('Suppression écriture échouée :', e.message); }
-  await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
+  delete finChgSel[id]; await delRec(S.CHARGES,id);toast('Charge supprimee');await renderFinance(document.getElementById('contentArea'));
 };
 
 // ── Validation charges par personne habilitée (admin/manager) ──
+// ── VALIDATION GROUPÉE des charges : sélection multiple → envoi / validation / rejet en une opération ──
+function chgValStatut(c){ return c.validation?c.validation.statut:'none'; }
+function chgSoumettable(c){ return !c.paieRef && (!c.validation || c.validation.statut==='rejetee'); }
+function chgValidable(c){ return !!(c.validation && c.validation.statut==='attente' && currentUser && (currentUser.id===c.validation.destinataireId || currentUser.role==='admin')); }
+function chgSelection(){ var all=(window._fin&&window._fin.charges)||[]; return all.filter(function(c){return finChgSel[c.id];}); }
+function chgBarHtml(charges){
+  var sel=(charges||[]).filter(function(c){return finChgSel[c.id];});
+  if(!sel.length) return charges&&charges.length?'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">☑ Cochez des charges pour les <strong>envoyer en validation</strong>, les <strong>valider</strong> ou les <strong>rejeter</strong> en une seule opération (filtre « Statut de validation » pour cibler).</div>':'';
+  var tot=sel.reduce(function(a,c){return a+(c.montant||0);},0);
+  var nS=sel.filter(chgSoumettable).length, nV=sel.filter(chgValidable).length;
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#f0fdf4;border:1.5px solid #86efac;border-radius:9px;padding:8px 12px;margin-bottom:10px">'
+    +'<strong style="font-size:12px">'+sel.length+' charge(s) sélectionnée(s) · '+fcfa(tot)+'</strong>'
+    +'<button class="btn btn-xs btn-gh" onclick="chgSelectAllFiltered()">Tout sélectionner (filtre : '+((window._chgFilteredIds||[]).length)+')</button>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn btn-sm btn-p" '+(nS?'':'disabled ')+'onclick="ouvrirEnvoiValidationGroupe()"><i class="fas fa-paper-plane"></i> Envoyer pour validation ('+nS+')</button>'
+    +'<button class="btn btn-sm" style="background:#059669;color:#fff" '+(nV?'':'disabled ')+'onclick="validerChargesGroupe(false)"><i class="fas fa-check"></i> Valider ('+nV+')</button>'
+    +'<button class="btn btn-sm" style="background:#c1121f;color:#fff" '+(nV?'':'disabled ')+'onclick="validerChargesGroupe(true)"><i class="fas fa-times"></i> Rejeter ('+nV+')</button>'
+    +'<button class="btn btn-xs btn-gh" onclick="chgClearSel()">✕ Désélectionner</button></div>';
+}
+function chgRefreshBar(){ var el=document.getElementById('chgBar'); if(el) el.innerHTML=chgBarHtml((window._fin&&window._fin.charges)||[]); }
+window.chgToggleSel=function(id,on){ if(on) finChgSel[id]=1; else delete finChgSel[id]; chgRefreshBar(); };
+window.chgToggleAllPage=function(on){
+  var byId={}; ((window._fin&&window._fin.charges)||[]).forEach(function(c){byId[c.id]=c;});
+  (window._chgPageIds||[]).forEach(function(id){ if(byId[id]&&byId[id].paieRef) return; if(on) finChgSel[id]=1; else delete finChgSel[id]; });
+  renderFinCharges(document.getElementById('finTabContent'),window._fin);
+};
+window.chgSelectAllFiltered=function(){
+  var byId={}; ((window._fin&&window._fin.charges)||[]).forEach(function(c){byId[c.id]=c;});
+  (window._chgFilteredIds||[]).forEach(function(id){ if(byId[id]&&!byId[id].paieRef) finChgSel[id]=1; });
+  renderFinCharges(document.getElementById('finTabContent'),window._fin);
+};
+window.chgClearSel=function(){ finChgSel={}; renderFinCharges(document.getElementById('finTabContent'),window._fin); };
+function chgLignesMsg(list,lots){
+  var lm={}; lots.forEach(function(l){lm[l.id]=l.nom||('Lot '+l.id);});
+  var l=list.slice(0,30).map(function(c){return '• '+(CAT_LABELS[c.categorie]||c.categorie)+' · '+(c.flockId?(lm[c.flockId]||'Lot '+c.flockId):'Global')+' · '+(c.libelle||'')+' · '+Math.round(c.montant||0).toLocaleString('fr-FR')+' F ('+(c.date||'')+')';});
+  if(list.length>30) l.push('… et '+(list.length-30)+' autre(s)');
+  return l.join('\n');
+}
+window.ouvrirEnvoiValidationGroupe=async function(){
+  var sel=chgSelection().filter(chgSoumettable);
+  if(!sel.length){ toast('Aucune charge sélectionnée à soumettre (déjà en attente/validée ou charge de paie)','err'); return; }
+  const users=await getAll(S.USERS);
+  const habilites=users.filter(u=>u.actif!==false&&(u.role==='admin'||u.role==='manager')&&u.id!==currentUser?.id);
+  if(!habilites.length){toast('Aucune personne habilitée (admin/manager) trouvée','err');return;}
+  document.getElementById('valChargeId').value='groupe';
+  document.getElementById('valChargeDest').innerHTML=habilites.map(u=>'<option value="'+u.id+'">'+esc(u.nom||'Utilisateur')+' — '+(ROLE_PERMS[u.role]?.label||u.role)+'</option>').join('');
+  var rs=document.getElementById('valChargeResume'); if(rs){ rs.style.display='block'; rs.textContent=sel.length+' charge(s) · total '+fcfa(sel.reduce(function(a,c){return a+(c.montant||0);},0))+' — une seule demande groupée sera envoyée.'; }
+  openOverlay('ovChargeValidation');
+};
+async function confirmerEnvoiValidationGroupe(){
+  var destId=parseInt(document.getElementById('valChargeDest').value);
+  var note=document.getElementById('valChargeNote').value.trim();
+  var sel=chgSelection().filter(chgSoumettable);
+  if(!sel.length){ toast('Rien à envoyer','err'); return; }
+  const users=await getAll(S.USERS); const dest=users.find(u=>u.id===destId); if(!dest){toast('Destinataire introuvable','err');return;}
+  const lots=await getAll(S.FLOCKS);
+  const groupeId='G'+Date.now(), now=new Date().toISOString();
+  for(const c of sel){
+    await updRec(S.CHARGES,c.id,{...c,validation:{statut:'attente',destinataireId:destId,destinataireNom:dest.nom,expediteurId:currentUser.id,expediteurNom:currentUser.nom,dateEnvoi:now,note,groupeId}});
+    delete finChgSel[c.id];
+  }
+  const tot=sel.reduce(function(a,c){return a+(c.montant||0);},0);
+  const convId=await msgGetOrCreateDirectConversation(destId);
+  await envoyerMessageInterne(convId,'📉 Demande de validation GROUPÉE — '+sel.length+' charge(s) · Total '+Math.round(tot).toLocaleString('fr-FR')+' F\n'+chgLignesMsg(sel,lots)+(note?'\nNote : '+note:''));
+  closeOverlay('ovChargeValidation'); toast(sel.length+' charge(s) envoyée(s) pour validation à '+dest.nom);
+  await renderFinance(document.getElementById('contentArea'));
+}
+window.validerChargesGroupe=async function(rejet){
+  var sel=chgSelection().filter(chgValidable);
+  if(!sel.length){ toast('Aucune charge sélectionnée que vous pouvez valider','err'); return; }
+  var tot=sel.reduce(function(a,c){return a+(c.montant||0);},0), motif='';
+  if(rejet){ var m=prompt('Motif du rejet (commun aux '+sel.length+' charge(s)) :'); if(m===null) return; motif=m; }
+  else if(!confirm('Valider '+sel.length+' charge(s) pour un total de '+fcfa(tot)+' ?')) return;
+  const lots=await getAll(S.FLOCKS), now=new Date().toISOString();
+  const parExp={};
+  for(const c of sel){
+    await updRec(S.CHARGES,c.id,{...c,validation:{...c.validation,statut:rejet?'rejetee':'validee',repondantId:currentUser.id,repondantNom:currentUser.nom,dateReponse:now,commentaire:rejet?motif:(c.validation.commentaire||'')}});
+    delete finChgSel[c.id];
+    var e=c.validation.expediteurId; if(e){ (parExp[e]=parExp[e]||[]).push(c); }
+  }
+  for(const eid of Object.keys(parExp)){
+    var l=parExp[eid], t=l.reduce(function(a,c){return a+(c.montant||0);},0);
+    var convId=await msgGetOrCreateDirectConversation(parseInt(eid));
+    await envoyerMessageInterne(convId,(rejet?'❌ ':'✅ ')+l.length+' charge(s) '+(rejet?'rejetée(s)':'validée(s)')+' — Total '+Math.round(t).toLocaleString('fr-FR')+' F\n'+chgLignesMsg(l,lots)+(rejet&&motif?'\nMotif : '+motif:''));
+  }
+  toast(sel.length+' charge(s) '+(rejet?'rejetée(s)':'validée(s)')); await renderFinance(document.getElementById('contentArea'));
+};
 window.ouvrirEnvoiValidationCharge=async function(id){
+  var rs0=document.getElementById('valChargeResume'); if(rs0) rs0.style.display='none';
   const users=await getAll(S.USERS);
   const habilites=users.filter(u=>u.actif!==false&&(u.role==='admin'||u.role==='manager')&&u.id!==currentUser?.id);
   if(!habilites.length){toast('Aucune personne habilitée (admin/manager) trouvée','err');return;}
@@ -13413,6 +13543,7 @@ window.ouvrirEnvoiValidationCharge=async function(id){
   openOverlay('ovChargeValidation');
 };
 window.confirmerEnvoiValidation=async function(){
+  if(document.getElementById('valChargeId').value==='groupe') return confirmerEnvoiValidationGroupe();
   const id=parseInt(document.getElementById('valChargeId').value);
   const destId=parseInt(document.getElementById('valChargeDest').value);
   const note=document.getElementById('valChargeNote').value.trim();
@@ -14301,6 +14432,7 @@ window.exportFinanceCSV=function(fin){
   <div class="modal">
     <h3>📤 Envoyer pour validation</h3>
     <input type="hidden" id="valChargeId">
+    <div id="valChargeResume" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:10px"></div>
     <div class="form-grid">
       <div class="fg fg-full">
         <label>Personne habilitée</label>
@@ -23149,9 +23281,9 @@ async function renderSimuBande(ca){
   <div class="simu-params-panel">
     <div class="simu-params-hd" onclick="simuToggleParams()">
       <span><i class="fas fa-sliders-h" style="color:var(--g2);margin-right:7px"></i>Paramètres de simulation</span>
-      <span id="simuParamChevron" style="font-size:12px;transition:.2s">▼ Modifier</span>
+      <span id="simuParamChevron" style="font-size:12px;transition:.2s">${window._simuParamsOpen?'▲ Fermer':'▼ Modifier'}</span>
     </div>
-    <div class="simu-params-body collapsed" id="simuParamsBody">
+    <div class="simu-params-body${window._simuParamsOpen?'':' collapsed'}" id="simuParamsBody">
       <!-- Col 1 : Cheptel -->
       <div style="grid-column:1/-1;font-size:11px;font-weight:700;color:var(--g1);padding:4px 0 2px;border-bottom:1px solid var(--border);margin-bottom:4px">🐔 Cheptel & Élevage</div>
       <div class="fg">
@@ -24127,8 +24259,9 @@ function simuBuildCharts(result, p){
 window.simuToggleParams = function(){
   const body = document.getElementById('simuParamsBody');
   const chev = document.getElementById('simuParamChevron');
-  const open = body.classList.toggle('collapsed');
-  chev.textContent = !open ? '▼ Modifier' : '▲ Fermer';
+  const collapsed = body.classList.toggle('collapsed');
+  window._simuParamsOpen = !collapsed;
+  chev.textContent = collapsed ? '▼ Modifier' : '▲ Fermer';
 };
 
 window.simuToggleDetail = function(id){
@@ -24197,7 +24330,15 @@ window.simuPrefillFromLot = async function(){
   if(ca) await renderSimuBande(ca);
 };
 
+// Saisie dans les paramètres : le recalcul est différé (anti-rebond) et l'état de l'écran est conservé
+// (panneau ouvert, champ actif + curseur, défilement). Avant, chaque frappe re-rendait toute la page :
+// le panneau se refermait et le champ perdait le focus (impossible de saisir deux chiffres de suite).
+var _simuTimer=null;
 window.simuRecalc = function(){
+  clearTimeout(_simuTimer);
+  _simuTimer=setTimeout(_simuRecalcNow,400);
+};
+async function _simuRecalcNow(){
   const p = Object.assign({}, SIMU_DEFAULTS, simuGetCurrentParams());
   // Valider
   if(!p.nbBetes || p.nbBetes < 1) return;
@@ -24207,8 +24348,13 @@ window.simuRecalc = function(){
   // et reset le select — rendant le changement de type impossible.
   try{ localStorage.setItem('avico_simu_params', JSON.stringify(p)); }catch(e){}
   const ca = document.getElementById('contentArea');
-  if(ca) renderSimuBande(ca);
-};
+  if(!ca) return;
+  const ae=document.activeElement, id=(ae&&ae.id&&ae.id.indexOf('sp_')===0)?ae.id:null;
+  const scEl=document.scrollingElement, sy=scEl?scEl.scrollTop:0, cy=ca.scrollTop;
+  await renderSimuBande(ca);
+  if(scEl) scEl.scrollTop=sy; ca.scrollTop=cy;
+  if(id){ const el=document.getElementById(id); if(el){ el.focus(); if(el.tagName==='INPUT'){ const v=el.value; el.value=''; el.value=v; } } }
+}
 
 window.simuSaveParams = function(){
   const p = simuGetCurrentParams();
