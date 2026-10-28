@@ -2525,18 +2525,22 @@ function setupRealtimeSync(){
     _dashSyncChannel = null;
   }
   _dashSyncChannel = supa.channel('avico_dash_sync')
-    .on('postgres_changes', {event:'*', schema:'public', table:'avico_records', filter:'org_id=eq.'+SUPA_ORG}, ()=>{
-      invalidateGetAll();
+    .on('postgres_changes', {event:'*', schema:'public', table:'avico_records', filter:'org_id=eq.'+SUPA_ORG}, (pl)=>{
+      const st=(pl&&(pl.new&&pl.new.store||pl.old&&pl.old.store))||null;
+      invalidateGetAll(st);
+      (window._rtStores=window._rtStores||new Set()).add(st);
       clearTimeout(window._rtDebounce);
       window._rtDebounce=setTimeout(async ()=>{
+        const touched=window._rtStores; window._rtStores=new Set();
+        const msgTouched=touched.has(null)||touched.has(S.MESSAGES)||touched.has(S.CONVERSATIONS);
         lastSyncTime = new Date();
         if(curPage==='dash') await render();
         else if(curPage==='lots' && activeLotTab==='overview'){ await refreshLot(); }
-        else if(curPage==='messagerie' && typeof msgRenderSidebar==='function'){
+        else if(curPage==='messagerie' && msgTouched && typeof msgRenderSidebar==='function'){
           await msgRenderSidebar();
           if(msgState.activeConvId) await msgOuvrirConversation(msgState.activeConvId, true);
         }
-        if(typeof updateBadgeMessages==='function') await updateBadgeMessages();
+        if(msgTouched && typeof updateBadgeMessages==='function') await updateBadgeMessages();
       }, 800);
     })
     .subscribe();
@@ -2641,7 +2645,7 @@ function _getAllRaw(st){return new Promise(async res=>{
 // Perf : cache mémoire court + dédoublonnage des lectures simultanées d'un même store.
 // Invalidé à chaque écriture locale, flush de file et évènement realtime.
 const _getAllMemo=new Map(); const _GETALL_TTL=15000;
-function invalidateGetAll(){ _getAllMemo.clear(); }
+function invalidateGetAll(st){ if(st) _getAllMemo.delete(st); else _getAllMemo.clear(); }
 function getAll(st){
   const m=_getAllMemo.get(st);
   if(m && (m.p || Date.now()-m.t<_GETALL_TTL)){
@@ -2720,7 +2724,7 @@ function delRec(st,id){return new Promise(async res=>{
   catch(e){ console.warn('delRec hors-ligne :',e.message); queueOp({op:'del',store:st,id,ts:Date.now()}); toast('📶 Hors-ligne — suppression mise en attente de synchronisation','err'); res(); }
 });}
 
-['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(){ invalidateGetAll(); return f.apply(this,arguments).then(r=>{ invalidateGetAll(); return r; }); }; });
+['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(st){ invalidateGetAll(st); return f.apply(this,arguments).then(r=>{ invalidateGetAll(st); return r; }); }; });
 
 // ════════════════════════════════════════════════════════
 //  DDL SQL PRODUCTION — Supabase
@@ -7658,12 +7662,36 @@ async function envoyerMessageInterne(convId, texte){
 }
 
 // ── Badge non-lus (nav) ──
-async function updateBadgeMessages(){
-  const badge=document.getElementById('msgNavBadge'); if(!badge||!currentUser) return;
-  const [convs,msgs]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.MESSAGES)]);
-  const mesConvIds=new Set(convs.filter(c=>c.participants.includes(currentUser.id)).map(c=>c.id));
-  const nb=msgs.filter(m=>mesConvIds.has(m.conversation_id) && m.expediteur_id!==currentUser.id && !m.lu).length;
+let _badgeBusy=false, _badgeAgain=false;
+function _setBadge(nb){
+  const badge=document.getElementById('msgNavBadge'); if(!badge) return;
   if(nb>0){ badge.textContent=nb>99?'99+':nb; badge.style.display='inline-block'; } else badge.style.display='none';
+}
+async function updateBadgeMessages(){
+  if(!document.getElementById('msgNavBadge')||!currentUser) return;
+  if(_badgeBusy){ _badgeAgain=true; return; }
+  _badgeBusy=true;
+  try{
+    const convs=await getAll(S.CONVERSATIONS);
+    const ids=convs.filter(c=>c.participants.includes(currentUser.id)).map(c=>c.id);
+    if(!ids.length){ _setBadge(0); return; }
+    if(supa && navigator.onLine){
+      // Comptage côté serveur (aucun message téléchargé) ; repli sur le calcul local si erreur.
+      let q=supa.from('avico_records').select('id',{count:'exact',head:true}).eq('store',S.MESSAGES).eq('org_id',SUPA_ORG)
+        .in('data->>conversation_id',ids.map(String)).neq('data->>expediteur_id',String(currentUser.id)).eq('data->>lu','false');
+      if(_deletedAtSupported) q=q.is('deleted_at',null);
+      const {count,error}=await q;
+      if(!error && Number.isFinite(count)){
+        // + messages en attente de synchro (file hors-ligne)
+        const pend=loadQueue().filter(op=>op.op==='add'&&op.store===S.MESSAGES&&op.data&&ids.includes(op.data.conversation_id)&&op.data.expediteur_id!==currentUser.id&&!op.data.lu).length;
+        _setBadge(count+pend); return;
+      }
+    }
+    const msgs=await getAll(S.MESSAGES);
+    const set=new Set(ids);
+    _setBadge(msgs.filter(m=>set.has(m.conversation_id)&&m.expediteur_id!==currentUser.id&&!m.lu).length);
+  }catch(e){ console.warn('badge messagerie',e.message); }
+  finally{ _badgeBusy=false; if(_badgeAgain){ _badgeAgain=false; updateBadgeMessages(); } }
 }
 
 // ── Page principale ──
@@ -7754,8 +7782,10 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
   const conv=convs.find(c=>c.id===convId); if(!conv) return;
   // Marquer comme lus les messages reçus
   const aMarquer=msgs.filter(m=>m.conversation_id===convId && m.expediteur_id!==currentUser.id && !m.lu);
-  await Promise.all(aMarquer.map(m=>updRec(S.MESSAGES,m.id,{...m,lu:true})));
-  if(aMarquer.length) await updateBadgeMessages();
+  if(aMarquer.length){
+    for(let i=0;i<aMarquer.length;i+=10) await Promise.all(aMarquer.slice(i,i+10).map(m=>updRec(S.MESSAGES,m.id,{...m,lu:true})));
+    await updateBadgeMessages();
+  }
 
   let nom=conv.nom, avatarColor=msgAvatarColor(conv.id), sous='';
   if(conv.type==='direct'){
