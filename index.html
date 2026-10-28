@@ -2222,6 +2222,29 @@ h1,h2,h3,.modal h3,.page-header-title,.lot-title,.app-logo h1{font-family:var(--
 
 <script>
 // ── Utilitaires globaux (doivent être en tête de script) ──
+// ── Pagination client générique (listes longues) : pgSlice découpe, pgBar affiche la barre ──
+var _pg={}, _pgFn={};
+function pgReset(key){ if(_pg[key]) _pg[key].page=1; }
+function pgSlice(key,arr,size){
+  var st=_pg[key]=_pg[key]||{page:1,size:size||50};
+  var pages=Math.max(1,Math.ceil(arr.length/st.size)); if(st.page>pages) st.page=pages;
+  return arr.slice((st.page-1)*st.size, st.page*st.size);
+}
+function pgBar(key,total,rerender){
+  var st=_pg[key]||{page:1,size:50}; _pgFn[key]=rerender;
+  if(total<=25) return '';
+  var pages=Math.max(1,Math.ceil(total/st.size)), p=st.page;
+  var from=(p-1)*st.size+1, to=Math.min(total,p*st.size);
+  var nums=[]; for(var i=Math.max(1,p-2);i<=Math.min(pages,p+2);i++) nums.push(i);
+  var sizes=[25,50,100,200].map(function(n){return '<option value="'+n+'"'+(n===st.size?' selected':'')+'>'+n+'</option>';}).join('');
+  return '<div class="pager" style="flex-wrap:wrap"><span style="font-size:11px;color:var(--text3);margin-right:auto">'+from+'–'+to+' sur '+total+'</span>'
+    +'<button '+(p<=1?'disabled':'')+' onclick="pgGo(\''+key+'\',1)">«</button><button '+(p<=1?'disabled':'')+' onclick="pgGo(\''+key+'\','+(p-1)+')">‹</button>'
+    +nums.map(function(n){return '<button class="'+(n===p?'on':'')+'" onclick="pgGo(\''+key+'\','+n+')">'+n+'</button>';}).join('')
+    +'<button '+(p>=pages?'disabled':'')+' onclick="pgGo(\''+key+'\','+(p+1)+')">›</button><button '+(p>=pages?'disabled':'')+' onclick="pgGo(\''+key+'\','+pages+')">»</button>'
+    +'<select onchange="pgSize(\''+key+'\',this.value)" style="height:28px;border:1.5px solid var(--border);border-radius:5px;font-size:11px" title="Lignes par page">'+sizes+'</select></div>';
+}
+window.pgGo=function(key,n){ var st=_pg[key]; if(!st) return; st.page=Math.max(1,n); if(_pgFn[key]) _pgFn[key](); };
+window.pgSize=function(key,v){ var st=_pg[key]; if(!st) return; st.size=parseInt(v)||50; st.page=1; if(_pgFn[key]) _pgFn[key](); };
 function esc(s){
   return String(s||'').replace(/[&<>"']/g,function(m){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
@@ -7785,8 +7808,10 @@ async function msgRenderSidebar(){
     </div>`).join('');
 }
 
+window.msgPlus=function(){ msgState.limit=(msgState.limit||100)+100; if(msgState.activeConvId) msgOuvrirConversation(msgState.activeConvId,true); };
 window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
   msgState.activeConvId=convId;
+  if(msgState._limitConv!==convId){ msgState._limitConv=convId; msgState.limit=100; }
   const [convs,msgs,users]=await Promise.all([getAll(S.CONVERSATIONS),getAll(S.MESSAGES),getAll(S.USERS)]);
   const conv=convs.find(c=>c.id===convId); if(!conv) return;
   // Marquer comme lus les messages reçus
@@ -7806,7 +7831,8 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
     sous=conv.participants.length+' membre(s)';
   }
 
-  const cMsgs=msgs.filter(m=>m.conversation_id===convId).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const cMsgsAll=msgs.filter(m=>m.conversation_id===convId).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const cMsgs=cMsgsAll.slice(-(msgState.limit||100)), msgMasques=cMsgsAll.length-cMsgs.length; // longues conversations : seuls les derniers messages sont rendus
   let lastDateSep='';
   const bulles=cMsgs.map(m=>{
     const sender=users.find(u=>u.id===m.expediteur_id);
@@ -7825,6 +7851,7 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
       </div>`;
   }).join('');
 
+  const bullesPlus = msgMasques>0 ? `<div style="text-align:center;padding:8px"><button class="btn btn-gh btn-sm" onclick="msgPlus()">⬆ Afficher les ${Math.min(100,msgMasques)} messages précédents (${msgMasques})</button></div>` : '';
   document.getElementById('msg-chat-inner').innerHTML = `
     <div class="msg-entete">
       <div class="msg-entete-avatar ${conv.type==='groupe'?'groupe':''}" style="background:${conv.type==='groupe'?'':avatarColor}">${conv.type==='groupe'?(conv.emoji||'👥'):msgInitiales(nom)}</div>
@@ -7832,7 +7859,7 @@ window.msgOuvrirConversation=async function(convId, skipSidebarRefresh){
       <div style="flex:1"></div>
       <button class="btn btn-gh btn-sm" onclick="msgVoirInfos()" title="Infos"><i class="fas fa-info-circle"></i></button>
     </div>
-    <div id="messages-liste" class="msg-messages">${bulles || '<div class="msg-empty">Aucun message. Dites bonjour 👋</div>'}</div>
+    <div id="messages-liste" class="msg-messages">${bullesPlus}${bulles || '<div class="msg-empty">Aucun message. Dites bonjour 👋</div>'}</div>
     <div class="msg-composer">
       <div class="msg-composer-inner">
         <textarea id="message-input" class="msg-textarea" placeholder="Écrivez votre message... (Entrée = envoyer)"
@@ -10164,14 +10191,8 @@ window.envoyerCommandeWhatsApp=async function(id){
 };
 
 // ══ COMMANDES CLIENTS ══
-async function renderCommandes(ca){
-  const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
-  const sorted=sales.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const totalCA=sales.filter(s=>s.statut==='paid').reduce((a,s)=>a+(s.totalHT||0),0);
-  const enCours=sales.filter(s=>s.statut==='confirmed'||s.statut==='delivered').reduce((a,s)=>a+(s.totalHT||0),0);
-  const enAttente=sales.filter(s=>s.statut==='pending').length;
-  const clientOpts=clients.map(c=>`<option value="${c.id}">${esc(c.nom)}</option>`).join('');
-  const rows=sorted.map(s=>{
+function cmdRowsHtml(list,clients){
+  return list.map(s=>{
     const c=clients.find(x=>x.id===s.clientId);
     return `<tr>
       <td><strong>${s.ref||'—'}</strong><div style="font-size:10px;color:var(--text3)">${s.date||'—'}</div></td>
@@ -10195,6 +10216,25 @@ async function renderCommandes(ca){
       </td>
     </tr>`;
   }).join('');
+}
+let cmdFiltreClient='';
+async function renderCmdTable(){
+  const[sales,clients]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS)]);
+  const filtered=cmdFiltreClient?sales.filter(x=>x.clientId===parseInt(cmdFiltreClient)):sales;
+  const sorted=filtered.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const tb=document.getElementById('cmdTbody'); if(!tb) return;
+  tb.innerHTML=cmdRowsHtml(pgSlice('cmd',sorted,25),clients)||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">'+(cmdFiltreClient?'Aucune commande pour ce client.':'Aucune commande enregistrée.')+'</td></tr>';
+  const pg=document.getElementById('cmdPager'); if(pg) pg.innerHTML=pgBar('cmd',sorted.length,renderCmdTable);
+  const hd=document.getElementById('cmdCount'); if(hd) hd.textContent=sorted.length;
+}
+async function renderCommandes(ca){
+  const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
+  const sorted=(cmdFiltreClient?sales.filter(x=>x.clientId===parseInt(cmdFiltreClient)):sales).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const totalCA=sales.filter(s=>s.statut==='paid').reduce((a,s)=>a+(s.totalHT||0),0);
+  const enCours=sales.filter(s=>s.statut==='confirmed'||s.statut==='delivered').reduce((a,s)=>a+(s.totalHT||0),0);
+  const enAttente=sales.filter(s=>s.statut==='pending').length;
+  const clientOpts=clients.map(c=>`<option value="${c.id}"${String(c.id)===cmdFiltreClient?' selected':''}>${esc(c.nom)}</option>`).join('');
+  const rows=cmdRowsHtml(pgSlice('cmd',sorted,25),clients);
   const stockPFHtml = await buildStockPFTableHtml();
   ca.innerHTML=`
     <div class="page-header">
@@ -10217,47 +10257,19 @@ async function renderCommandes(ca){
         <div class="kpi kpi-g"><div class="kpi-lbl">Clients actifs</div><div class="kpi-val">${clients.length}</div><div class="kpi-sub">enregistrés</div></div>
       </div>
       <div class="card" id="cmdTableCard">
-        <div class="card-hd"><span>📋 Historique des commandes (${sorted.length})</span></div>
+        <div class="card-hd"><span>📋 Historique des commandes (<span id="cmdCount">${sorted.length}</span>)</span></div>
         <div class="card-bd tbl-wrap">
           <table class="tbl" id="cmdTable">
             <thead><tr><th>Référence</th><th>Client</th><th>Produits</th><th>Lignes</th><th>Montant HT</th><th>Statut</th><th>Paiement</th><th>Actions</th></tr></thead>
             <tbody id="cmdTbody">${rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">Aucune commande enregistrée.<br><button class="btn btn-p" style="margin-top:12px" onclick="openSaleModal()"><i class="fas fa-plus"></i> Créer la 1ère commande</button></td></tr>'}</tbody>
           </table>
+          <div id="cmdPager">${pgBar('cmd',sorted.length,renderCmdTable)}</div>
         </div>
       </div>
     </div>`;
 }
 
-window.filterCommandes=async function(clientId){
-  const[sales,clients,prods]=await Promise.all([getAll(S.SALES),getAll(S.CLIENTS),getAll(S.PRODUITS)]);
-  const filtered=clientId?sales.filter(s=>s.clientId===parseInt(clientId)):sales;
-  const sorted=filtered.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const rows=sorted.map(s=>{
-    const c=clients.find(x=>x.id===s.clientId);
-    return `<tr>
-      <td><strong>${s.ref||'—'}</strong><div style="font-size:10px;color:var(--text3)">${s.date||'—'}</div></td>
-      <td>${c?`<strong>${esc(c.nom)}</strong><div style="font-size:10px;color:var(--text3)">${c.ville||''}</div>`:'—'}</td>
-      <td style="font-size:11px">${s.lignes&&s.lignes.length?s.lignes.slice(0,2).map(function(l){return '<div>'+esc(l.designation||'')+'</div>';}).join('')+(s.lignes.length>2?'<div style="color:var(--text3)">+'+( s.lignes.length-2)+' autres</div>':''):'—'}</td>
-      <td style="font-weight:700;text-align:center">${s.lignes?s.lignes.length:1}</td>
-      <td style="font-weight:700;color:var(--g2)">${(s.totalHT||0).toLocaleString()} F</td>
-      <td><span class="badge ${SALE_STATUT_CSS[s.statut]||'b-gr'}">${SALE_STATUT_LABEL[s.statut]||s.statut}</span></td>
-      <td style="color:var(--text3);font-size:11px">${PAIE_MODE_LABEL[s.paie]||s.paie||'—'}${s.dateEcheance?`<div style="font-size:10px;color:#5b21b6">Ech. ${s.dateEcheance}</div>`:''}</td>
-      <td style="white-space:nowrap">
-        ${s.statut==='pending'?`<button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'confirmed')" title="Confirmer"><i class="fas fa-check"></i></button> `:''}
-        ${s.statut==='confirmed'?`<button class="btn btn-sm btn-a" onclick="livrerVente(${s.id})" title="Livrer + BL"><i class="fas fa-truck"></i></button> `:''}
-        ${s.statut==='delivered'?`<button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6" onclick="facturerVente(${s.id})" title="Facturer (paiement différé)"><i class="fas fa-file-invoice"></i></button> <button class="btn btn-sm btn-p" onclick="changeSaleStatut(${s.id},'paid')" title="Payé comptant"><i class="fas fa-money-bill"></i></button> `:''}
-        ${s.statut==='invoiced'?`<button class="btn btn-sm btn-p" onclick="openEncaisserModal(${s.id})" title="Encaisser"><i class="fas fa-money-bill-wave"></i></button> `:''}
-        ${(s.statut==='delivered'||s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printBL(${s.id})" title="BL"><i class="fas fa-file-alt"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?`<button class="btn btn-sm btn-gh" onclick="printFacture(${s.id})" title="Facture"><i class="fas fa-print"></i></button> `:''}
-        ${(s.statut==='invoiced'||s.statut==='paid')?(s.fneReference?`<button class="btn btn-sm" style="background:#dcfce7;color:#166534" onclick="window.open('${s.fneToken||''}','_blank')" title="Certifiée FNE — ${s.fneReference}"><i class="fas fa-check-double"></i></button> <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b" onclick="openFneAvoirModal(${s.id})" title="Émettre un avoir FNE"><i class="fas fa-rotate-left"></i></button> `:`<button class="btn btn-sm" style="background:#fff3e0;color:#b45309" onclick="openFneSendModal('sale',${s.id})" title="Télédéclarer FNE"><i class="fas fa-stamp"></i></button> `):''}
-        <button class="btn btn-sm btn-gh" onclick="openSaleModal(${s.id})"><i class="fas fa-edit"></i></button>
-        ${canDelete('commandes')?`<button class="btn-del" onclick="delSale(${s.id})"><i class="fas fa-trash"></i></button>`:''}
-      </td>
-    </tr>`;
-  }).join('');
-  const tbody=document.getElementById('cmdTbody');
-  if(tbody) tbody.innerHTML=rows||'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucune commande pour ce client.</td></tr>';
-};
+window.filterCommandes=async function(clientId){ cmdFiltreClient=clientId||''; pgReset('cmd'); await renderCmdTable(); };
 
 
 // ════════════════════════════════════════════════════════════════════════
@@ -12902,7 +12914,7 @@ window.ouvrirEtatCaisse=async function(){
   comptaTab='grandlivre'; comptaCompteSel='571';
   await renderCompta(document.getElementById('contentArea'));
 };
-window.switchComptaTab=async function(t){ comptaTab=t; document.querySelectorAll('#comptaTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchComptaTab('${t}')`)); await renderComptaTab(); };
+window.switchComptaTab=async function(t){ comptaTab=t; pgReset('cptjournal'); pgReset('cptgl'); document.querySelectorAll('#comptaTabNav .tab-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('onclick')===`switchComptaTab('${t}')`)); await renderComptaTab(); };
 async function renderComptaTab(){
   const el=comptaCA(); if(!el) return;
   if(comptaTab==='journal') await renderComptaJournal(el);
@@ -12921,6 +12933,7 @@ function comptaFiltreBar(showCompte){
   </div></div>`;
 }
 window.comptaMajFiltre=function(){
+  pgReset('cptjournal'); pgReset('cptgl');
   comptaDateMin=document.getElementById('comptaDateMinInp')?.value||null;
   comptaDateMax=document.getElementById('comptaDateMaxInp')?.value||null;
   const cSel=document.getElementById('comptaCompteInp'); if(cSel) comptaCompteSel=cSel.value;
@@ -12934,7 +12947,7 @@ async function renderComptaJournal(el){
   const ecr=(await getAll(S.ECRITURES)).filter(e=>e.date>=dateMin && e.date<=dateMax).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.ts||0)-(b.ts||0));
   const totDebit=ecr.reduce((a,e)=>a+e.lignes.reduce((s,l)=>s+(l.debit||0),0),0);
   const totCredit=ecr.reduce((a,e)=>a+e.lignes.reduce((s,l)=>s+(l.credit||0),0),0);
-  const rows=ecr.map(e=>e.lignes.map((l,i)=>`<tr>
+  const rows=pgSlice('cptjournal',ecr,50).map(e=>e.lignes.map((l,i)=>`<tr>
     ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px;color:var(--text3)">${e.date}<br><strong>${esc(e.piece)}</strong></td>`:''}
     ${i===0?`<td rowspan="${e.lignes.length}" style="font-size:10px"><span class="badge b-bl">${e.journal}</span></td>`:''}
     <td style="font-size:11px">${l.compte} — ${esc(l.libelle||PLAN_COMPTABLE[l.compte]?.lbl||'')}</td>
@@ -12951,7 +12964,7 @@ async function renderComptaJournal(el){
   </div>
   <div class="card"><div class="card-hd">Journal général (${dateMin} au ${dateMax})</div><div class="card-bd tbl-wrap"><table class="tbl">
     <thead><tr><th>Date/Pièce</th><th>Journal</th><th>Compte</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th>Libellé</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Aucune écriture sur cette période</td></tr>'}</tbody></table></div></div>`;
+    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">Aucune écriture sur cette période</td></tr>'}</tbody></table>${pgBar('cptjournal',ecr.length,()=>renderComptaJournal(el))}</div></div>`;
 }
 
 // ── Grand Livre (par compte) ──
@@ -12965,12 +12978,13 @@ async function renderComptaGrandLivre(el){
     ecr.forEach(e=>e.lignes.forEach(l=>{ if(l.compte===comptaCompteSel) lignes.push({date:e.date,piece:e.piece,libelle:l.libelle||e.libelle,debit:l.debit||0,credit:l.credit||0,tiersNom:l.tiersNom}); }));
     lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
     let solde=0;
-    const rows=lignes.map(l=>{ solde+=l.debit-l.credit; return `<tr><td>${l.date}</td><td>${esc(l.piece)}</td><td style="font-size:11px">${esc(l.libelle)}${l.tiersNom?' — '+esc(l.tiersNom):''}</td><td style="text-align:right">${l.debit?fcfa(l.debit):''}</td><td style="text-align:right">${l.credit?fcfa(l.credit):''}</td><td style="text-align:right;font-weight:700">${fcfa(solde)}</td></tr>`; }).join('');
+    const rowsAll=lignes.map(l=>{ solde+=l.debit-l.credit; return `<tr><td>${l.date}</td><td>${esc(l.piece)}</td><td style="font-size:11px">${esc(l.libelle)}${l.tiersNom?' — '+esc(l.tiersNom):''}</td><td style="text-align:right">${l.debit?fcfa(l.debit):''}</td><td style="text-align:right">${l.credit?fcfa(l.credit):''}</td><td style="text-align:right;font-weight:700">${fcfa(solde)}</td></tr>`; });
+    const rows=pgSlice('cptgl',rowsAll,100).join('');
     const totDebit=lignes.reduce((a,l)=>a+l.debit,0), totCredit=lignes.reduce((a,l)=>a+l.credit,0);
     corps=`<div class="card"><div class="card-hd">${comptaCompteSel} — ${PLAN_COMPTABLE[comptaCompteSel]?.lbl||''} — Solde : <span style="color:${solde>=0?'var(--g2)':'var(--red)'}">${fcfa(solde)}</span></div><div class="card-bd tbl-wrap"><table class="tbl">
       <thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th style="text-align:right">Débit</th><th style="text-align:right">Crédit</th><th style="text-align:right">Solde progressif</th></tr></thead>
       <tbody>${rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Aucun mouvement</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="3">TOTAL</td><td style="text-align:right">${fcfa(totDebit)}</td><td style="text-align:right">${fcfa(totCredit)}</td><td></td></tr></tfoot></table></div></div>`;
+      <tfoot><tr><td colspan="3">TOTAL</td><td style="text-align:right">${fcfa(totDebit)}</td><td style="text-align:right">${fcfa(totCredit)}</td><td></td></tr></tfoot></table>${pgBar('cptgl',rowsAll.length,()=>renderComptaGrandLivre(el))}</div></div>`;
   } else {
     corps=`<div class="card"><div class="card-bd" style="text-align:center;color:var(--text3);padding:30px">Sélectionnez un compte pour afficher son grand livre.</div></div>`;
   }
@@ -13329,10 +13343,11 @@ function renderFinCR(el,fin){
 async function renderFinCharges(el,fin){
   var lots=await getAll(S.FLOCKS);
   var charges=await getAll(S.CHARGES);
-  charges.sort(function(a,b){return b.ts-a.ts;});
+  charges.sort(function(a,b){return (b.ts||0)-(a.ts||0);});
+  var chF=charges.filter(function(c){return (!finChgLot||String(c.flockId||'')===finChgLot)&&(!finChgCat||(c.categorie||'')===finChgCat);});
   var lm={};
   lots.forEach(function(l){lm[l.id]=l.nom||'Lot '+l.id;});
-  var rows=charges.map(function(c){
+  var rows=pgSlice('fincharges',chF,50).map(function(c){
     var v=c.validation;
     var vBadge=!v?'<span style="color:var(--text3);font-size:10px">—</span>'
       :v.statut==='attente'?'<span class="badge b-a" style="font-size:9px" title="Envoyée à '+esc(v.destinataireNom||'')+'">⏳ Attente</span>'
@@ -13359,8 +13374,8 @@ async function renderFinCharges(el,fin){
       +'<td>'+vBadge+'</td>'
       +'<td style="white-space:nowrap">'+actions+'</td></tr>';
   }).join('');
-  var lo=lots.map(function(l){return '<option value="'+l.id+'">'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
-  var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'">'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
+  var lo=lots.map(function(l){return '<option value="'+l.id+'"'+(String(l.id)===finChgLot?' selected':'')+'>'+esc(l.nom||'Lot '+l.id)+'</option>';}).join('');
+  var co=Object.entries(CAT_LABELS).map(function(e){return '<option value="'+e[0]+'"'+(e[0]===finChgCat?' selected':'')+'>'+(CAT_ICONS[e[0]]||'')+' '+e[1]+'</option>';}).join('');
   var synth=Object.entries(fin.chargesGlobCat).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];}).map(function(e){
     return '<div style="background:#f8f8f8;border-radius:8px;padding:10px;text-align:center;border-left:4px solid '+(CAT_COLORS[e[0]]||'#888')+'">'
       +'<div style="font-size:18px;margin-bottom:2px">'+(CAT_ICONS[e[0]]||'📦')+'</div>'
@@ -13368,15 +13383,17 @@ async function renderFinCharges(el,fin){
       +'<div style="font-size:14px;font-weight:700;margin-top:3px">'+fcfa(e[1])+'</div>'
       +'<div style="font-size:10px;color:var(--text3)">'+pctFin(e[1],fin.totalCharges)+'</div></div>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+charges.length+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div style="font-size:13px;font-weight:700">📉 Charges ('+(chF.length===charges.length?charges.length:chF.length+' / '+charges.length)+')</div><div style="display:flex;gap:6px"><button class="btn btn-sm btn-gh" onclick="printChargesEtat(true)"><i class="fas fa-eye"></i> Aperçu</button><button class="btn btn-sm btn-gh" onclick="printChargesEtat()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:#25D366;color:#fff" onclick="envoyerChargesEtatWhatsApp()"><i class="fab fa-whatsapp"></i></button><button class="btn btn-p btn-sm" onclick="openChargeManuelle()"><i class="fas fa-plus"></i> Nouvelle charge</button></div></div>'
     +'<div style="display:flex;gap:8px;margin-bottom:12px"><select id="filtreChargeLot" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Tous les lots</option>'+lo+'</select><select id="filtreChargeCat" onchange="filtrerCharges()" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--border);font-size:12px"><option value="">Toutes categories</option>'+co+'</select></div>'
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Lot</th><th>Cat.</th><th>Libelle</th><th>Qte</th><th>Unite</th><th>P.U.</th><th>Montant</th><th>Validation</th><th></th></tr></thead><tbody id="tbodyCharges">'+rows+'</tbody></table>'+pgBar('fincharges',chF.length,function(){renderFinCharges(el,fin);})+(charges.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucune charge. Cliquez + Nouvelle charge.</div>')+'</div></div>'
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
+var finChgLot='', finChgCat='';
 window.filtrerCharges=function(){
-  var lf=document.getElementById('filtreChargeLot')?.value;
-  var cf=document.getElementById('filtreChargeCat')?.value;
-  document.querySelectorAll('#tbodyCharges tr').forEach(function(tr){tr.style.display=(!lf||tr.dataset.lot===lf)&&(!cf||tr.dataset.cat===cf)?'':'none';});
+  finChgLot=document.getElementById('filtreChargeLot')?.value||'';
+  finChgCat=document.getElementById('filtreChargeCat')?.value||'';
+  pgReset('fincharges');
+  renderFinCharges(document.getElementById('finTabContent'),window._fin);
 };
 window.deleteCharge=async function(id){
   const charges=await getAll(S.CHARGES);const c=charges.find(x=>x.id===id);
@@ -13579,12 +13596,15 @@ window.regulariserTreso=async function(){
   toast('✅ Trésorerie régularisée'); await renderFinance(document.getElementById('contentArea'));
 };
 function renderFinTreso(el,fin){
+  if(finCharts.treso){ try{finCharts.treso.destroy();}catch(e){} delete finCharts.treso; }
   var treso=fin.tresoData.slice().sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
   var moisMap={};
   treso.forEach(function(t){var m=(t.date||'').slice(0,7);if(!moisMap[m]) moisMap[m]={entree:0,sortie:0};moisMap[m][t.type]=(moisMap[m][t.type]||0)+(t.montant||0);});
   var mk=Object.keys(moisMap).sort();
-  var sol=0;
-  var rows=treso.map(function(t){sol+=t.type==='entree'?(t.montant||0):-(t.montant||0);return '<tr><td>'+(t.date||'—')+'</td><td><span class="badge '+(t.type==='entree'?'b-g':'b-r')+'">'+(t.type==='entree'?'📥 Encaiss.':'📤 Decaiss.')+'</span></td><td><span class="badge b-gr">'+esc(t.categorie||'—')+'</span></td><td>'+esc(t.libelle||'')+'</td><td style="color:var(--text3);font-size:11px">'+esc(t.ref||'—')+'</td><td style="font-weight:700;color:'+(t.type==='entree'?'#059669':'var(--red)')+'">'+( t.type==='entree'?'+':'−')+fcfa(t.montant)+'</td><td style="font-weight:600;color:'+(sol>=0?'#059669':'var(--red)')+';font-size:11px">'+(sol>=0?'+':'')+fcfa(sol)+'</td><td><button class="btn-del" onclick="deleteTreso('+t.id+')">✕</button></td></tr>';}).join('');
+  // Solde cumulé calculé dans l'ordre CHRONOLOGIQUE (avant : cumul sur la liste triée du plus récent au plus ancien ⇒ faux).
+  var soldeAu={}, cum=0;
+  treso.slice().sort(function(a,b){return (a.date||'').localeCompare(b.date||'')||(a.ts||0)-(b.ts||0);}).forEach(function(t){cum+=t.type==='entree'?(t.montant||0):-(t.montant||0);soldeAu[t.id]=cum;});
+  var rows=pgSlice('fintreso',treso,50).map(function(t){var sol=soldeAu[t.id];return '<tr><td>'+(t.date||'—')+'</td><td><span class="badge '+(t.type==='entree'?'b-g':'b-r')+'">'+(t.type==='entree'?'📥 Encaiss.':'📤 Decaiss.')+'</span></td><td><span class="badge b-gr">'+esc(t.categorie||'—')+'</span></td><td>'+esc(t.libelle||'')+'</td><td style="color:var(--text3);font-size:11px">'+esc(t.ref||'—')+'</td><td style="font-weight:700;color:'+(t.type==='entree'?'#059669':'var(--red)')+'">'+( t.type==='entree'?'+':'−')+fcfa(t.montant)+'</td><td style="font-weight:600;color:'+(sol>=0?'#059669':'var(--red)')+';font-size:11px">'+(sol>=0?'+':'')+fcfa(sol)+'</td><td><button class="btn-del" onclick="deleteTreso('+t.id+')">✕</button></td></tr>';}).join('');
 
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700">💵 Tresorerie ('+treso.length+')</div><div style="display:flex;gap:6px">'+(function(){var n=nonRapproches(fin);return n.nbCh+n.nbVe>0?'<button class="btn btn-sm btn-a" title="Charges payées et ventes comptant absentes de la trésorerie" onclick="regulariserTreso()"><i class="fas fa-link"></i> Régulariser ('+(n.nbCh+n.nbVe)+')</button>':'';})()+'<button class="btn btn-p btn-sm" onclick="openTresoModal()"><i class="fas fa-plus"></i> Nouveau</button></div></div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">'
@@ -13592,7 +13612,7 @@ function renderFinTreso(el,fin){
     +'<div class="kpi kpi-r"><div class="kpi-lbl">Decaissements</div><div class="kpi-val" style="font-size:15px;color:var(--red)">'+fcfa(fin.decaissements)+'</div></div>'
     +'<div class="kpi '+(fin.soldeTreso>=0?'kpi-b':'kpi-r')+'"><div class="kpi-lbl">Solde net</div><div class="kpi-val" style="font-size:15px;color:'+colorMarge(fin.soldeTreso)+'">'+(fin.soldeTreso>=0?'+':'')+fcfa(fin.soldeTreso)+'</div></div></div>'
     +(mk.length?'<div class="card" style="margin-bottom:14px"><div class="card-hd">📈 Flux mensuels</div><div class="card-bd" style="position:relative;height:160px"><canvas id="finChartTreso"></canvas></div></div>':'')
-    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Type</th><th>Cat.</th><th>Libelle</th><th>Ref.</th><th>Montant</th><th>Solde cumule</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+(treso.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucun mouvement.</div>')+'</div></div>';
+    +'<div class="card"><div class="card-bd tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Type</th><th>Cat.</th><th>Libelle</th><th>Ref.</th><th>Montant</th><th>Solde cumule</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'+pgBar('fintreso',treso.length,function(){renderFinTreso(el,fin);})+(treso.length?'':'<div style="text-align:center;padding:30px;color:var(--text3)">Aucun mouvement.</div>')+'</div></div>';
 
   var ctxT=document.getElementById('finChartTreso');
   if(ctxT&&mk.length) finCharts.treso=new Chart(ctxT,{type:'bar',data:{labels:mk,datasets:[{label:'Encaissements',data:mk.map(function(m){return moisMap[m].entree||0;}),backgroundColor:'#52b78888',borderColor:'#2d6a4f',borderWidth:2},{label:'Decaissements',data:mk.map(function(m){return -(moisMap[m].sortie||0);}),backgroundColor:'#c1121f88',borderColor:'#c1121f',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:12}}},scales:{y:{ticks:{callback:function(v){return (Math.abs(v)/1000).toFixed(0)+'K';},font:{size:10}}},x:{ticks:{font:{size:10}}}}}});
