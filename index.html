@@ -3342,26 +3342,31 @@ const PLAN_COMPTABLE = {
   '6222':{lbl:'Transport',classe:6},
   '6224':{lbl:'Entretien, réparations',classe:6},
   '628':{lbl:'Charges diverses',classe:6},
-  '6410':{lbl:'Charges de personnel — salaires',classe:6},
-  '6411':{lbl:'Charges sociales patronales',classe:6},
+  // Charges de personnel : classe 66 (SYSCOHADA révisé). 6611 = appointements, salaires et commissions ; 6641 = charges sociales sur rémunérations du personnel national.
+  '6611':{lbl:'Appointements, salaires et commissions',classe:6},
+  '6641':{lbl:'Charges sociales sur rémunérations du personnel national',classe:6},
+  // Anciens comptes (non conformes : 64 = impôts et taxes) — conservés pour lire l'historique, à migrer (Comptabilité → bandeau « Migrer »).
+  '6410':{lbl:'[ancien] Salaires — à migrer vers 6611',classe:6,legacy:true,vers:'6611'},
+  '6411':{lbl:'[ancien] Charges sociales — à migrer vers 6641',classe:6,legacy:true,vers:'6641'},
   '6813':{lbl:'Dotations aux amortissements',classe:6},
   '701':{lbl:'Ventes — produits avicoles',classe:7},
   '758':{lbl:'Autres produits divers (subventions, primes)',classe:7},
   '162':{lbl:'Emprunts',classe:1},
   '101':{lbl:'Capital — apport',classe:1},
   '622':{lbl:'Locations (loyer/bail)',classe:6},
-  '646':{lbl:'Impôts et taxes',classe:6},
+  '6418':{lbl:'Autres impôts et taxes directs',classe:6},
+  '646':{lbl:'Droits d\'enregistrement',classe:6},
 };
 // Suggestion de compte par défaut selon la catégorie de trésorerie manuelle (Papi peut corriger
 // avant de valider — c'est une proposition, pas une affectation automatique silencieuse).
 const COMPTE_SUGGERE_PAR_CAT_TRESO = {
   vente:'701', subvention:'758', pret:'162', apport:'101',
-  achat:'601', salaire:'6410', loyer:'622', charge_fixe:'628', impot:'646', autre:'628'
+  achat:'601', salaire:'6611', loyer:'622', charge_fixe:'628', impot:'6418', autre:'628'
 };
 // Catégorie de charge (module Finance/Charges, CAT_LABELS) → compte OHADA
 const COMPTE_PAR_CATEGORIE = {
   poussin:'6011', aliment:'6013', medicament:'6015', eau:'6051',
-  main_oeuvre:'6410', energie:'6052', amortissement:'6813',
+  main_oeuvre:'6611', energie:'6052', amortissement:'6813',
   entretien:'6224', transport:'6222', assurance:'6161', autre:'628'
 };
 
@@ -9497,9 +9502,9 @@ window.genererBulletinsDuMois=async function(){
     try{
       await annulerEcritures('PAIE-'+periode);
       const lignes=[
-        {compte:'6410', libelle:'Salaires bruts', debit:Math.round(sBrut), credit:0},
+        {compte:'6611', libelle:'Salaires bruts', debit:Math.round(sBrut), credit:0},
       ];
-      if(sCnpsEmpl+sCmuEmpl>0) lignes.push({compte:'6411', libelle:'Charges sociales patronales', debit:Math.round(sCnpsEmpl+sCmuEmpl), credit:0});
+      if(sCnpsEmpl+sCmuEmpl>0) lignes.push({compte:'6641', libelle:'Charges sociales patronales', debit:Math.round(sCnpsEmpl+sCmuEmpl), credit:0});
       lignes.push({compte:'422', libelle:'Personnel — net à payer', debit:0, credit:Math.round(sNet)});
       if(sCnpsSal+sCnpsEmpl>0) lignes.push({compte:'4311', libelle:'CNPS à reverser', debit:0, credit:Math.round(sCnpsSal+sCnpsEmpl)});
       if(sIts>0) lignes.push({compte:'4471', libelle:'ITS à reverser', debit:0, credit:Math.round(sIts)});
@@ -12907,8 +12912,26 @@ async function computeFinanceGlobale(){
 // ══════════════════════════════════════════════════════
 let comptaTab='journal', comptaDateMin=null, comptaDateMax=null, comptaCompteSel='';
 function comptaCA(){ return document.getElementById('comptaTabContent') || document.getElementById('contentArea'); }
+// Migration des écritures existantes vers les comptes de personnel de classe 66 (6410→6611, 6411→6641). Idempotente.
+async function ecrituresAncienComptesPersonnel(){
+  const ecr=await getAll(S.ECRITURES);
+  return ecr.filter(e=>(e.lignes||[]).some(l=>PLAN_COMPTABLE[l.compte]&&PLAN_COMPTABLE[l.compte].legacy));
+}
+window.migrerComptesPersonnel66=async function(){
+  const liste=await ecrituresAncienComptesPersonnel();
+  if(!liste.length){ toast('Aucune écriture à migrer'); return; }
+  let nl=0; liste.forEach(e=>e.lignes.forEach(l=>{ if(PLAN_COMPTABLE[l.compte]&&PLAN_COMPTABLE[l.compte].legacy) nl++; }));
+  if(!confirm('Migrer '+liste.length+' écriture(s) ('+nl+' ligne(s)) vers les comptes de classe 66 ?\n\n• 6410 Salaires → 6611\n• 6411 Charges sociales patronales → 6641\n\nMontants, dates et équilibre débit/crédit inchangés. Faites une sauvegarde avant (Paramétrage → Sauvegarde).')) return;
+  for(const e of liste){
+    const lignes=e.lignes.map(l=>{ const pc=PLAN_COMPTABLE[l.compte]; if(pc&&pc.legacy){ const nv=pc.vers; return Object.assign({},l,{compte:nv,libelle:(!l.libelle||/^\[ancien\]/.test(l.libelle)||l.libelle===pc.lbl)?PLAN_COMPTABLE[nv].lbl:l.libelle}); } return l; });
+    await updRec(S.ECRITURES,e.id,Object.assign({},e,{lignes:lignes,migre66:true}));
+  }
+  toast('✅ '+liste.length+' écriture(s) migrée(s) en classe 66');
+  await renderCompta(document.getElementById('contentArea'));
+};
 async function renderCompta(ca){
   const nbEnAttente = (await getTresorerieNonVentilee()).length;
+  const nbAnciens = (await ecrituresAncienComptesPersonnel()).length;
   const tabs=[
     {id:'journal',    icon:'fa-list',          label:'Journal général'},
     {id:'grandlivre', icon:'fa-book-open',     label:'Grand Livre'},
@@ -12920,6 +12943,7 @@ async function renderCompta(ca){
   ca.innerHTML=`
     <div class="page-header"><div class="page-header-title"><i class="fas fa-book" style="color:var(--g2)"></i> Comptabilité SYSCOHADA</div><button class="btn btn-gh btn-sm" onclick="ouvrirEtatCaisse()"><i class="fas fa-cash-register"></i> État de caisse</button></div>
     <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:var(--amber-d)">⚠️ Plan comptable simplifié généré automatiquement depuis l'activité de l'ERP — à faire valider par un expert-comptable avant toute déclaration officielle ou clôture d'exercice.</div>
+    ${nbAnciens?`<div style="background:#fef2f2;border:1.5px solid var(--red);border-radius:8px;padding:9px 14px;margin-bottom:12px;font-size:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="flex:1">⚠️ <strong>${nbAnciens} écriture(s)</strong> utilisent les anciens comptes de personnel <strong>6410 / 6411</strong>. En SYSCOHADA, les charges de personnel relèvent de la <strong>classe 66</strong> (6611 salaires, 6641 charges sociales).</span><button class="btn btn-sm btn-p" onclick="migrerComptesPersonnel66()"><i class="fas fa-right-left"></i> Migrer vers la classe 66</button></div>`:''}
     <div class="tab-nav" id="comptaTabNav">${tabNav}</div>
     <div id="comptaTabContent" class="stock-page"></div>`;
   await renderComptaTab();
@@ -13085,7 +13109,7 @@ async function renderComptaVentilation(el){
   const total = enAttente.reduce((a,t)=>a+(t.montant||0),0);
   const rows = enAttente.map(t=>{
     const compteSuggere = COMPTE_PAR_CATEGORIE[t.categorie] || COMPTE_SUGGERE_PAR_CAT_TRESO[t.categorie] || '628';
-    const optsComptes = Object.entries(PLAN_COMPTABLE).map(([n,c])=>`<option value="${n}" ${n===compteSuggere?'selected':''}>${n} — ${c.lbl}</option>`).join('');
+    const optsComptes = Object.entries(PLAN_COMPTABLE).filter(([n,c])=>!c.legacy).map(([n,c])=>`<option value="${n}" ${n===compteSuggere?'selected':''}>${n} — ${c.lbl}</option>`).join('');
     return `<tr id="ventRow${t.id}">
       <td><input type="checkbox" class="ventChk" value="${t.id}"></td>
       <td>${t.date||'—'}</td>
@@ -13347,14 +13371,14 @@ function renderFinCR(el,fin){
   if(cATotal>0) ch.push({label:'Achats aliment',montant:cATotal,cl:'60'});
   Object.entries(fin.chargesGlobCat).forEach(function(e){
     if(['poussin','aliment'].indexOf(e[0])>=0||e[1]<=0) return;
-    ch.push({label:CAT_LABELS[e[0]]||e[0],montant:e[1],cl:e[0]==='main_oeuvre'?'64':e[0]==='amortissement'?'68':'65'});
+    ch.push({label:CAT_LABELS[e[0]]||e[0],montant:e[1],cl:e[0]==='main_oeuvre'?'66':e[0]==='amortissement'?'68':'65'});
   });
   ch=ch.filter(function(c){return c.montant>0;}).sort(function(a,b){return b.montant-a.montant;});
   var tCA=fin.totalRecettes;
   var tConso=ch.filter(function(c){return c.cl==='60';}).reduce(function(a,c){return a+c.montant;},0);
   var mb=tCA-tConso;
   var tExt=ch.filter(function(c){return c.cl==='65';}).reduce(function(a,c){return a+c.montant;},0);
-  var tRH=ch.filter(function(c){return c.cl==='64';}).reduce(function(a,c){return a+c.montant;},0);
+  var tRH=ch.filter(function(c){return c.cl==='66';}).reduce(function(a,c){return a+c.montant;},0);
   var tAm=ch.filter(function(c){return c.cl==='68';}).reduce(function(a,c){return a+c.montant;},0);
   var va=mb-tExt, ebe=va-tRH, rex=ebe-tAm;
   var chRows=ch.map(function(c){return '<div style="display:flex;justify-content:space-between;padding:6px 12px;border-bottom:1px solid var(--border);font-size:12px"><span style="color:var(--text2)">'+esc(c.label)+'</span><span style="font-weight:600">'+fcfa(c.montant)+'</span></div>';}).join('');
