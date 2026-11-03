@@ -3356,6 +3356,9 @@ const PLAN_COMPTABLE = {
   '758':{lbl:'Autres produits divers (subventions, primes)',classe:7},
   '162':{lbl:'Emprunts',classe:1},
   '168':{lbl:'Autres emprunts et dettes (financement investisseurs)',classe:1},
+  '419':{lbl:'Clients créditeurs — avances et acomptes reçus (avances sur ventes d\'œufs)',classe:4},
+  '658':{lbl:'Charges diverses de gestion courante (participation à la production)',classe:6},
+  '709':{lbl:'Rabais, remises et ristournes accordés (prime d\'avance en œufs)',classe:7},
   '627':{lbl:'Services bancaires et assimilés (frais de dossier)',classe:6},
   '671':{lbl:'Intérêts des emprunts',classe:6},
   '4478':{lbl:'État — impôts retenus à la source (IRC sur intérêts)',classe:4},
@@ -24627,9 +24630,16 @@ const FIN_MODES = {
 };
 const FIN_SEM_PONTE_DEBUT = 19;      // 1re semaine de ponte : coûts d'élevage avant S19 = actif biologique immobilisé
 const FIN_IMMO_CAT = [['batiment','Bâtiment d\'élevage',20],['cages','Cages / batteries de ponte',10],['mangeoires','Mangeoires, abreuvoirs',5],['ventilation','Ventilation / installation électrique',7],['groupe','Groupe électrogène',5],['transport','Matériel de transport',5],['amenagement','Aménagements / clôtures',10],['mobilier','Mobilier / informatique',3],['autre','Autre matériel',5]];
+// Types de financement par investisseur : même plan, remboursement et comptabilité différents
+const FIN_TYPES = {pret:'Prêt à intérêt', nature:'Financement en nature (aliment fourni)', avance:'Avance sur ventes d\'œufs', partage:'Partage de production'};
 const FIN_TABS = [['synthese','Synthèse','fa-gauge-high'],['montage','Montage','fa-sliders'],['plan','Plan de financement','fa-scale-balanced'],['cep','Compte d\'exploitation','fa-file-invoice'],['echeancier','Amortissement','fa-table'],
   ['evaluation','Évaluation','fa-scale-balanced'],['risques','Risques & scénarios','fa-dice'],['juridique','Juridique','fa-gavel'],['suivi','Suivi & compta','fa-book']];
 
+function finParams(f,inv,amt,share){
+  var c=(inv&&inv.cond)||{}, t=(inv&&inv.fin)||'pret', pick=function(k,d){ return c[k]!=null&&c[k]!==''?+c[k]:d; };
+  return {fin:t, mode:t==='avance'?'avance':t==='partage'?'partage':f.mode, taux:pick('taux',f.taux), diff:Math.max(0,pick('differeMois',f.differeMois)|0), N:Math.max(1,pick('dureeRemb',f.dureeRemb)|0),
+    montant:amt, tirage:f.tirage, interetDiffere:f.interetDiffere, sweepPct:f.sweepPct*share, fraisPct:f.fraisDossierPct, prime:pick('prime',15), partPct:pick('partPct',50), plafond:Math.max(1,pick('plafond',1.25)), remise:pick('remise',10), dd:f.dateDebut};
+}
 const finPc = n => n==null||isNaN(n) ? '—' : n>2 ? '> 200 %' : (n*100).toFixed(1).replace('.',',')+' %';
 const finM  = n => ff(n)+' F';
 const finClamp = (x,a,b) => Math.max(a,Math.min(b,x));
@@ -24713,6 +24723,45 @@ function finImmos(f,T,tEnd){
   return {capex:capex,dot:dot,det:det,vncFin:vncFin,capexTot:capexTot,mensTot:mensTot};
 }
 
+// ── Dette d'un financier : échéancier mensuel selon le mode ──
+function finDette(P,ctx,dateDebut){
+  var T=ctx.T, rev=ctx.rev, opex=ctx.opex, tir=[], t, mode=P.mode, diff=P.diff, N=P.N, montant=P.montant;
+  for(t=0;t<=T+1;t++) tir[t]=0;
+  var k=ctx.base>0?montant/ctx.base:0, frais=montant*P.fraisPct/100;
+  if(P.tirage==='unique'){ tir[1]=montant; } else { for(t=1;t<=T;t++) tir[t]=ctx.fin[t]*k; }
+  var rm=P.taux/100/12, B=0, startB=null, rows=[], pmt=0, Drem=0;
+  // Forfait : intérêt total = capital × taux × (carence + mensualités)/12, versé en N mensualités égales après la carence ; capital remboursé en une fois à la dernière
+  var totInt=mode==='forfait'?montant*P.taux/100*(diff+N)/12:0;
+  for(t=1;t<=T;t++){
+    var open=B, d=tir[t], I=(mode==='forfait'||mode==='avance'||mode==='partage')?0:(open+d)*rm, intCap=0, intPaid=0, cap=0, kk=t-diff;
+    Drem+=d*P.plafond;
+    if(mode==='forfait'){
+      if(t>diff){ intPaid=kk<=N?totInt/N:0; I=intPaid; cap=kk>=N?open+d:0; }
+    } else if(mode==='avance'){
+      // Avance remboursée en N livraisons d'œufs : capital en parts égales + prime (% du capital) étalée
+      if(t>diff){ if(startB===null) startB=open+d; intPaid=kk<=N?montant*P.prime/100/N:0; I=intPaid; cap=kk>=N?open+d:Math.min(open+d,startB/N); }
+    } else if(mode==='partage'){
+      // Partage de production : % du cash-flow net mensuel jusqu'à plafond × capital ; reversement réparti capital / rémunération
+      if(t>diff){ var cfp=Math.max(0,rev[t]-opex[t]), pay=kk>=N?Drem:Math.min(Drem,cfp*P.partPct/100); intPaid=pay*(1-1/P.plafond); I=intPaid; cap=kk>=N?open+d:Math.min(open+d,pay/P.plafond); Drem=Math.max(0,Drem-pay); }
+    } else if(t<=diff){
+      if(P.interetDiffere==='paye') intPaid=I; else intCap=I;
+    } else {
+      if(startB===null){ startB=open+d; pmt=rm>0?startB*rm/(1-Math.pow(1+rm,-N)):startB/N; }
+      var due=open+d+I;
+      if(mode==='infine'){ intPaid=I; cap=kk>=N?open+d:0; }
+      else if(mode==='degressif'){ intPaid=I; cap=kk>=N?open+d:Math.min(open+d,startB/N); }
+      else if(mode==='annuite'){ intPaid=I; cap=kk>=N?open+d:Math.max(0,Math.min(open+d,pmt-I)); }
+      else {
+        var cf=Math.max(0,rev[t]-opex[t]), py=kk>=N?due:Math.min(due,cf*(P.sweepPct/100));
+        intPaid=Math.min(I,py); cap=Math.min(open+d,py-intPaid); intCap=I-intPaid;
+      }
+    }
+    B=open+d+intCap-cap; if(B<1) B=0;
+    rows.push({t:t, open:open, tir:d, I:I, intCap:intCap, intPaid:intPaid, cap:cap, service:intPaid+cap, close:B, frais:t===1?frais:0});
+  }
+  return {rows:rows, montant:montant, frais:frais, soldeFin:B};
+}
+
 // ── Moteur : exploitation mensuelle + dette + indicateurs ──
 function finRun(f, m){
   m=m||{};
@@ -24743,7 +24792,8 @@ function finRun(f, m){
     vncRes*=r;
     if(!W.length) W=[Object.assign({},base0[maxAge],{wr:1})];
   } else W=W.map(function(x){ return Object.assign({},x,{wr:x.w}); });
-  var T=Math.max(finMonth(W.length)+lag, diff+N)+1, t, i;
+  var endMax=diff+N; (f.investisseurs||[]).forEach(function(x){ var c=x.cond||{}; endMax=Math.max(endMax,(c.differeMois!=null&&c.differeMois!==''?+c.differeMois:f.differeMois)+(c.dureeRemb!=null&&c.dureeRemb!==''?+c.dureeRemb:f.dureeRemb)); });
+  var T=Math.max(finMonth(W.length)+lag, endMax)+1, t, i;
   var rev=[],opex=[],fin=[],tir=[];
   for(i=0;i<=T+1;i++){ rev[i]=0; opex[i]=0; fin[i]=0; tir[i]=0; }
   var tEnd=Math.min(T,finMonth(W[W.length-1].wr)+lag), imm=finImmos(f,T,tEnd);
@@ -24756,34 +24806,25 @@ function finRun(f, m){
     rev[mi+lag]+=x.recOeufs+x.recRef; oeufsTot+=x.oeufs;
   });
   var base=fin.reduce(function(a,b){return a+b;},0);
-  var montant=f.montantManuel>0?f.montantManuel:base*(1+f.contingence/100);
-  var k=base>0?montant/base:0, frais=montant*f.fraisDossierPct/100;
-  if(f.tirage==='unique'){ tir[1]=montant; } else { for(t=1;t<=T;t++) tir[t]=fin[t]*k; }
-  var rm=f.taux/100/12, B=0, startB=null, rows=[], pmt=0, ret=f.retenuePct/100;
-  // Forfait : intérêt total = capital × taux × (carence + mensualités)/12, versé en N mensualités égales après la carence ; capital remboursé en une fois à la dernière
-  var totInt=f.mode==='forfait'?montant*f.taux/100*(diff+N)/12:0;
+  var needTot=f.montantManuel>0?f.montantManuel:base*(1+f.contingence/100);
+  var ctx={T:T,rev:rev,opex:opex,fin:fin,base:base,imm:imm};
+  var invs=(f.investisseurs||[]).filter(function(x){return (+x.montant||0)>0;}), sumT=invs.reduce(function(a,x){return a+x.montant;},0);
+  var heter=invs.some(function(x){return (x.fin&&x.fin!=='pret')||(x.cond&&Object.keys(x.cond).length>0);});
+  var groups=[];
+  if(!heter) groups=[{inv:null,idx:-1,P:finParams(f,null,needTot,1)}];
+  else { var sc=sumT>needTot?needTot/sumT:1; groups=invs.map(function(x){ return {inv:x,idx:(f.investisseurs||[]).indexOf(x),P:finParams(f,x,x.montant*sc,needTot>0?x.montant*sc/needTot:0)}; });
+    if(sumT<needTot-1) warn.push('Tickets souscrits ('+finM(sumT)+') inférieurs au besoin ('+finM(needTot)+') : le solde reste à la charge de l\'exploitant.');
+    var cfShare=groups.reduce(function(a,g){return a+(g.P.mode==='partage'?g.P.partPct:g.P.mode==='ponte'?g.P.sweepPct:0);},0);
+    if(cfShare>100) warn.push('Parts de cash-flow affectées aux financiers : '+Math.round(cfShare)+' % (> 100 %).'); }
+  groups.forEach(function(g){ g.fin=g.P.fin; g.D=finDette(g.P,ctx,f.dateDebut); });
+  var rows=[], montant=0, frais=0, ret=f.retenuePct/100, diffMin=Math.min.apply(null,groups.map(function(g){return g.P.diff;}));
+  groups.forEach(function(g){ montant+=g.D.montant; frais+=g.D.frais; });
   for(t=1;t<=T;t++){
-    var open=B, d=tir[t], I=f.mode==='forfait'?0:(open+d)*rm, intCap=0, intPaid=0, cap=0, kk=t-diff;
-    if(f.mode==='forfait'){
-      if(t>diff){ intPaid=kk<=N?totInt/N:0; I=intPaid; cap=kk>=N?open+d:0; }
-    } else if(t<=diff){
-      if(f.interetDiffere==='paye') intPaid=I; else intCap=I;
-    } else {
-      if(startB===null){ startB=open+d; pmt=rm>0?startB*rm/(1-Math.pow(1+rm,-N)):startB/N; }
-      var due=open+d+I;
-      if(f.mode==='infine'){ intPaid=I; cap=kk>=N?open+d:0; }
-      else if(f.mode==='degressif'){ intPaid=I; cap=kk>=N?open+d:Math.min(open+d,startB/N); }
-      else if(f.mode==='annuite'){ intPaid=I; cap=kk>=N?open+d:Math.max(0,Math.min(open+d,pmt-I)); }
-      else {
-        var cf=Math.max(0,rev[t]-opex[t]), pay=kk>=N?due:Math.min(due,cf*(f.sweepPct/100));
-        intPaid=Math.min(I,pay); cap=Math.min(open+d,pay-intPaid); intCap=I-intPaid;
-      }
-    }
-    B=open+d+intCap-cap; if(B<1) B=0;
-    rows.push({t:t, debut:finAddMonths(f.dateDebut,t-1), date:finAddMonths(f.dateDebut,t), open:open, tir:d, I:I, intCap:intCap, intPaid:intPaid, cap:cap,
-      service:intPaid+cap, close:B, rev:rev[t], opex:opex[t], capex:imm.capex[t], frais:t===1?frais:0, cfads:rev[t]-opex[t], diff:t<=diff});
+    var ag={t:t,debut:finAddMonths(f.dateDebut,t-1),date:finAddMonths(f.dateDebut,t),open:0,tir:0,I:0,intCap:0,intPaid:0,cap:0,service:0,close:0,rev:rev[t],opex:opex[t],capex:imm.capex[t],frais:0,cfads:rev[t]-opex[t],diff:t<=diffMin};
+    groups.forEach(function(g){ var r=g.D.rows[t-1]; ['open','tir','I','intCap','intPaid','cap','service','close','frais'].forEach(function(k){ ag[k]+=r[k]; }); });
+    rows.push(ag);
   }
-  var soldeFin=B;
+  var soldeFin=groups.reduce(function(a,g){return a+g.D.soldeFin;},0);
   // Trésorerie exploitant
   var cum=0, minCash=0, cumArr=[];
   rows.forEach(function(r){ cum+=r.rev-r.opex-r.capex+r.tir-r.service-r.frais; r.cash=cum; cumArr.push(cum); if(cum<minCash) minCash=cum; });
@@ -24796,15 +24837,28 @@ function finRun(f, m){
     cu+=u; if(cu<minCu) minCu=cu; if(payback===null&&cu>=0&&r.t>1&&minCu<0) payback=r.t;
   });
   // Investisseurs (tirage en début de mois → indice t-1 ; remboursements en fin de mois → indice t)
-  var ivB=[],ivN=[],bw=[],inB=0,inN=0,out=0;
-  for(i=0;i<=T;i++){ ivB[i]=0; ivN[i]=0; bw[i]=0; }
-  rows.forEach(function(r){
-    ivB[r.t-1]-=r.tir; ivN[r.t-1]-=r.tir; out+=r.tir; bw[r.t-1]+=r.tir;
-    var fb=r.frais; ivB[r.t-1]+=fb; ivN[r.t-1]+=fb; bw[r.t-1]-=fb;
-    ivB[r.t]+=r.intPaid+r.cap; ivN[r.t]+=r.intPaid*(1-ret)+r.cap; bw[r.t]-=r.intPaid+r.cap;
-    inB+=r.intPaid+r.cap+fb; inN+=r.intPaid*(1-ret)+r.cap+fb;
+  var flows=function(rs,solde,rt){
+    var o={ivB:[],ivN:[],bw:[],inB:0,inN:0,out:0}, q; for(q=0;q<=T;q++){ o.ivB[q]=0; o.ivN[q]=0; o.bw[q]=0; }
+    rs.forEach(function(r){
+      o.ivB[r.t-1]-=r.tir; o.ivN[r.t-1]-=r.tir; o.out+=r.tir; o.bw[r.t-1]+=r.tir;
+      o.ivB[r.t-1]+=r.frais; o.ivN[r.t-1]+=r.frais; o.bw[r.t-1]-=r.frais;
+      o.ivB[r.t]+=r.intPaid+r.cap; o.ivN[r.t]+=r.intPaid*(1-rt)+r.cap; o.bw[r.t]-=r.intPaid+r.cap;
+      o.inB+=r.intPaid+r.cap+r.frais; o.inN+=r.intPaid*(1-rt)+r.cap+r.frais;
+    });
+    if(solde>0) o.bw[T]-=solde; return o;
+  };
+  var FL=flows(rows,soldeFin,ret), ivB=FL.ivB, ivN=FL.ivN, bw=FL.bw, inB=FL.inB, inN=FL.inN, out=FL.out;
+  groups.forEach(function(g){
+    var o=flows(g.D.rows,g.D.soldeFin,g.fin==='avance'?0:ret); g.o=o;
+    g.rows=g.D.rows; g.montant=g.D.montant; g.frais=g.D.frais; g.soldeFin=g.D.soldeFin; g.irrB=finAnn(finIRR(o.ivB)); g.irrN=finAnn(finIRR(o.ivN)); g.teg=finAnn(finIRR(o.bw));
+    g.moic=o.out>0?o.inN/o.out:null; g.out=o.out; g.back=o.inN; g.intTot=g.D.rows.reduce(function(a,r){return a+r.intPaid+r.intCap;},0);
+    g.fullMonth=null; g.D.rows.forEach(function(r){ if(r.close===0&&r.open+r.tir>0&&g.fullMonth===null&&r.t>g.P.diff) g.fullMonth=r.t; });
+    if(g.fin==='avance'){ var pe=p.prixOeufUnit*(1-g.P.remise/100); g.rows.forEach(function(r){ r.oeufs=pe>0?r.service/pe:0; }); }
   });
-  if(soldeFin>0){ bw[T]-=soldeFin; }
+  if(heter){ // flux de la poche = somme des flux des financiers (retenue à la source selon le type)
+    for(i=0;i<=T;i++){ ivB[i]=0; ivN[i]=0; bw[i]=0; } inB=0; inN=0; out=0;
+    groups.forEach(function(g){ for(i=0;i<=T;i++){ ivB[i]+=g.o.ivB[i]; ivN[i]+=g.o.ivN[i]; bw[i]+=g.o.bw[i]; } inB+=g.o.inB; inN+=g.o.inN; out+=g.o.out; });
+  }
   var irrB=finIRR(ivB), irrN=finIRR(ivN), tegM=finIRR(bw), irrP=finIRR(pf);
   var intTot=rows.reduce(function(a,r){return a+r.intPaid+r.intCap;},0);
   // DSCR
@@ -24824,7 +24878,7 @@ function finRun(f, m){
     dscrMin:dscrMin, dscrAvg:dscrAvg, cov:cov, capac:capac, dStart:dStart, fullMonth:fullMonth, soldeFin:soldeFin, minCash:minCash, cashFin:cum,
     ltv:valPoulettes>0?debtAtPonte/valPoulettes:null, debtAtPonte:debtAtPonte, valPoulettes:valPoulettes,
     coutPoulette:wP.vivants>0?coutPre/wP.vivants:0, oeufsTot:oeufsTot, coutOeuf:oeufsTot>0?(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0,
-    margeOeuf:oeufsTot>0?p.prixOeufUnit*(1-(p.tauxCasse||0)/100)-(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0, det:det, warn:warn, typeLot:typeLot, bfrPic:-minB, imm:imm, dotPoule:dotPoule, immoP:immoP, vncRes:vncRes, capCost:immoP?capCost:0, ivN:ivN, ivB:ivB};
+    margeOeuf:oeufsTot>0?p.prixOeufUnit*(1-(p.tauxCasse||0)/100)-(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0, det:det, warn:warn, typeLot:typeLot, bfrPic:-minB, groups:groups, heter:heter, imm:imm, dotPoule:dotPoule, immoP:immoP, vncRes:vncRes, capCost:immoP?capCost:0, ivN:ivN, ivB:ivB};
 }
 
 // ── Compte d'exploitation prévisionnel (présentation SYSCOHADA : soldes intermédiaires de gestion), en comptabilité d'engagement ──
@@ -24949,6 +25003,7 @@ function finConformite(f, E){
   var add=function(s,t){ out.push({s:s,t:t}); };
   add(f.taux<=FIN_USURE_NON_BANCAIRE?'ok':'ko','Taux nominal '+f.taux+' % ≤ plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' % (agents non bancaires, UMOA).');
   add(E.teg!=null&&E.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG (intérêts + frais) '+finPc(E.teg)+' ≤ '+FIN_USURE_NON_BANCAIRE+' %. Un taux supérieur = usure.');
+  if(E.heter) (E.groups||[]).forEach(function(g){ add(g.teg!=null&&g.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG '+esc(g.inv.nom||'financier')+' ('+FIN_TYPES[g.fin]+') : '+finPc(g.teg)+(g.teg!=null&&g.teg*100>FIN_USURE_NON_BANCAIRE?' > plafond d\'usure.':'.')); });
   add(nInv<FIN_SEUIL_APE-10?'ok':'ko','Investisseurs : '+nInv+' — rester nettement sous '+FIN_SEUIL_APE+' personnes sans lien (au-delà : appel public à l\'épargne, visa AMF-UMOA).');
   add(nInv>0&&tot>=E.montant?'ok':'warn','Tickets souscrits '+finM(tot)+' / besoin '+finM(E.montant)+'.');
   add((f.investisseurs||[]).every(function(i){return i.nom&&i.contact;})&&nInv>0?'ok':'warn','Identification (KYC/LBC-FT) : nom + contact + origine des fonds pour chaque investisseur.');
@@ -24961,7 +25016,7 @@ function finConformite(f, E){
 }
 
 // ── Contrat type (clauses) ──
-function finContrat(f, E, cfg, inv){
+function finContrat(f, E, cfg, inv, gr){
   var ex=(cfg&&cfg.nomExploitation)||'[Exploitation — dénomination]', fj=(cfg&&cfg.formeJuridique)||'[forme juridique]', rc=(cfg&&cfg.rccm)||'[RCCM]';
   var fin=inv?(inv.nom||'[Financier]'):((f.investisseurs||[]).map(function(i){return i.nom||'[Investisseur]';}).join(', ')||'[Financier(s)]');
   var g=f.garanties||{}, gar=[];
@@ -24970,18 +25025,20 @@ function finContrat(f, E, cfg, inv){
   if(g.caution) gar.push('cautionnement personnel du dirigeant');
   if(g.domiciliation) gar.push('domiciliation des encaissements sur compte dédié (mandat/compte séquestre)');
   if(g.assurance) gar.push('assurance mortalité/sinistre avec subrogation au profit du financier');
-  var tot=(f.investisseurs||[]).reduce(function(a,i){return a+(+i.montant||0);},0), sh=(inv&&tot>0)?inv.montant/tot:1, mt=Math.round(inv&&inv.montant?Math.min(inv.montant,E.montant):E.montant);
-  var carence=f.differeMois, n=f.dureeRemb, fin12=f.differeMois+f.dureeRemb;
-  var modeTxt={forfait:'le capital est remboursé en une seule fois, '+fin12+' mois après l\'entrée en vigueur ; l\'intérêt forfaitaire (taux annuel de '+f.taux+' % rapporté à '+fin12+' mois, soit '+finM(E.intTot*sh)+') est payé en '+n+' mensualités égales après '+carence+' mois de carence',
+  var tot=(f.investisseurs||[]).reduce(function(a,i){return a+(+i.montant||0);},0), sh=(inv&&tot>0)?inv.montant/tot:1, mt=Math.round(gr?gr.montant:(inv&&inv.montant?Math.min(inv.montant,E.montant):E.montant));
+  var P=gr?gr.P:finParams(f,null,mt,1), typ=gr?gr.fin:'pret', carence=P.diff, n=P.N, fin12=P.diff+P.N, intT=gr?gr.intTot:E.intTot*sh, tegG=gr?gr.teg:E.teg, tauxC=P.taux;
+  var modeTxt={avance:'le Bénéficiaire livre au Financier des œufs en '+n+' livraisons mensuelles à compter du mois '+(carence+1)+' ; la valeur des œufs livrés (prix moyen de vente du mois, après remise de '+P.remise+' %) éteint le capital puis la prime',
+    partage:'le Bénéficiaire reverse chaque mois '+P.partPct+' % du cash-flow net issu de la Bande, à compter du mois '+(carence+1)+', jusqu\'à complet paiement de '+P.plafond+' fois le capital ; le solde éventuel est exigible au mois '+fin12,
+    forfait:'le capital est remboursé en une seule fois, '+fin12+' mois après l\'entrée en vigueur ; l\'intérêt forfaitaire (taux annuel de '+tauxC+' % rapporté à '+fin12+' mois, soit '+finM(intT)+') est payé en '+n+' mensualités égales après '+carence+' mois de carence',
     ponte:'par affectation de '+f.sweepPct+' % du cash-flow net mensuel d\'exploitation issu de la bande jusqu\'à extinction, le solde restant dû étant exigible à l\'échéance finale (mois '+fin12+')',
     degressif:'par échéances mensuelles à capital constant après '+carence+' mois de différé',annuite:'par annuités mensuelles constantes après '+carence+' mois de différé',infine:'in fine (capital au mois '+fin12+'), les intérêts étant payés mensuellement après '+carence+' mois de différé'}[f.mode];
   var cl=[
     ['Parties','Entre '+ex+' ('+fj+', RCCM '+rc+'), ci-après « le Bénéficiaire », et '+fin+', ci-après « le Financier », il est convenu ce qui suit.'],
     ['Définitions','« Financement » : fonds mis à disposition à titre de prêt ; « Remboursement » : restitution du capital et paiement des intérêts aux échéances convenues ; « Intérêt » : rémunération du financement ; « Bande » : le lot de volailles financé ; « Tableau d\'amortissement » : annexe 1.'],
-    ['Objet',finObjet(f,E)+' Prêt à intérêt : aucune entrée au capital, aucun droit de vote ni de partage de résultat hors rémunération prévue.'],
-    ['Montant & mise à disposition','Montant : '+finM(mt)+', mis à disposition '+(f.tirage==='unique'?'en une seule fois':'par tirages mensuels correspondant aux besoins en aliment')+'. Frais de dossier : '+f.fraisDossierPct+' %.'],
+    ['Objet',finObjet(f,E)+' '+({pret:'Prêt à intérêt',nature:'Financement en nature (fourniture d\'aliment) remboursable',avance:'Avance sur ventes d\'œufs remboursable en œufs',partage:'Contrat de partage de production'}[typ])+' : aucune entrée au capital, aucun droit de vote ni de gestion.'],
+    ['Montant & mise à disposition',typ==='nature'?'Le Financier livre directement au Bénéficiaire de l\'aliment pour une valeur totale de '+finM(mt)+', valorisée au prix facturé par le fournisseur (bons de livraison signés des deux parties valant mise à disposition), '+(f.tirage==='unique'?'en une seule livraison':'par livraisons mensuelles correspondant aux besoins')+'. Frais de dossier : '+f.fraisDossierPct+' %.':'Montant : '+finM(mt)+', mis à disposition '+(f.tirage==='unique'?'en une seule fois':'par tirages mensuels correspondant aux besoins en aliment')+'. Frais de dossier : '+f.fraisDossierPct+' %.'],
     ['Affectation des fonds','Exclusivement à l\'objet ci-dessus. Le Bénéficiaire justifie l\'emploi des fonds (factures, bons de réception) sur demande ; le suivi est consultable dans l\'ERP.'],
-    ['Rémunération','Intérêt nominal de '+f.taux+' % l\'an. Coût effectif global (TEG) estimé : '+finPc(E.teg)+', inférieur au plafond d\'usure applicable ('+FIN_USURE_NON_BANCAIRE+' % hors établissements de crédit). Aucun frais ni intérêt supplémentaire ne peut être réclamé hors ceux prévus aux présentes.'],
+    ['Rémunération',typ==='avance'?'Prime de '+P.prime+' % du capital, réglée exclusivement en œufs (comprise dans les livraisons). Coût effectif équivalent (TEG) : '+finPc(tegG)+', inférieur au plafond d\'usure applicable ('+FIN_USURE_NON_BANCAIRE+' %).':typ==='partage'?'Aucun intérêt à taux fixe : le Financier perçoit '+P.partPct+' % du cash-flow net mensuel de la Bande, jusqu\'à concurrence de '+P.plafond+' fois le capital versé (soit '+finM(mt*P.plafond)+'). Coût effectif équivalent (TEG) : '+finPc(tegG)+', inférieur au plafond d\'usure applicable ('+FIN_USURE_NON_BANCAIRE+' %). Le Financier supporte le risque de performance dans la limite du terme.':'Intérêt nominal de '+tauxC+' % l\'an. Coût effectif global (TEG) estimé : '+finPc(tegG)+', inférieur au plafond d\'usure applicable ('+FIN_USURE_NON_BANCAIRE+' % hors établissements de crédit). Aucun frais ni intérêt supplémentaire ne peut être réclamé hors ceux prévus aux présentes.'],
     ['Remboursement','Le remboursement s\'effectue ainsi : '+modeTxt+'. Les parties peuvent convenir par écrit d\'un paiement des intérêts en nature (livraison d\'œufs), en précisant la quantité, la fréquence et la valorisation retenue (prix moyen de vente du mois) ; à défaut le paiement est numéraire. Le tableau d\'amortissement figure en annexe 1.'],
     ['Durée','La convention est conclue pour '+fin12+' mois à compter de son entrée en vigueur, jusqu\'au complet remboursement. Elle n\'est pas renouvelable par tacite reconduction ; toute prorogation fait l\'objet d\'un avenant écrit.'],
     ['Remboursement anticipé','Le Bénéficiaire peut rembourser par anticipation, en tout ou partie, sur préavis de 15 jours. Pour le mode forfaitaire, les intérêts restant dus sont recalculés au prorata de la durée courue.'],
@@ -25083,11 +25140,18 @@ window.finResync=async function(){
   var sp={}; try{ sp=JSON.parse(localStorage.getItem('avico_simu_params')||'{}'); }catch(e){}
   r.simu=Object.assign({},SIMU_DEFAULTS,sp,{typeLot:'layer'}); await finSave(r); finRefresh();
 };
+window.finSetInv=async function(i,k,v){
+  var r=window._fb.rec, x=r.investisseurs[i]; if(!x) return; var num=parseFloat(v);
+  if(k.indexOf('cond.')===0){ x.cond=x.cond||{}; var kk=k.slice(5); if(v===''||isNaN(num)) delete x.cond[kk]; else x.cond[kk]=num; }
+  else if(k==='montant') x.montant=num||0; else x[k]=v;
+  await finSave(r); finRefresh();
+};
+window.finSetInvType=async function(i,v){ var r=window._fb.rec; r.investisseurs[i].fin=v; r.investisseurs[i].cond={}; await finSave(r); finRefresh(); };
 window.finAddInv=async function(){
   var r=window._fb.rec; if(!r) return; var g=function(i){return (document.getElementById(i)||{}).value||'';};
   var nom=g('fi_nom').trim(), mt=parseFloat(g('fi_montant'))||0;
   if(!nom||mt<=0){ toast('Nom et montant requis','err'); return; }
-  r.investisseurs=(r.investisseurs||[]).concat([{nom:nom,contact:g('fi_contact').trim(),montant:mt,type:g('fi_type'),origine:g('fi_origine').trim()}]);
+  r.investisseurs=(r.investisseurs||[]).concat([{nom:nom,contact:g('fi_contact').trim(),montant:mt,type:g('fi_type'),origine:g('fi_origine').trim(),fin:g('fi_fin')||'pret'}]);
   await finSave(r); finRefresh();
 };
 window.finDelInv=async function(i){ var r=window._fb.rec; r.investisseurs.splice(i,1); await finSave(r); finRefresh(); };
@@ -25111,18 +25175,26 @@ window.finComptabiliser=async function(t){
   var r=window._fb.rec, E=finRun(r), row=E.rows[t-1]; if(!row) return;
   var key='m'+t; if((r.suivi||{})[key]){ toast('Déjà comptabilisé','err'); return; }
   if(row.date>new Date().toISOString().slice(0,10)){ toast('Échéance future','err'); return; }
-  var L=[], rd=Math.round, w=rd(row.intPaid*r.retenuePct/100), lib='Financement bande « '+r.nom+' » — mois '+t;
-  if(row.tir>0){ L.push({compte:'521',libelle:lib+' : fonds reçus',debit:rd(row.tir),credit:0}); L.push({compte:'168',libelle:lib+' : dette investisseurs',debit:0,credit:rd(row.tir)}); }
-  if(row.frais>0){ L.push({compte:'627',libelle:lib+' : frais de dossier',debit:rd(row.frais),credit:0}); L.push({compte:'521',libelle:lib+' : frais de dossier',debit:0,credit:rd(row.frais)}); }
-  if(row.intCap>0){ L.push({compte:'671',libelle:lib+' : intérêts capitalisés',debit:rd(row.intCap),credit:0}); L.push({compte:'168',libelle:lib+' : intérêts capitalisés',debit:0,credit:rd(row.intCap)}); }
-  if(row.cap>0) L.push({compte:'168',libelle:lib+' : remboursement capital',debit:rd(row.cap),credit:0});
-  if(row.intPaid>0) L.push({compte:'671',libelle:lib+' : intérêts payés',debit:rd(row.intPaid),credit:0});
-  if(row.cap+row.intPaid>0){
-    L.push({compte:'521',libelle:lib+' : décaissement net',debit:0,credit:rd(row.cap)+rd(row.intPaid)-w});
-    if(w>0) L.push({compte:'4478',libelle:lib+' : retenue à la source sur intérêts',debit:0,credit:w});
-  }
+  var L=[], rd=Math.round, lib='Financement bande « '+r.nom+' » — mois '+t, cash=false;
+  (E.groups||[]).forEach(function(g){
+    var x=g.rows[t-1]; if(!x) return; var who=g.inv?(' — '+g.inv.nom):'', nat=(g.fin==='nature'), av=(g.fin==='avance'), pa=(g.fin==='partage');
+    if(x.tir>0){
+      if(nat) L.push({compte:'6013',libelle:lib+who+' : aliment livré par le financier',debit:rd(x.tir),credit:0},{compte:'168',libelle:lib+who+' : dette financier (livraison d\'aliment)',debit:0,credit:rd(x.tir)});
+      else { cash=true; L.push({compte:'521',libelle:lib+who+' : fonds reçus',debit:rd(x.tir),credit:0},{compte:av?'419':'168',libelle:lib+who+(av?' : avance sur ventes d\'œufs':' : dette investisseurs'),debit:0,credit:rd(x.tir)}); }
+    }
+    if(x.frais>0){ cash=true; L.push({compte:'627',libelle:lib+who+' : frais de dossier',debit:rd(x.frais),credit:0},{compte:'521',libelle:lib+who+' : frais de dossier',debit:0,credit:rd(x.frais)}); }
+    if(x.intCap>0) L.push({compte:'671',libelle:lib+who+' : intérêts capitalisés',debit:rd(x.intCap),credit:0},{compte:'168',libelle:lib+who+' : intérêts capitalisés',debit:0,credit:rd(x.intCap)});
+    if(av){
+      if(x.service>0) L.push({compte:'419',libelle:lib+who+' : avance imputée (livraison d\'œufs)',debit:rd(x.cap),credit:0},{compte:'709',libelle:lib+who+' : prime d\'avance en œufs',debit:rd(x.intPaid),credit:0},{compte:'701',libelle:lib+who+' : ventes d\'œufs livrés au financier',debit:0,credit:rd(x.cap)+rd(x.intPaid)});
+    } else {
+      var w=rd(x.intPaid*r.retenuePct/100);
+      if(x.cap>0) L.push({compte:'168',libelle:lib+who+' : remboursement capital',debit:rd(x.cap),credit:0});
+      if(x.intPaid>0) L.push({compte:pa?'658':'671',libelle:lib+who+(pa?' : participation à la production':' : intérêts payés'),debit:rd(x.intPaid),credit:0});
+      if(x.cap+x.intPaid>0){ cash=true; L.push({compte:'521',libelle:lib+who+' : décaissement net',debit:0,credit:rd(x.cap)+rd(x.intPaid)-w}); if(w>0) L.push({compte:'4478',libelle:lib+who+' : retenue à la source',debit:0,credit:w}); }
+    }
+  });
   if(!L.length){ toast('Rien à comptabiliser ce mois','err'); return; }
-  var e=await passerEcriture({date:row.date,journal:(row.tir>0||row.cap+row.intPaid>0)?'BQ':'OD',libelle:lib,lignes:L,refSource:'finbande:'+r.id+':'+t});
+  var e=await passerEcriture({date:row.date,journal:cash?'BQ':'OD',libelle:lib,lignes:L,refSource:'finbande:'+r.id+':'+t});
   if(!e){ toast('Écriture déséquilibrée — annulée','err'); return; }
   r.suivi=r.suivi||{}; r.suivi[key]={date:row.date,piece:e.piece}; await finSave(r); toast('✅ Écriture '+e.piece); finRefresh();
 };
@@ -25237,11 +25309,22 @@ function finTabMontage(f,E){
     +finIn('Retenue à la source sur intérêts (%)','retenuePct',f.retenuePct,0.5)+finIn('Taux d\'actualisation (%)','tauxActu',f.tauxActu,0.5)
     +'</div><div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Plafond d\'usure : '+FIN_USURE_NON_BANCAIRE+' % (investisseurs non bancaires) · '+FIN_USURE_BANQUES+' % (banques, depuis le 01/06/2026). Tendance marché : plateau 30 œufs bord-ferme 2 400 F (≈ 80 F/œuf, fév. 2026) ; TVA 9 % sur aliment volaille.</div></div>'
     +'<div class="card"><div class="card-hd">👥 Investisseurs — '+inv.length+' · souscrit '+finM(tot)+' / besoin '+finM(E.montant)+' ('+finPc(E.montant>0?tot/E.montant:0)+')</div><div class="card-bd tbl-wrap">'
-    +'<table class="tbl"><thead><tr><th>Nom</th><th>Type</th><th>Contact</th><th>Origine fonds</th><th>Ticket</th><th>Quote-part</th><th>Retour net attendu</th><th></th></tr></thead><tbody>'
-    +inv.map(function(i,ix){ var sh=tot>0?i.montant/tot:0, inv$=E.tirTotal*sh; var back=E.ivN.reduce(function(a,v){return a+(v>0?v:0);},0)*sh;
-      return '<tr><td>'+esc(i.nom)+'</td><td>'+(i.type==='morale'?'Personne morale':'Personne physique')+'</td><td>'+esc(i.contact)+'</td><td>'+esc(i.origine)+'</td><td>'+finM(i.montant)+'</td><td>'+finPc(sh)+'</td><td>'+finM(back)+' <span style="color:var(--text3);font-size:10px">(pour '+finM(inv$)+' investis)</span></td><td><button class="btn btn-s btn-sm" onclick="finDelInv('+ix+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
-    +'<tr><td><input id="fi_nom" placeholder="Nom"></td><td><select id="fi_type"><option value="physique">Physique</option><option value="morale">Morale</option></select></td><td><input id="fi_contact" placeholder="Tél / email"></td><td><input id="fi_origine" placeholder="Origine des fonds"></td><td><input id="fi_montant" type="number" placeholder="Ticket F"></td><td colspan="3"><button class="btn btn-p btn-sm" onclick="finAddInv()"><i class="fas fa-plus"></i> Ajouter</button></td></tr>'
-    +'</tbody></table></div></div>';
+    +'<table class="tbl" style="font-size:11px"><thead><tr><th>Nom</th><th>Personne</th><th>Contact / origine des fonds</th><th>Ticket (F)</th><th>Type de financement</th><th>Conditions</th><th>Retour net attendu</th><th></th></tr></thead><tbody>'
+    +inv.map(function(i,ix){
+      var g=(E.groups||[]).filter(function(x){return x.idx===ix;})[0], sh=tot>0?i.montant/tot:0, fin=i.fin||'pret', c=i.cond||{}, P=finParams(f,i,i.montant,1);
+      var back=g?g.back:E.ivN.reduce(function(a,v){return a+(v>0?v:0);},0)*sh, inv$=g?g.out:E.tirTotal*sh;
+      var ci=function(k,lbl,def,w){ return '<label style="display:inline-flex;flex-direction:column;font-size:9px;color:var(--text3);margin:0 4px 2px 0">'+lbl+'<input type="number" step="any" style="width:'+(w||56)+'px;padding:3px 5px" value="'+(c[k]!=null?c[k]:'')+'" placeholder="'+def+'" onchange="finSetInv('+ix+',\'cond.'+k+'\',this.value)"></label>'; };
+      var cond=fin==='avance'?ci('prime','Prime % capital',15)+ci('differeMois','Carence (mois)',f.differeMois)+ci('dureeRemb','Livraisons',f.dureeRemb)+ci('remise','Remise œuf %',10)
+        :fin==='partage'?ci('partPct','% cash-flow',50)+ci('plafond','Plafond ×',1.25)+ci('differeMois','Carence (mois)',f.differeMois)+ci('dureeRemb','Durée (mois)',f.dureeRemb)
+        :ci('taux','Taux % an',f.taux)+ci('differeMois','Carence (mois)',f.differeMois)+ci('dureeRemb','Durée (mois)',f.dureeRemb);
+      var res=g?'<div style="font-size:9px;color:var(--text3)">TEG '+finPc(g.teg)+' · soldé '+(g.fullMonth?'M'+g.fullMonth:'—')+(fin==='avance'?' · '+ff(g.rows.reduce(function(a,r){return a+(r.oeufs||0);},0)/30)+' plateaux':'')+'</div>':'';
+      return '<tr><td>'+esc(i.nom)+'</td><td>'+(i.type==='morale'?'Morale':'Physique')+'</td><td>'+esc(i.contact)+'<br><span style="color:var(--text3)">'+esc(i.origine)+'</span></td>'
+        +'<td><input type="number" style="width:100px" value="'+(i.montant||0)+'" onchange="finSetInv('+ix+',\'montant\',this.value)"><div style="font-size:9px;color:var(--text3)">'+finPc(sh)+' du total</div></td>'
+        +'<td><select onchange="finSetInvType('+ix+',this.value)">'+Object.keys(FIN_TYPES).map(function(k){return '<option value="'+k+'"'+(k===fin?' selected':'')+'>'+FIN_TYPES[k]+'</option>';}).join('')+'</select></td>'
+        +'<td>'+cond+res+'</td><td>'+finM(back)+'<div style="color:var(--text3);font-size:9px">pour '+finM(inv$)+' investis</div></td><td><button class="btn btn-s btn-sm" onclick="finDelInv('+ix+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
+    +'<tr><td><input id="fi_nom" placeholder="Nom"></td><td><select id="fi_type"><option value="physique">Physique</option><option value="morale">Morale</option></select></td><td><input id="fi_contact" placeholder="Tél / email"><input id="fi_origine" placeholder="Origine des fonds"></td><td><input id="fi_montant" type="number" placeholder="Ticket F"></td>'
+    +'<td><select id="fi_fin">'+Object.keys(FIN_TYPES).map(function(k){return '<option value="'+k+'">'+FIN_TYPES[k]+'</option>';}).join('')+'</select></td><td colspan="3"><button class="btn btn-p btn-sm" onclick="finAddInv()"><i class="fas fa-plus"></i> Ajouter</button></td></tr>'
+    +'</tbody></table><p style="font-size:10px;color:var(--text3);margin-top:8px"><strong>Prêt</strong> : intérêt (mode des « Conditions de financement »). <strong>Nature</strong> : le financier livre l\'aliment, remboursement comme un prêt (écriture sans mouvement de banque). <strong>Avance sur ventes</strong> : remboursée en livraisons d\'œufs, prime en % du capital. <strong>Partage de production</strong> : % du cash-flow net jusqu\'à un plafond × capital, sans taux d\'intérêt. Les conditions vides reprennent celles du dossier.</p></div></div>';
 }
 
 // Plan de financement (besoins / ressources) et bilan d'ouverture
@@ -25406,13 +25489,14 @@ function finCEPhtml(f,E){
 // Convention de financement complète (une par financier) : parties, articles, annexe d'amortissement proratisée, signatures
 async function finConventionHtml(f,E,cfg,idx){
   var invs=f.investisseurs||[], inv=(idx>=0&&invs[idx])?invs[idx]:null, tot=invs.reduce(function(a,i){return a+(+i.montant||0);},0), sh=(inv&&tot>0)?Math.min(1,inv.montant/Math.max(tot,E.montant)):1;
-  var cl=finContrat(f,E,cfg,inv), today=new Date().toLocaleDateString('fr-FR'), fmt=function(v){return ff(v*sh);};
-  var rowsH=E.rows.filter(function(r){return r.tir>0||r.service>0||r.intCap>0||r.close>0;}).map(function(r){return '<tr><td>'+r.t+'</td><td>'+r.date+'</td><td>'+fmt(r.open)+'</td><td>'+fmt(r.tir)+'</td><td>'+fmt(r.intPaid+r.intCap)+'</td><td>'+fmt(r.cap)+'</td><td>'+fmt(r.service)+'</td><td>'+fmt(r.close)+'</td></tr>';}).join('');
+  var gr=(E.heter&&inv)?(E.groups||[]).filter(function(g){return g.idx===idx;})[0]:null, srcRows=gr?gr.rows:E.rows, sh2=gr?1:sh;
+  var cl=finContrat(f,E,cfg,inv,gr), today=new Date().toLocaleDateString('fr-FR'), fmt=function(v){return ff(v*sh2);};
+  var rowsH=srcRows.filter(function(r){return r.tir>0||r.service>0||r.intCap>0||r.close>0;}).map(function(r){return '<tr><td>'+r.t+'</td><td>'+finAddMonths(f.dateDebut,r.t)+'</td><td>'+fmt(r.open)+'</td><td>'+fmt(r.tir)+'</td><td>'+fmt(r.intPaid+r.intCap)+'</td><td>'+fmt(r.cap)+'</td><td>'+fmt(r.service)+'</td><td>'+(r.oeufs?ff(r.oeufs/30)+' plateaux':'')+'</td><td>'+fmt(r.close)+'</td></tr>';}).join('');
   return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Convention de financement</title><style>body{font-family:Arial,sans-serif;font-size:12px;color:#20241f;margin:0;padding:28px;line-height:1.55}h1{font-size:17px;text-align:center}h2{font-size:13px;margin-top:16px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#eef3ec;padding:5px;text-align:right}td{padding:4px 5px;border-bottom:1px solid #e2ddd1;text-align:right}td:first-child,th:first-child{text-align:left}@media print{h2{page-break-after:avoid}}</style></head><body>'
     +'<h1>CONVENTION DE FINANCEMENT D\'UNE BANDE AVICOLE</h1><p style="text-align:center;color:#666">'+esc(f.nom)+' · '+today+'</p>'
     +cl.map(function(c,i){ return i===0?'<p>'+esc(c[1])+'</p>':'<h2>Article '+i+' — '+esc(c[0])+'</h2><p>'+esc(c[1])+'</p>'; }).join('')
-    +'<h2>Annexe 1 — Tableau d\'amortissement'+(inv?' ('+esc(inv.nom)+')':'')+'</h2><table><thead><tr><th>Mois</th><th>Échéance</th><th>Capital dû</th><th>Fonds versés</th><th>Intérêts</th><th>Capital remboursé</th><th>Service</th><th>Solde</th></tr></thead><tbody>'+rowsH+'</tbody></table>'
-    +'<p>Montant : <b>'+ff(E.tirTotal*sh)+' F</b> · Intérêts totaux : <b>'+ff(E.intTot*sh)+' F</b> · TEG : <b>'+finPc(E.teg)+'</b> · Frais de dossier : <b>'+ff(E.frais*sh)+' F</b>.</p>'
+    +'<h2>Annexe 1 — Tableau d\'amortissement'+(inv?' ('+esc(inv.nom)+')':'')+'</h2><table><thead><tr><th>Mois</th><th>Échéance</th><th>Capital dû</th><th>Fonds versés</th><th>Intérêts</th><th>Capital remboursé</th><th>Service</th><th>Œufs à livrer</th><th>Solde</th></tr></thead><tbody>'+rowsH+'</tbody></table>'
+    +'<p>Montant : <b>'+ff(gr?gr.out:E.tirTotal*sh)+' F</b> · Rémunération totale : <b>'+ff(gr?gr.intTot:E.intTot*sh)+' F</b> · TEG : <b>'+finPc(gr?gr.teg:E.teg)+'</b> · Frais de dossier : <b>'+ff(gr?gr.frais:E.frais*sh)+' F</b>.</p>'
     +'<p style="margin-top:30px">Fait à ____________, le ____________, en deux (2) exemplaires originaux.</p><table style="margin-top:10px"><tr><td style="height:80px;text-align:left;width:50%">Le Bénéficiaire<br>'+esc((cfg&&cfg.nomExploitation)||'')+'</td><td style="text-align:left">Le Financier<br>'+esc(inv?inv.nom:'')+'<br><span style="color:#888">« Lu et approuvé »</span></td></tr></table></body></html>';
 }
 window.finConvention=async function(mode){
