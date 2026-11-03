@@ -24941,6 +24941,7 @@ function finRun(f, m){
   ((f.com&&f.com.actions)||[]).forEach(function(a){ var mc=Math.max(1,Math.min(T,Math.round(+a.mois||1))), m=+a.budget||0; if(m<=0) return; comM[mc]+=m; opex[mc]+=m; });
   var base=fin.reduce(function(a,b){return a+b;},0);
   var needTot=f.montantManuel>0?f.montantManuel:base*(1+f.contingence/100);
+  if(!(needTot>0)) warn.push('Aucun montant à financer : aucun objet de financement n\'est coché (ou le besoin est nul). Cochez au moins un objet dans « 2. Projet & montage » ; sans montant, le TRI et le TEG affichés n\'ont pas de sens.');
   var ctx={T:T,rev:rev,opex:opex,fin:fin,base:base,imm:imm};
   var invs=(f.investisseurs||[]).filter(function(x){return (+x.montant||0)>0;}), sumT=invs.reduce(function(a,x){return a+x.montant;},0);
   var heter=invs.some(function(x){return (x.fin&&x.fin!=='pret')||(x.cond&&Object.keys(x.cond).length>0);});
@@ -25148,7 +25149,7 @@ function finConformite(f, E){
   var out=[], nInv=(f.investisseurs||[]).length, tot=(f.investisseurs||[]).reduce(function(a,i){return a+(+i.montant||0);},0), g=f.garanties||{};
   var add=function(s,t){ out.push({s:s,t:t}); };
   add(f.taux<=FIN_USURE_NON_BANCAIRE?'ok':'ko','Taux nominal '+f.taux+' % ≤ plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' % (agents non bancaires, UMOA).');
-  add(E.teg!=null&&E.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG (intérêts + frais) '+finPc(E.teg)+' ≤ '+FIN_USURE_NON_BANCAIRE+' %. Un taux supérieur = usure.');
+  add(E.teg!=null&&E.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG (intérêts + frais) '+finPc(E.teg)+(E.teg!=null&&E.teg*100<=FIN_USURE_NON_BANCAIRE?' ≤ ':' > ')+FIN_USURE_NON_BANCAIRE+' %. Un taux supérieur = usure.');
   if(E.heter) (E.groups||[]).forEach(function(g){ add(g.teg!=null&&g.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG '+esc(g.inv.nom||'financier')+' ('+FIN_TYPES[g.fin]+') : '+finPc(g.teg)+(g.teg!=null&&g.teg*100>FIN_USURE_NON_BANCAIRE?' > plafond d\'usure.':'.')); });
   add(nInv<FIN_SEUIL_APE-10?'ok':'ko','Investisseurs : '+nInv+' — seuil indicatif d\'appel public à l\'épargne : '+FIN_SEUIL_APE+' personnes sans lien (à vérifier) ; surtout : aucune publicité ni démarchage, collecte occasionnelle.');
   add(nInv>0&&tot>=E.montant?'ok':'warn','Tickets souscrits '+finM(tot)+' / besoin '+finM(E.montant)+'.');
@@ -25158,7 +25159,7 @@ function finConformite(f, E){
   add(g.assurance?'ok':'warn','Assurance mortalité/sinistre sur la bande.');
   add(E.ltv!=null&&E.ltv<=0.8?'ok':'warn','Dette / valeur des poulettes à la ponte : '+finPc(E.ltv)+' (cible ≤ 80 %).');
   add(E.dscrMin==null||E.dscrMin>=1.2?'ok':'warn','DSCR minimal '+(E.dscrMin==null?'—':E.dscrMin.toFixed(2))+' (cible ≥ 1,2).');
-  add(E.soldeFin<=1?'ok':'ko','Remboursement intégral avant le terme '+(E.soldeFin<=1?'(scénario courant)':': solde impayé '+finM(E.soldeFin)+'.'));
+  add(E.soldeFin<=1?'ok':'ko','Remboursement intégral avant le terme '+(E.soldeFin<=1?'(scénario courant)':': impayé estimé '+finM(E.soldeFin)+' (les flux d\'exploitation ne couvrent pas le service de la dette alors que le calendrier contractuel prévoit le remboursement intégral).'));
   return out;
 }
 
@@ -25601,11 +25602,12 @@ function finPlanCalc(f,E){
   var pl=f.plan||{}, v=function(k){return +pl[k]||0;}, AQ=finAcquis(f), aq=(AQ.on&&AQ.val>0)?AQ.val:0;
   var besoins=[['Frais d\'établissement',v('fraisEtab'),'fraisEtab'],['Immobilisations incorporelles (logiciel, licences)',v('incorp'),'incorp'],['Immobilisations corporelles à acquérir (voir Montage)',E.imm.capexTot],
     ['Immobilisations financières (cautions, dépôts)',v('immoFin'),'immoFin'],['Besoin en fonds de roulement (pic de trésorerie d\'exploitation)',E.bfrPic],['Frais de dossier du financement',E.frais]].concat(aq?[['Immobilisations existantes mises à disposition (acquis valorisés de la ferme)',aq]]:[]);
+  var sumTk=(f.investisseurs||[]).reduce(function(a,x){return a+(+x.montant||0);},0), invRes=sumTk>0?Math.min(sumTk,E.montant):E.montant;
   var ressources=[['Apport en capital',v('capital'),'capital'],['Comptes courants d\'associés',v('cca'),'cca'],['Subvention d\'investissement',v('subvention'),'subvention'],['Emprunt bancaire moyen / long terme',v('empruntBanque'),'empruntBanque'],
-    ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)',E.montant]].concat(aq?[['Apport en nature : acquis valorisés de la ferme',aq]]:[]);
+    ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)'+(invRes<E.montant-1?' — souscrit '+finM(invRes)+' sur '+finM(E.montant)+' nécessaires':''),invRes]].concat(aq?[['Apport en nature : acquis valorisés de la ferme',aq]]:[]);
   var tb=besoins.reduce(function(a,x){return a+x[1];},0), tr=ressources.reduce(function(a,x){return a+x[1];},0);
   var immoTot=v('fraisEtab')+v('incorp')+E.imm.capexTot+v('immoFin');
-  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-E.montant-aq;
+  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-invRes-aq;
   return {besoins:besoins,ressources:ressources,tb:tb,tr:tr,ecart:tr-tb,immoTot:immoTot,tir1:tir1,aTirer:Math.max(0,E.montant-tir1),totPassif:hors+tir1,dispo:hors+tir1-immoTot,pl:pl};
 }
 function finTabPlan(f,E){
@@ -25648,7 +25650,8 @@ function finTabEcheancier(f,E){
   var lastUseful=0; E.rows.forEach(function(r,i){ if(r.tir>0||r.service>0||r.intCap>0||r.close>0) lastUseful=i; });
   var rows=E.rows.slice(0,lastUseful+1);
   var tot=rows.reduce(function(a,r){a.tir+=r.tir;a.I+=r.I;a.ip+=r.intPaid;a.cap+=r.cap;a.srv+=r.service;return a;},{tir:0,I:0,ip:0,cap:0,srv:0});
-  return '<div class="card"><div class="card-hd"><span>📅 Tableau d\'amortissement — '+esc(FIN_MODES[f.mode])+'</span><span><button class="btn btn-s btn-sm" onclick="finCSV()"><i class="fas fa-file-csv"></i> CSV</button> <button class="btn btn-s btn-sm" onclick="finImprimer()"><i class="fas fa-print"></i> Dossier PDF</button></span></div><div class="card-bd tbl-wrap">'
+  var bn=E.soldeFin>1?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;margin-bottom:10px">⚠️ Ce tableau est le calendrier <strong>contractuel</strong> : il prévoit le remboursement intégral. Selon la projection, les flux d\'exploitation ne suffisent pas à l\'honorer : <strong>impayé estimé '+finM(E.soldeFin)+'</strong>.</div>':'';
+  return bn+'<div class="card"><div class="card-hd"><span>📅 Tableau d\'amortissement — '+esc(FIN_MODES[f.mode])+'</span><span><button class="btn btn-s btn-sm" onclick="finCSV()"><i class="fas fa-file-csv"></i> CSV</button> <button class="btn btn-s btn-sm" onclick="finImprimer()"><i class="fas fa-print"></i> Dossier PDF</button></span></div><div class="card-bd tbl-wrap">'
     +'<table class="tbl" style="font-size:11px"><thead><tr><th>Mois</th><th>Échéance</th><th>Solde début</th><th>Tirage</th><th>Intérêts</th><th>Int. capitalisés</th><th>Int. payés</th><th>Capital</th><th>Service dette</th><th>Solde fin</th><th>CA œufs</th><th>Charges</th><th>Cash exploitant</th></tr></thead><tbody>'
     +rows.map(function(r){ return '<tr'+(r.diff?' style="background:#f6f9f6"':'')+'><td>'+r.t+(r.diff?' <span class="badge b-bl" style="font-size:8px">différé</span>':'')+'</td><td>'+r.date+'</td><td>'+ff(r.open)+'</td><td>'+(r.tir?ff(r.tir):'—')+'</td><td>'+ff(r.I)+'</td><td>'+(r.intCap?ff(r.intCap):'—')+'</td><td>'+(r.intPaid?ff(r.intPaid):'—')+'</td><td>'+(r.cap?ff(r.cap):'—')+'</td><td><strong>'+(r.service?ff(r.service):'—')+'</strong></td><td>'+ff(r.close)+'</td><td>'+ff(r.rev)+'</td><td>'+ff(r.opex)+'</td><td style="color:'+(r.cash<0?'var(--red)':'var(--g2)')+'">'+ff(r.cash)+'</td></tr>'; }).join('')
     +'<tr class="simu-cumul-row"><td colspan="3">TOTAUX</td><td>'+ff(tot.tir)+'</td><td>'+ff(tot.I)+'</td><td></td><td>'+ff(tot.ip)+'</td><td>'+ff(tot.cap)+'</td><td>'+ff(tot.srv)+'</td><td colspan="4"></td></tr>'
@@ -25666,7 +25669,7 @@ function finTabEvaluation(f,E){
     +'<div class="card"><div class="card-hd">🤝 Investisseurs</div><div class="card-bd"><table class="tbl"><tbody>'
     +row('Capital engagé',finM(E.tirTotal))+row('Intérêts totaux (courus)',finM(E.intTot))+row('Frais de dossier perçus',finM(E.frais))
     +row('TRI brut / net',finPc(E.irrInvB)+' / '+finPc(E.irrInvN),'net = après retenue '+f.retenuePct+' %')+row('Multiple net (MOIC)',E.moic==null?'—':E.moic.toFixed(2)+' ×')
-    +row('Durée jusqu\'à solde',E.fullMonth?E.fullMonth+' mois':'non soldé')+row('Solde impayé au terme',finM(E.soldeFin))+'</tbody></table></div></div>'
+    +row('Durée jusqu\'à solde',E.fullMonth?E.fullMonth+' mois':'non soldé')+row('Impayé estimé au terme',finM(E.soldeFin))+'</tbody></table></div></div>'
     +'<div class="card"><div class="card-hd">🧑‍🌾 Exploitant</div><div class="card-bd"><table class="tbl"><tbody>'
     +row('TEG (coût réel du crédit)',finPc(E.teg),'plafond '+FIN_USURE_NON_BANCAIRE+' %')+row('Charge financière totale',finM(E.intTot+E.frais))
     +row('Fonds propres / trésorerie pic',finM(-E.minCash))+row('Investissements matériels à acquérir',finM(E.imm.capexTot))+row('Dotation matériel (par mois)',finM(E.imm.mensTot))+row('Trésorerie finale après dette',finM(E.cashFin))
@@ -25689,7 +25692,7 @@ function finTabRisques(f,E){
     +'<div class="simu-detail-line"><span>Taux de ponte pic minimal</span><span><strong>'+(bp?(bp<=0.21?'< '+(E.p.tauxPonteMoy*0.2).toFixed(0)+' % (marge très large)':(E.p.tauxPonteMoy*bp).toFixed(1)+' % ('+Math.round((bp-1)*100)+' % vs hypothèse)'):'inatteignable')+'</strong></span></div></div></div>'
     +'<div class="card"><div class="card-hd"><span>🎲 Monte Carlo (400 tirages — ponte ±7 %, œuf ±10 %, aliment ±8 %, mortalité ±35 %)</span><button class="btn btn-p btn-sm" onclick="finMCrun()"><i class="fas fa-play"></i> Lancer</button></div><div class="card-bd">'
     +(mc?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">'
-      +finKpi('Probabilité de non-remboursement',finPc(mc.pDefaut),'solde impayé au terme',mc.pDefaut<=0.05?'kpi-g':mc.pDefaut<=0.15?'kpi-a':'kpi-r')
+      +finKpi('Probabilité de non-remboursement',finPc(mc.pDefaut),'impayé estimé au terme',mc.pDefaut<=0.05?'kpi-g':mc.pDefaut<=0.15?'kpi-a':'kpi-r')
       +finKpi('Probabilité de perte en capital',finPc(mc.pPerte),'MOIC < 1',mc.pPerte<=0.03?'kpi-g':'kpi-r')
       +finKpi('TRI investisseur P10 / P50 / P90',mc.irr.map(finPc).join(' · '),'net de retenue','kpi-b')
       +finKpi('VAN projet P10 / P50 / P90',mc.npv.map(function(v){return ff(v/1000)+'k';}).join(' · '),'FCFA','kpi-b')
@@ -25858,7 +25861,7 @@ window.finSetBp=async function(k,v){ var r=window._fb.rec; if(!r) return; r.bp=O
 window.finSetBpCell=async function(k,i,j,v){ var r=window._fb.rec; if(!r||!(r.bp&&r.bp[k]&&r.bp[k][i])) return; r.bp=Object.assign({},r.bp); r.bp[k]=r.bp[k].map(function(x,ix){ if(ix!==i) return x; var y=x.slice(); y[j]=v; return y; }); await finSave(r); if(r.verrou) finRefresh(); };
 window.finAddBpRow=async function(k,n){ var r=window._fb.rec; if(!r) return; r.bp=Object.assign({},r.bp); r.bp[k]=(r.bp[k]||[]).concat([new Array(n).fill('')]); await finSave(r); finRefresh(); };
 window.finDelBpRow=async function(k,i){ if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée','err'); return; } var r=window._fb.rec; if(!r||!(r.bp&&r.bp[k])) return; r.bp=Object.assign({},r.bp); r.bp[k]=r.bp[k].filter(function(x,ix){return ix!==i;}); await finSave(r); finRefresh(); };
-window.finSeedBp=async function(k){ var r=window._fb.rec; if(!r||!FIN_BP_SEED[k]) return; r.bp=Object.assign({},r.bp); r.bp[k]=FIN_BP_SEED[k].map(function(x){return x.slice();}); await finSave(r); finRefresh(); };
+window.finSeedBp=async function(k){ var r=window._fb.rec; if(!r||!FIN_BP_SEED[k]) return; var seed=FIN_BP_SEED[k].map(function(x){return x.slice();}); if(k==='equipe'){ try{ var cf=await getExploitationSettings(); if(cf&&cf.responsable) seed[0][1]=cf.responsable; }catch(e){} } r.bp=Object.assign({},r.bp); r.bp[k]=seed; await finSave(r); finRefresh(); };
 
 function finTabPresent(f,E,cfg){
   var idn=[['Dénomination',cfg.nomExploitation],['Forme juridique',cfg.formeJuridique],['RCCM / NIF',[cfg.rccm,cfg.nif].filter(Boolean).join(' / ')],['Adresse',[cfg.adresse,cfg.ville,cfg.pays].filter(Boolean).join(', ')],['Responsable',cfg.responsable],['Contact',[cfg.telephone,cfg.email].filter(Boolean).join(' · ')]];
@@ -25970,7 +25973,7 @@ function finGraphs(f,E){
   // 5. Histogramme : capital restant dû
   if(R.length){ var cl=R.map(function(r){return r.close||0;}), mxI=cl.indexOf(Math.max.apply(null,cl));
     add({id:'solde',type:'histogramme',title:'Capital restant dû en fin de mois',svg:finSvgBars(labsM,[{n:'Capital restant dû',v:cl,c:'#c1121f'}],{title:'Capital restant dû en fin de mois'}),labels:labsM,series:[{n:'Solde dû (M F)',v:cl.map(function(v){return Math.round(v/1e4)/100;})}],
-      text:'La dette culmine à '+mo(cl[mxI])+' au mois '+(mxI+1)+'. '+(E.soldeFin<=1?'Elle est intégralement remboursée'+(E.fullMonth?' au mois '+E.fullMonth:'')+' dans le scénario de base.':'Il reste '+mo(E.soldeFin)+' impayé à la fin de l\'horizon : les flux de la bande ne suffisent pas, il faut allonger la durée, réduire le montant ou renforcer les garanties.')}); }
+      text:'La dette culmine à '+mo(cl[mxI])+' au mois '+(mxI+1)+'. '+(E.soldeFin<=1?'Elle est intégralement remboursée'+(E.fullMonth?' au mois '+E.fullMonth:'')+' dans le scénario de base.':'Le calendrier contractuel prévoit un remboursement intégral (d\'où une dette à zéro en fin de période), mais les flux d\'exploitation ne suffisent pas à l\'honorer : impayé estimé de '+mo(E.soldeFin)+'. Il faut allonger la durée, réduire le montant ou renforcer les garanties.')}); }
   // 6. Courbes : recettes, charges, cash-flow
   if(R.length>1){ var rv=R.map(function(r){return r.rev||0;}), ox=R.map(function(r){return r.opex||0;}), cf=R.map(function(r,i){return rv[i]-ox[i];}), fm=-1; cf.forEach(function(v,i){ if(fm<0&&v>0) fm=i; });
     add({id:'recettes',type:'courbes',title:'Recettes, charges et cash-flow d\'exploitation',svg:finSvgLines(labsM,[{n:'Recettes',v:rv,c:'#2b5f45'},{n:'Charges d\'exploitation',v:ox,c:'#f59e0b'},{n:'Cash-flow (recettes − charges)',v:cf,c:'#3b82f6',dash:true}],{title:'Recettes, charges et cash-flow'}),labels:labsM,series:[{n:'Recettes (M F)',v:rv.map(function(v){return Math.round(v/1e4)/100;})},{n:'Charges (M F)',v:ox.map(function(v){return Math.round(v/1e4)/100;})}],
@@ -25992,7 +25995,7 @@ function finGraphs(f,E){
   // 10. Courbes : capital restant dû selon scénario
   try{ var sc=[['base','Base','#2b5f45'],['opt','Optimiste','#3b82f6'],['pes','Pessimiste','#c1121f']].map(function(k){ var e=finRun(f,FIN_SCEN[k[0]].m); return {n:k[1],c:k[2],e:e,v:e.rows.map(function(r){return r.close||0;})}; });
     if(R.length>1){ add({id:'scen',type:'courbes',title:'Capital restant dû selon le scénario',svg:finSvgLines(labsM,sc.map(function(s){return {n:s.n,v:s.v,c:s.c};}),{title:'Capital restant dû selon le scénario'}),labels:labsM,series:sc.map(function(s){return {n:s.n+' (M F)',v:s.v.map(function(v){return Math.round(v/1e4)/100;})};}),
-      text:sc.map(function(s){ return s.n+' : '+(s.e.soldeFin<=1?'remboursé'+(s.e.fullMonth?' au mois '+s.e.fullMonth:''):'impayé de '+mo(s.e.soldeFin)); }).join(' · ')+'. L\'écart entre les courbes mesure le risque : si la courbe pessimiste ne rejoint pas zéro, le remboursement dépend d\'un scénario favorable.'}); } }catch(e){}
+      text:sc.map(function(s){ return s.n+' : '+(s.e.soldeFin<=1?'remboursé'+(s.e.fullMonth?' au mois '+s.e.fullMonth:''):'impayé estimé de '+mo(s.e.soldeFin)); }).join(' · ')+'. L\'écart entre les courbes mesure le risque : si la courbe pessimiste ne rejoint pas zéro, le remboursement dépend d\'un scénario favorable.'}); } }catch(e){}
   // 11. Histogramme : coût de revient vs prix (pondeuses)
   if(E.res&&E.res.cumOeufs>0&&E.prixMoyen>0){ var co=E.res.totalCout/E.res.cumOeufs, pm=E.prixMoyen;
     add({id:'oeuf',type:'histogramme',title:'Coût de revient et prix de vente par œuf',svg:finSvgBars(['Coût de revient','Prix de vente moyen'],[{n:'F par œuf',v:[co,pm]}],{fmt:function(v){return finN(v,1)+' F';},title:'Coût de revient et prix de vente par œuf'}),labels:['Coût de revient','Prix de vente moyen'],series:[{n:'F par œuf',v:[Math.round(co*10)/10,Math.round(pm*10)/10]}],
@@ -26016,6 +26019,7 @@ function finAnalyse(f,E,tab,cfg,deep){
   var ca=(E.res&&E.res.cumRecette)||0, cout=(E.res&&E.res.totalCout)||0, mg=ca>0?(ca-cout)/ca:null;
   var cn=((f.com&&f.com.canaux)||[]).filter(function(x){ return (+x.part||0)>0; }), ct=cn.reduce(function(a,x){return a+(+x.part||0);},0);
   var conf=finConformite(f,E);
+  if(tab==='montage'&&!(E.montant>0)) X('ko','Aucun montant à financer : aucun objet de financement n\'est coché ou le besoin est nul.','Cocher au moins un objet financé (aliment, poussins, prophylaxie, investissements…) ou saisir un montant forcé : sans montant, tous les indicateurs de rendement sont sans objet.');
   if(tab==='present'){
     X(cfg2.nomExploitation?'ok':'warn','Identité de l\'exploitation : '+(cfg2.nomExploitation?'renseignée ('+cfg2.nomExploitation+').':'dénomination absente des paramètres.'),'Compléter dénomination, forme juridique, RCCM/NIF et adresse dans les paramètres de l\'exploitation : un financeur vérifie d\'abord l\'existence légale du porteur.');
     X(txt('mission')?'ok':'warn','Mission, vision et valeurs : '+(txt('mission')?'rédigées.':'texte type utilisé.'),'Rédiger 3 à 5 phrases sur ce que produit l\'exploitation, pour qui et avec quelles valeurs : cela personnalise le dossier.');
@@ -26063,7 +26067,7 @@ function finAnalyse(f,E,tab,cfg,deep){
     X(PL.dispo>=0?'ok':'warn','Disponibilités de démarrage (ressources − investissements) : '+mo(PL.dispo)+'.','Prévoir davantage de ressources court terme : le démarrage serait trop juste en trésorerie.');
   }
   else if(tab==='echeancier'){
-    X(E.soldeFin<=1?'ok':'ko',E.soldeFin<=1?'Remboursement intégral au mois '+(E.fullMonth||'—')+'.':'Solde impayé à l\'échéance : '+mo(E.soldeFin)+'.','Allonger la durée de remboursement (actuelle '+f.dureeRemb+' mois), relever la part du cash-flow affectée (actuelle '+finN(f.sweepPct,0)+' %), réduire le montant de ≈'+mo(E.soldeFin)+' ou ajouter un apport/garantie.');
+    X(E.soldeFin<=1?'ok':'ko',E.soldeFin<=1?'Remboursement intégral au mois '+(E.fullMonth||'—')+'.':'Impayé estimé à l\'échéance : '+mo(E.soldeFin)+' (flux d\'exploitation insuffisants).','Allonger la durée de remboursement (actuelle '+f.dureeRemb+' mois), relever la part du cash-flow affectée (actuelle '+finN(f.sweepPct,0)+' %), réduire le montant de ≈'+mo(E.soldeFin)+' ou ajouter un apport/garantie.');
     X(E.dscrMin==null||E.dscrMin>=1.2?'ok':E.dscrMin>=1?'warn':'ko','Couverture minimale du service de la dette (DSCR) : '+(E.dscrMin==null?'—':finN(E.dscrMin,2))+' (cible ≥ 1,2).','Allonger la carence (actuelle '+f.differeMois+' mois) pour caler le premier remboursement sur la ponte, lisser le profil de remboursement, ou baisser le taux : un DSCR < 1 signifie que le cash-flow ne couvre pas l\'échéance.');
     X(E.capac==null||E.capac>=1.5?'ok':E.capac>=1?'warn':'ko','Capacité de remboursement (cash-flow du cycle / dette à la ponte) : '+(E.capac==null?'—':finN(E.capac,2)+' ×')+' (cible ≥ 1,5).','Réduire la dette à la ponte (financer moins, plus d\'apport) ou améliorer la marge d\'exploitation (prix, coûts, ponte).');
   }
@@ -26743,8 +26747,9 @@ async function finBpPpt(D){
   card(s,8.4,1.75,4.43,5.05); tbl(s,8.5,1.85,4.23,['Variation','Impayé'],D.sens.map(function(x){return [x[0],finN(x[1].solde)];}),{colW:[2.5,1.73],fs:10.5,rowH:0.5});
 
   // 12 risques
-  s=slide('Risques','Six risques, une réponse chacun','Mesures d\'atténuation intégrées au pilotage ERP');
+  s=slide('Risques','Les risques et leurs réponses','Mesures d\'atténuation intégrées au pilotage ERP');
   var R=[['Baisse de la ponte','Suivi quotidien ponte/aliment, prophylaxie, alertes ERP'],[D.seuil.riskAlim,'Contrats d\'approvisionnement, stock tampon, achats groupés'],[D.seuil.riskOeuf,'Diversification des clients, livraisons contractuelles'],['Mortalité','Biosécurité, vaccination, assurance mortalité'],['Retard d\'encaissement','Délais par canal, compte dédié, suivi des impayés'],['Juridique','Taux et TEG sous plafond, investisseurs identifiés, aucune sollicitation publique']];
+  var RB=((f.bp&&f.bp.risques)||[]).filter(function(x){return x[0];}).map(function(x){return [x[0],x[3]||'—'];}); if(RB.length) R=RB.slice(0,6);
   R.forEach(function(r,i){ var x=0.5+(i%3)*4.18, y=1.75+Math.floor(i/3)*2.6; card(s,x,y,3.97,2.4); s.addShape(pp.ShapeType.rect,{x:x,y:y,w:3.97,h:0.09,fill:{color:i%3===1?C.gold:(i%3===2?C.pri:C.acc)},line:{color:C.acc,transparency:100}}); txt(s,r[0],x+0.25,y+0.3,3.5,0.4,{fontSize:16,bold:true,color:C.dark}); txt(s,r[1],x+0.25,y+0.85,3.5,1.4,{fontSize:12.5,color:C.mut}); });
 
   // 13 garanties
