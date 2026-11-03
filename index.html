@@ -25813,7 +25813,7 @@ async function renderFinBande(ca){
   var t=B.tab||'synthese';
   if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
-  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+body+'</div>';
+  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+finAnalyseHtml(rec,E,t,cfg)+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
@@ -26005,6 +26005,123 @@ function finTabGraph(f,E){
   return '<p style="font-size:12px;color:var(--text3);margin:0 0 12px">Les graphiques se recalculent à chaque modification du dossier. Chaque graphique est suivi de son interprétation, rédigée automatiquement à partir des chiffres : relisez-la avant de la présenter à un financeur. Ils sont repris au chapitre 10.4 du business plan.</p>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:14px">'
     +G.map(function(g){ return '<div class="card"><div class="card-hd"><span>'+g.title+'</span><span style="font-size:11px;color:var(--text3)">'+tag[g.type]+'</span></div><div class="card-bd">'+g.svg+'<div style="margin-top:8px;background:#eff6ff;border-left:4px solid #3b82f6;border-radius:6px;padding:8px 12px;font-size:12px;line-height:1.5;color:#1e3a8a"><strong>💡 Interprétation.</strong> '+esc(g.text)+'</div></div></div>'; }).join('')+'</div>';
+}
+
+// ══ Analyse de chaque onglet : résultat (✅ / ⚠️ / ❌) et prescriptions d'amélioration en cas de mauvais résultat ══
+function finAnalyse(f,E,tab,cfg,deep){
+  var it=[], S=E.p||{}, mo=function(v){ return finMf(v); }, strip=function(h){ return String(h).replace(/<[^>]+>/g,''); }, bp=f.bp||{}, cfg2=cfg||{};
+  var X=function(s,t,rx){ it.push({s:s,t:t,rx:s==='ok'?'':rx||''}); };
+  var txt=function(k){ return !!String(bp[k]||'').trim(); }, rows=function(k){ return (bp[k]||[]).length>0; };
+  var sumT=(f.investisseurs||[]).reduce(function(a,x){return a+(+x.montant||0);},0);
+  var ca=(E.res&&E.res.cumRecette)||0, cout=(E.res&&E.res.totalCout)||0, mg=ca>0?(ca-cout)/ca:null;
+  var cn=((f.com&&f.com.canaux)||[]).filter(function(x){ return (+x.part||0)>0; }), ct=cn.reduce(function(a,x){return a+(+x.part||0);},0);
+  var conf=finConformite(f,E);
+  if(tab==='present'){
+    X(cfg2.nomExploitation?'ok':'warn','Identité de l\'exploitation : '+(cfg2.nomExploitation?'renseignée ('+cfg2.nomExploitation+').':'dénomination absente des paramètres.'),'Compléter dénomination, forme juridique, RCCM/NIF et adresse dans les paramètres de l\'exploitation : un financeur vérifie d\'abord l\'existence légale du porteur.');
+    X(txt('mission')?'ok':'warn','Mission, vision et valeurs : '+(txt('mission')?'rédigées.':'texte type utilisé.'),'Rédiger 3 à 5 phrases sur ce que produit l\'exploitation, pour qui et avec quelles valeurs : cela personnalise le dossier.');
+    var eq=(bp.equipe||[]).filter(function(r){ return r[1]; });
+    X(eq.length>=2?'ok':eq.length===1?'warn':'ko','Équipe dirigeante : '+eq.length+' personne(s) nommée(s).','Nommer au minimum le dirigeant et le responsable d\'élevage avec leur expérience avicole ; à défaut, indiquer le vétérinaire ou le technicien d\'appui qui sécurise la conduite : les financeurs jugent d\'abord les hommes.');
+  }
+  else if(tab==='montage'){
+    var cov=E.montant>0?sumT/E.montant:0;
+    X(sumT>=E.montant-1?'ok':sumT>0?'warn':'ko','Tickets souscrits : '+mo(sumT)+' pour un besoin de '+mo(E.montant)+' ('+finP(cov,0)+').','Compléter la levée ('+mo(Math.max(0,E.montant-sumT))+' manquants) : ajouter des investisseurs, réduire le périmètre financé (objets ou horizon) ou combler par un apport de l\'exploitant.');
+    X(f.taux<=FIN_USURE_NON_BANCAIRE&&E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko','Taux nominal '+finN(f.taux,1)+' % ; TEG '+finP(E.teg)+' (plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' %).','Ramener le taux nominal ou les frais de dossier pour que le TEG reste sous '+FIN_USURE_NON_BANCAIRE+' % : au-delà, le prêt est usuraire et nul pour la part excédentaire.');
+    X((f.investisseurs||[]).length>0?'ok':'ko','Investisseurs identifiés : '+(f.investisseurs||[]).length+'.','Saisir au moins un investisseur (nom, contact, origine des fonds) : sans lui le dossier n\'a ni convention ni calendrier de remboursement.');
+    X(f.contingence>=5?'ok':'warn','Marge d\'aléas : '+finN(f.contingence,1)+' % du besoin.','Porter les aléas à 5 % minimum : le coût de l\'aliment et des intrants varie rapidement et un besoin sous-estimé oblige à relancer les investisseurs en cours de bande.');
+    X((f.immos||[]).length>0?'ok':'warn','Investissements matériels saisis : '+(f.immos||[]).length+'.','Charger les investissements types ou saisir les équipements (bâtiment, cages, abreuvoirs…) afin que l\'amortissement et le plan de financement soient complets.');
+  }
+  else if(tab==='marche'){
+    X(txt('demande')?'ok':'warn','Étude de la demande : '+(txt('demande')?'rédigée.':'non documentée.'),'Documenter la taille du marché local, les prix observés et la saisonnalité avec des sources datées (statistiques, relevés de prix, enquête auprès de 10 à 20 clients) ; un marché non chiffré affaiblit tout le dossier.');
+    X(rows('concurrents')?'ok':'warn','Concurrence : '+((bp.concurrents||[]).length)+' ligne(s) analysée(s).','Lister 3 à 5 concurrents réels (fermes voisines, importateurs, vente informelle) avec leurs prix et vos réponses.');
+    if(E.coutOeuf>0&&E.prixMoyen>0){ var mo2=(E.prixMoyen-E.coutOeuf)/E.prixMoyen;
+      X(mo2>=0.15?'ok':mo2>=0?'warn':'ko','Prix de vente moyen '+finN(E.prixMoyen,1)+' F contre coût de revient '+finN(E.coutOeuf,1)+' F par œuf (marge '+finP(mo2,0)+').','Relever le prix net (calibrage, vente directe, canaux mieux payés) ou baisser le coût de revient : il faut '+finN(E.coutOeuf,1)+' F par œuf pour couvrir les coûts, et au moins '+finN(E.coutOeuf/0.85,1)+' F pour une marge saine de 15 %.'); }
+    if(cn.length){ var top=cn.slice().sort(function(a,b){return b.part-a.part;})[0], tp=(+top.part||0)/ct;
+      X(tp<=0.6?'ok':'warn','Canal principal « '+(top.nom||'—')+' » : '+finP(tp,0)+' du volume.','Diversifier les débouchés : aucun canal ne devrait dépasser 50-60 % du volume (risque d\'impayé ou de perte du client).'); }
+  }
+  else if(tab==='commercial'){
+    X(cn.length?(Math.abs(ct-100)<=1?'ok':'warn'):'ko','Canaux de vente : '+cn.length+' ; parts cumulées '+finN(ct,0)+' %.',cn.length?'Ajuster les parts pour qu\'elles totalisent 100 %.':'Saisir les canaux (gros, détail, restauration, ménages) avec parts, prix relatif et délais de paiement.');
+    var dl=ct>0?cn.reduce(function(a,x){return a+(+x.part||0)*(+x.delai||0);},0)/ct:0;
+    if(cn.length) X(dl<=30?'ok':dl<=45?'warn':'ko','Délai moyen de paiement des clients : '+finN(dl,0)+' jours.','Raccourcir les délais (acompte, paiement à la livraison, escompte) : chaque mois de décalage immobilise environ un mois de chiffre d\'affaires en trésorerie.');
+    X(((f.com&&f.com.actions)||[]).length?'ok':'warn','Plan d\'action commercial : '+(((f.com&&f.com.actions)||[]).length)+' action(s).','Définir 4 à 6 actions datées avec un responsable, un budget et un indicateur (prospection, contrats de livraison, fidélisation).');
+    var ext=Object.keys(E.extTot||{}).reduce(function(a,k){return a+E.extTot[k];},0), pe=cout>0?ext/cout:0;
+    X(pe<=0.3?'ok':pe<=0.4?'warn':'ko','Charges externes : '+mo(ext)+' ('+finP(pe,0)+' du coût du cycle).','Faire jouer la concurrence sur les prestataires (devis multiples), mutualiser les services (transport, vétérinaire) ou réduire la part de structure imputée à la bande.');
+  }
+  else if(tab==='organisation'){
+    var mort=+S.tauxMortalite||0;
+    X(mort<=8?'ok':mort<=12?'warn':'ko','Mortalité du cycle retenue : '+finN(mort,1)+' %.','Renforcer la biosécurité et le programme de vaccination, sécuriser la qualité des poussins et le démarrage (chauffage, eau, aliment) ; une mortalité supérieure à 8 % dégrade fortement le résultat.');
+    var al=cout>0?E.res.rows.reduce(function(a,r){return a+(r.coutAlimentPhase||0);},0)/cout:0;
+    X(al<=0.6?'ok':al<=0.7?'warn':'ko','Part de l\'aliment dans le coût : '+finP(al,0)+'.','Sécuriser l\'aliment : contrat avec prix plafond, stock tampon de 2 à 3 semaines, achats groupés, formulation à la ferme si possible, suivi de l\'indice de consommation.');
+    var nb=['elevage','aliment','biosec','qhse'].filter(txt).length;
+    X(nb>=3?'ok':nb>=1?'warn':'ko','Rubriques d\'organisation rédigées : '+nb+' / 4.','Décrire la conduite d\'élevage, l\'approvisionnement, la biosécurité et le QHSE : les financeurs veulent voir que la bande sera conduite selon les règles de l\'art.');
+    X(txt('sw_forces')||txt('sw_faiblesses')?'ok':'warn','Analyse SWOT : '+(txt('sw_forces')||txt('sw_faiblesses')?'rédigée.':'texte type.'),'Rédiger un SWOT propre à l\'exploitation (2 à 4 points par case).');
+    X(rows('risques')?'ok':'warn','Matrice des risques : '+((bp.risques||[]).length)+' risque(s) décrit(s).','Pré-remplir la matrice avec le modèle puis l\'adapter : chaque risque doit avoir une mesure d\'atténuation concrète.');
+  }
+  else if(tab==='plan'){
+    var PL=finPlanCalc(f,E), apport=(+(PL.pl.capital)||0)+(+(PL.pl.cca)||0), pa=PL.tb>0?apport/PL.tb:0;
+    X(PL.ecart>=-1?'ok':'ko','Besoins '+mo(PL.tb)+' · ressources '+mo(PL.tr)+(PL.ecart>=0?' : couverts.':' : manque '+mo(-PL.ecart)+'.'),'Combler '+mo(Math.max(0,-PL.ecart))+' : apport en capital ou compte courant de l\'exploitant, emprunt bancaire, subvention, ou réduction des besoins (différer un investissement, louer plutôt qu\'acheter).');
+    X(pa>=0.1?'ok':'warn','Apport propre (capital + comptes courants) : '+finP(pa,0)+' des besoins.','Augmenter l\'apport de l\'exploitant à 10-20 % des besoins : il aligne les intérêts et rassure les investisseurs ; les acquis valorisés de la ferme (option cheptel/stocks) peuvent y contribuer.');
+    X(PL.dispo>=0?'ok':'warn','Disponibilités de démarrage (ressources − investissements) : '+mo(PL.dispo)+'.','Prévoir davantage de ressources court terme : le démarrage serait trop juste en trésorerie.');
+  }
+  else if(tab==='echeancier'){
+    X(E.soldeFin<=1?'ok':'ko',E.soldeFin<=1?'Remboursement intégral au mois '+(E.fullMonth||'—')+'.':'Solde impayé à l\'échéance : '+mo(E.soldeFin)+'.','Allonger la durée de remboursement (actuelle '+f.dureeRemb+' mois), relever la part du cash-flow affectée (actuelle '+finN(f.sweepPct,0)+' %), réduire le montant de ≈'+mo(E.soldeFin)+' ou ajouter un apport/garantie.');
+    X(E.dscrMin==null||E.dscrMin>=1.2?'ok':E.dscrMin>=1?'warn':'ko','Couverture minimale du service de la dette (DSCR) : '+(E.dscrMin==null?'—':finN(E.dscrMin,2))+' (cible ≥ 1,2).','Allonger la carence (actuelle '+f.differeMois+' mois) pour caler le premier remboursement sur la ponte, lisser le profil de remboursement, ou baisser le taux : un DSCR < 1 signifie que le cash-flow ne couvre pas l\'échéance.');
+    X(E.capac==null||E.capac>=1.5?'ok':E.capac>=1?'warn':'ko','Capacité de remboursement (cash-flow du cycle / dette à la ponte) : '+(E.capac==null?'—':finN(E.capac,2)+' ×')+' (cible ≥ 1,5).','Réduire la dette à la ponte (financer moins, plus d\'apport) ou améliorer la marge d\'exploitation (prix, coûts, ponte).');
+  }
+  else if(tab==='cep'){
+    X(mg==null?'warn':mg>=0.1?'ok':mg>=0?'warn':'ko','Marge nette du cycle : '+(mg==null?'—':finP(mg,0))+' (chiffre d\'affaires '+mo(ca)+', coûts '+mo(cout)+').','Redresser la marge : agir d\'abord sur le prix de vente net et sur l\'aliment (premier poste de coût), puis sur la mortalité et la durée d\'exploitation avant réforme.');
+    var ri=ca>0?E.intTot/ca:0;
+    X(ri<=0.1?'ok':ri<=0.15?'warn':'ko','Intérêts : '+mo(E.intTot)+' soit '+finP(ri,0)+' du chiffre d\'affaires.','Alléger la charge financière : baisser le taux, raccourcir la durée ou réduire le montant emprunté.');
+    X(E.minCash>=0?'ok':'warn','Fonds propres à prévoir au point bas de trésorerie : '+mo(Math.max(0,-E.minCash))+'.','Anticiper cette trésorerie (apport, découvert autorisé, report d\'investissements) ou étaler les dépenses : le creux se produit avant l\'encaissement des premières ventes.');
+  }
+  else if(tab==='evaluation'){
+    X(E.irrInvN==null?'warn':E.irrInvN>=0.08?'ok':E.irrInvN>=0?'warn':'ko','TRI net des investisseurs : '+finPc(E.irrInvN)+' (MOIC '+(E.moic==null?'—':finN(E.moic,2)+' ×')+').','Rendre l\'opération rémunératrice : relever la rémunération dans la limite de l\'usure ('+FIN_USURE_NON_BANCAIRE+' %), améliorer le remboursement (carence plus courte, part de cash-flow plus élevée) ou réduire le risque d\'impayé qui détruit le TRI.');
+    X(E.npv>=0?'ok':'warn','VAN du projet à '+finN(f.tauxActu,0)+' % : '+mo(E.npv)+'.','Une VAN négative indique que le projet ne rémunère pas le capital engagé : améliorer la marge, ou le dimensionner autrement (taille de bande, cycle).');
+    X(E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko','TEG : '+finP(E.teg)+' pour un plafond de '+FIN_USURE_NON_BANCAIRE+' %.','Réduire le taux ou les frais jusqu\'à passer sous le plafond d\'usure.');
+  }
+  else if(tab==='graphes'){
+    var R=E.rows||[], fp=-1; R.forEach(function(r,i){ if(fp<0&&(r.rev-r.opex)>0) fp=i; });
+    X(fp>=0?'ok':'ko',fp>=0?'Cash-flow d\'exploitation positif dès le mois '+(fp+1)+'.':'Le cash-flow d\'exploitation ne devient jamais positif sur l\'horizon.','Revoir les hypothèses de ponte, de prix et de coûts : sans cash-flow positif, aucun remboursement n\'est possible.');
+    X(E.minCash>=-0.2*Math.max(1,E.montant)?'ok':'warn','Point bas de trésorerie : '+mo(E.minCash)+'.','Prévoir le financement de ce creux ou étaler les décaissements.');
+    X(E.ltv==null||E.ltv<=0.8?'ok':'warn','Dette rapportée à la valeur des poulettes (LTV) : '+finPc(E.ltv)+' (cible ≤ 80 %).','Réduire la dette ou renforcer la garantie (gage sur le cheptel, stocks, domiciliation des ventes).');
+  }
+  else if(tab==='risques'){
+    var pes=finRun(f,FIN_SCEN.pes.m), st=finRun(f,FIN_SCEN.stress.m);
+    X(pes.soldeFin<=1?'ok':'ko','Scénario pessimiste : '+(pes.soldeFin<=1?'remboursé.':'impayé de '+mo(pes.soldeFin)+'.'),'Renforcer la robustesse : prévoir un stock tampon d\'aliment, une assurance mortalité, une carence plus longue, une garantie couvrant le scénario pessimiste ou un montant financé plus faible.');
+    X(st.soldeFin<=1?'ok':'warn','Scénario de stress : '+(st.soldeFin<=1?'remboursé.':'impayé de '+mo(st.soldeFin)+'.'),'Prévoir un plan de repli (réduction du cheptel, vente anticipée des poules de réforme, report d\'échéance négocié) pour les chocs extrêmes.');
+    if(deep){ try{ var mc=finMC(f,100); X(mc.pDefaut<=0.1?'ok':mc.pDefaut<=0.25?'warn':'ko','Simulation Monte-Carlo : probabilité d\'impayé '+finP(mc.pDefaut,0)+', de perte en capital '+finP(mc.pPerte,0)+'.','Réduire la probabilité d\'impayé : plus d\'apport, carence plus longue, durée plus longue, couverture des risques (aliment, mortalité) et diversification des clients.'); }catch(e){} }
+  }
+  else if(tab==='juridique'){
+    var bad=conf.filter(function(c){ return c.s!=='ok'; });
+    X(bad.some(function(c){return c.s==='ko';})?'ko':bad.length?'warn':'ok','Points de conformité : '+(conf.length-bad.length)+' conformes sur '+conf.length+'.','Traiter les points ci-dessous avant d\'émettre le dossier.');
+    bad.slice(0,8).forEach(function(c){ X(c.s,strip(c.t),'Corriger ce point (voir l\'onglet Juridique) ; faire valider les clauses par un conseil juridique avant signature.'); });
+  }
+  else if(tab==='suivi'){
+    X(f.reel?'ok':'warn','Suivi du réel : '+(f.reel?'données saisies.':'aucune donnée réelle saisie.'),'Une fois les poussins arrivés, renseigner le réel (mortalité, ponte, aliment, ventes) pour comparer au prévisionnel et alerter les financeurs en cas de dérive.');
+  }
+  else if(tab==='docs'){
+    X(f.verrou?'ok':'warn','Dossier : '+(f.verrou?'version v'+f.verrou.ver+' émise.':'brouillon, aucune version émise.'),'Une fois les hypothèses validées, émettre la version pour la figer et obtenir une empreinte opposable.');
+    X((f.docs||[]).length?'ok':'warn','Documents émis : '+((f.docs||[]).length)+'.','Imprimer ou exporter le business plan, la note d\'information et les conventions pour tracer ce qui a été remis aux investisseurs.');
+  }
+  var rank={ok:0,warn:1,ko:2}, st2=it.reduce(function(a,x){ return rank[x.s]>rank[a]?x.s:a; },'ok');
+  return {st:st2,items:it};
+}
+var FIN_ANALYSE_TABS=['present','montage','marche','commercial','organisation','plan','echeancier','cep','evaluation','graphes','risques','juridique','suivi','docs'];
+function finAnalyseHtml(f,E,tab,cfg){
+  var col={ok:['#f0fdf4','#86efac','#166534','✅ Résultats satisfaisants'],warn:['#fffbeb','#fcd34d','#92400e','⚠️ Points de vigilance'],ko:['#fef2f2','#fca5a5','#991b1b','❌ Résultats insuffisants']}, ic={ok:'✅',warn:'⚠️',ko:'❌'};
+  var A, body;
+  if(tab==='synthese'){
+    var tl={}; FIN_TABS.forEach(function(x){ tl[x[0]]=x[1]; });
+    var all=FIN_ANALYSE_TABS.map(function(k){ var a=finAnalyse(f,E,k,cfg,false); return {k:k,a:a,n:a.items.filter(function(x){return x.s!=='ok';}).length}; });
+    var rank={ok:0,warn:1,ko:2}; A={st:all.reduce(function(m,x){return rank[x.a.st]>rank[m]?x.a.st:m;},'ok')};
+    var prio=[]; all.forEach(function(x){ x.a.items.forEach(function(i){ if(i.s!=='ok') prio.push({k:x.k,i:i}); }); }); prio.sort(function(a,b){ return rank[b.i.s]-rank[a.i.s]; });
+    body='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'+all.map(function(x){ var c=col[x.a.st]; return '<a href="#" onclick="fbTab(\''+x.k+'\');return false" style="text-decoration:none;font-size:11px;padding:3px 9px;border-radius:12px;background:'+c[0]+';border:1px solid '+c[1]+';color:'+c[2]+'">'+ic[x.a.st]+' '+esc(tl[x.k])+(x.n?' ('+x.n+')':'')+'</a>'; }).join('')+'</div>'
+      +(prio.length?'<div style="font-weight:700;margin-bottom:4px">Priorités d\'amélioration</div>'+prio.slice(0,6).map(function(p){ return '<div style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08)">'+ic[p.i.s]+' <strong>'+esc(tl[p.k])+'</strong> — '+esc(p.i.t)+'<div style="margin-left:22px;color:#1e3a8a">→ <strong>Prescription :</strong> '+esc(p.i.rx)+'</div></div>'; }).join('')+(prio.length>6?'<div style="font-size:11px;margin-top:6px;opacity:.8">+ '+(prio.length-6)+' autre(s) point(s) détaillé(s) dans les onglets concernés.</div>':''):'<div>Aucun point bloquant : le dossier est cohérent sur l\'ensemble des onglets.</div>');
+  } else {
+    A=finAnalyse(f,E,tab,cfg,true); if(!A.items.length) return '';
+    body=A.items.map(function(i){ return '<div style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08)">'+ic[i.s]+' '+esc(i.t)+(i.rx?'<div style="margin-left:22px;color:#1e3a8a">→ <strong>Prescription :</strong> '+esc(i.rx)+'</div>':'')+'</div>'; }).join('');
+  }
+  var c=col[A.st];
+  return '<details class="fb-analyse" '+(A.st==='ok'?'':'open')+' style="background:'+c[0]+';border:1px solid '+c[1]+';border-left:4px solid '+c[1]+';border-radius:10px;padding:8px 14px;margin:0 0 14px;font-size:12px;color:#1f2937"><summary style="cursor:pointer;font-weight:700;color:'+c[2]+'">🩺 Analyse '+(tab==='synthese'?'globale du dossier':'de cet onglet')+' — '+c[3]+'</summary><div style="margin-top:6px;line-height:1.5">'+body+'</div><div style="font-size:10px;opacity:.7;margin-top:6px">Analyse automatique à partir des chiffres du dossier : elle aide à décider mais ne remplace pas l\'avis d\'un expert.</div></details>';
 }
 function finNote(t){
   var n=FIN_NOTES[t]; if(!n) return '';
