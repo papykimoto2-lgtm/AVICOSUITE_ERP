@@ -24744,7 +24744,7 @@ function finObjets(f){
 function finImmoClass(im){ return (im.cat==='batiment'||im.cat==='amenagement'||im.cat==='terrain')?'construction':'materiel'; }
 function finObjList(f){ var o=finObjets(f); return FIN_OBJETS.filter(function(x){return o[x[0]];}).map(function(x){return x[1].toLowerCase();}); }
 const FIN_TABS = [['synthese','Synthèse','fa-gauge-high'],['montage','Montage','fa-sliders'],['commercial','Commercial & charges','fa-bullhorn'],['plan','Plan de financement','fa-scale-balanced'],['cep','Compte d\'exploitation','fa-file-invoice'],['echeancier','Amortissement','fa-table'],
-  ['evaluation','Évaluation','fa-scale-balanced'],['risques','Risques & scénarios','fa-dice'],['juridique','Juridique','fa-gavel'],['suivi','Suivi & compta','fa-book']];
+  ['evaluation','Évaluation','fa-scale-balanced'],['risques','Risques & scénarios','fa-dice'],['juridique','Juridique','fa-gavel'],['suivi','Suivi & compta','fa-book'],['docs','Documents & historique','fa-folder-open']];
 
 function finParams(f,inv,amt,share){
   var c=(inv&&inv.cond)||{}, t=(inv&&inv.fin)||'pret', pick=function(k,d){ return c[k]!=null&&c[k]!==''?+c[k]:d; };
@@ -25153,6 +25153,7 @@ function finConformite(f, E){
   add(nInv<FIN_SEUIL_APE-10?'ok':'ko','Investisseurs : '+nInv+' — seuil indicatif d\'appel public à l\'épargne : '+FIN_SEUIL_APE+' personnes sans lien (à vérifier) ; surtout : aucune publicité ni démarchage, collecte occasionnelle.');
   add(nInv>0&&tot>=E.montant?'ok':'warn','Tickets souscrits '+finM(tot)+' / besoin '+finM(E.montant)+'.');
   add((f.investisseurs||[]).every(function(i){return i.nom&&i.contact&&i.origine;})&&nInv>0?'ok':'warn','Identification (KYC/LBC-FT) : nom + contact + origine des fonds pour chaque investisseur.');
+  var AQ=finAcquis(f); add(AQ.on&&AQ.val>0?(AQ.val>=E.montant?'ok':'warn'):'warn',AQ.on&&AQ.val>0?'Acquis valorisés de la ferme pris en compte : '+finM(AQ.val)+' ('+(E.montant>0?(AQ.val/E.montant).toFixed(2):'—')+' × le financement) — couverture complémentaire du financeur.':'Acquis valorisés de la ferme non pris en compte (option « Non » ou aucun actif existant saisi).');
   add(Object.keys(g).some(function(k){return g[k];})?'ok':'warn','Au moins une sûreté/garantie retenue (voir onglet Juridique).');
   add(g.assurance?'ok':'warn','Assurance mortalité/sinistre sur la bande.');
   add(E.ltv!=null&&E.ltv<=0.8?'ok':'warn','Dette / valeur des poulettes à la ponte : '+finPc(E.ltv)+' (cible ≤ 80 %).');
@@ -25208,13 +25209,15 @@ function finContrat(f, E, cfg, inv, gr){
 
 // ═════════ PERSISTANCE / ÉTAT ═════════
 async function finLoad(){
-  var list=await getAll(S.FINBANDE); list.sort(function(a,b){return (b.id||0)-(a.id||0);});
-  var B=window._fb||(window._fb={id:null,tab:'synthese'});
-  var rec=list.find(function(x){return x.id===B.id;})||list[0]||null;
-  B.id=rec?rec.id:null; B.rec=rec; B.list=list; B.lots=await getAll(S.FLOCKS);
+  var all=await getAll(S.FINBANDE); all.sort(function(a,b){return (b.id||0)-(a.id||0);});
+  var B=window._fb||(window._fb={id:null,tab:'synthese'}), list=all.filter(function(x){return !x.archive;});
+  var rec=all.find(function(x){return x.id===B.id;})||list[0]||null;
+  B.id=rec?rec.id:null; B.rec=rec; B.list=list; B.all=all; B.lots=await getAll(S.FLOCKS);
+  if(rec) _finPrev[rec.id]=JSON.stringify(rec);
   return rec;
 }
-async function finSave(rec){ await updRec(S.FINBANDE,rec.id,rec); }
+// finSave : défini avec le cycle de vie du dossier (journal, verrouillage)
+
 async function finRefresh(){ var ca=document.getElementById('contentArea'); if(ca) await renderFinBande(ca); }
 window.finSet=async function(k,v,num){ var r=window._fb.rec; if(!r) return; r[k]=num?(parseFloat(v)||0):v; await finSave(r); finRefresh(); };
 window.finSetBool=async function(k,v){ var r=window._fb.rec; r[k]=!!v; await finSave(r); finRefresh(); };
@@ -25277,15 +25280,8 @@ window.finFromSimu=async function(){
   await finNew();
 };
 window.finDup=async function(){
-  var r=window._fb.rec; if(!r) return; var c=JSON.parse(JSON.stringify(r)); delete c.id; c.nom=r.nom+' (copie)'; c.statut='brouillon'; c.suivi={}; c.ts=Date.now();
+  var r=window._fb.rec; if(!r) return; var c=JSON.parse(JSON.stringify(r)); delete c.id; c.nom=r.nom+' (copie)'; c.statut='brouillon'; c.suivi={}; c.ts=Date.now(); c.journal=[]; c.docs=[]; c.ver=0; c.verrou=null; c.archive=null;
   var id=await addRec(S.FINBANDE,c); window._fb.id=id; finRefresh();
-};
-window.finDel=async function(){
-  if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée pour votre rôle','err'); return; }
-  var r=window._fb.rec; if(!r) return;
-  if(Object.keys(r.suivi||{}).length){ toast('Écritures comptables déjà passées — suppression refusée','err'); return; }
-  if(!confirm('Supprimer le dossier « '+r.nom+' » ?')) return;
-  await delRec(S.FINBANDE,r.id); window._fb.id=null; finRefresh();
 };
 window.finResync=async function(){
   var r=window._fb.rec; if(!r) return;
@@ -25457,6 +25453,7 @@ function finBlocImmos(f,E){
     +'</tbody></table>'
     +'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finInitImmos()"><i class="fas fa-list-check"></i> Charger les investissements types ('+(f.typeLot==='broiler'?'chair':'pondeuses')+')</button> <span style="font-size:11px;color:var(--text3)">Valeurs indicatives par sujet logé, à confirmer par devis ; durées d\'amortissement usuelles.</span></div></div>'
     +finAmortHtml(f)
+    +'<div style="padding:10px 18px;border-top:1px solid var(--border);display:flex;gap:12px;align-items:center;flex-wrap:wrap"><strong style="font-size:12px">Prendre en compte les acquis valorisés de la ferme ?</strong><select onchange="finSetAcquis(this.value)" style="padding:5px 8px;border-radius:6px"><option value="1"'+(f.acquisOn!==false?' selected':'')+'>Oui</option><option value="0"'+(f.acquisOn===false?' selected':'')+'>Non</option></select><span style="font-size:11px;color:var(--text3)">'+(function(){ var A=finAcquis(f); return A.items.length?(A.on?'Oui : '+finM(A.val)+' d\'actifs existants comptés en apport en nature (plan de financement, couverture du financeur). Aucun effet sur la trésorerie.':'Non : '+finM(A.val)+' d\'actifs existants ignorés dans le plan de financement.'):'Aucun investissement « déjà possédé » saisi : chargez les investissements types ou ajoutez vos actifs existants.'; })()+'</span></div>'
     +'<div class="simu-params-body">'+finChk('Cheptel pondeuses : élevage immobilisé puis amorti sur la ponte','pouletteImmo',f.pouletteImmo!==false,'finSetBool')
     +finIn('Valeur de reprise du matériel en fin de période (% VNC)','reprisePct',f.reprisePct==null?50:f.reprisePct,5)+finIn('Impôt sur le résultat (%) — 0 si exonéré','tauxIS',f.tauxIS||0,1)+'</div>'
     +'<div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Amortissement linéaire, durées indicatives (bâtiment 20 ans, cages 10, mangeoires 5…) à valider par l\'expert-comptable. <strong>Quote bande</strong> : part du matériel imputée à cette bande si plusieurs bandes l\'utilisent. <strong>À acquérir</strong> : décaissé au mois de mise en service (fonds propres) ; sinon seul l\'amortissement est comptabilisé. Sans matériel saisi, le forfait « amortissement » de la Simulation est utilisé. L\'amortissement n\'est pas une sortie de trésorerie.</div></div>';
@@ -25550,15 +25547,21 @@ function finTabMontage(f,E){
 }
 
 // Plan de financement (besoins / ressources) et bilan d'ouverture
+// Acquis valorisés de la ferme : immobilisations déjà possédées (terrain, bâtiments, matériel…) valorisées à leur valeur retenue × quote bande ; option Oui/Non
+function finAcquis(f){
+  var items=(f.immos||[]).filter(function(i){return !i.neuf;}).map(function(i){ return {lib:i.libelle||'—',cat:i.cat,val:(+i.valeur||0)*((i.quote==null?100:+i.quote)/100)}; }).filter(function(x){return x.val>0;});
+  return {on:f.acquisOn!==false,items:items,val:items.reduce(function(a,x){return a+x.val;},0)};
+}
+window.finSetAcquis=async function(v){ var r=window._fb.rec; r.acquisOn=(v==='1'); await finSave(r); finRefresh(); };
 function finPlanCalc(f,E){
-  var pl=f.plan||{}, v=function(k){return +pl[k]||0;};
+  var pl=f.plan||{}, v=function(k){return +pl[k]||0;}, AQ=finAcquis(f), aq=(AQ.on&&AQ.val>0)?AQ.val:0;
   var besoins=[['Frais d\'établissement',v('fraisEtab'),'fraisEtab'],['Immobilisations incorporelles (logiciel, licences)',v('incorp'),'incorp'],['Immobilisations corporelles à acquérir (voir Montage)',E.imm.capexTot],
-    ['Immobilisations financières (cautions, dépôts)',v('immoFin'),'immoFin'],['Besoin en fonds de roulement (pic de trésorerie d\'exploitation)',E.bfrPic],['Frais de dossier du financement',E.frais]];
+    ['Immobilisations financières (cautions, dépôts)',v('immoFin'),'immoFin'],['Besoin en fonds de roulement (pic de trésorerie d\'exploitation)',E.bfrPic],['Frais de dossier du financement',E.frais]].concat(aq?[['Immobilisations existantes mises à disposition (acquis valorisés de la ferme)',aq]]:[]);
   var ressources=[['Apport en capital',v('capital'),'capital'],['Comptes courants d\'associés',v('cca'),'cca'],['Subvention d\'investissement',v('subvention'),'subvention'],['Emprunt bancaire moyen / long terme',v('empruntBanque'),'empruntBanque'],
-    ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)',E.montant]];
+    ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)',E.montant]].concat(aq?[['Apport en nature : acquis valorisés de la ferme',aq]]:[]);
   var tb=besoins.reduce(function(a,x){return a+x[1];},0), tr=ressources.reduce(function(a,x){return a+x[1];},0);
   var immoTot=v('fraisEtab')+v('incorp')+E.imm.capexTot+v('immoFin');
-  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-E.montant;
+  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-E.montant-aq;
   return {besoins:besoins,ressources:ressources,tb:tb,tr:tr,ecart:tr-tb,immoTot:immoTot,tir1:tir1,aTirer:Math.max(0,E.montant-tir1),totPassif:hors+tir1,dispo:hors+tir1-immoTot,pl:pl};
 }
 function finTabPlan(f,E){
@@ -25754,7 +25757,7 @@ async function renderFinBande(ca){
   var rec=await finLoad(), B=window._fb, cfg=await getExploitationSettings();
   var style='<style>.fb-wrap{flex:1;overflow-y:auto;padding:16px 20px}.fb-hero{background:linear-gradient(135deg,#152e22,#2b5f45,#4a8b68);color:#fff;border-radius:16px;padding:18px 24px;margin-bottom:14px}.fb-hero h2{font-size:18px;font-weight:800;margin:0 0 3px}.fb-hero p{font-size:12px;opacity:.75;margin:0}.fb-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.fb-tabs button{padding:7px 14px;border-radius:8px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);font-family:inherit}.fb-tabs button.active{background:var(--g2);color:#fff;border-color:var(--g2)}.fb-wrap .sbl{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}.fb-wrap .simu-params-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:14px 18px}.fb-wrap .simu-params-body input,.fb-wrap .simu-params-body select,.fb-wrap td input,.fb-wrap td select{border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:13px;font-family:inherit;width:100%;box-sizing:border-box}.fb-wrap .simu-detail-line{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #f0f0f0}@media(max-width:700px){.fb-wrap{padding:10px}}</style>';
   var head='<div class="fb-hero"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"><div><div style="font-size:8px;font-weight:700;letter-spacing:2px;opacity:.7">SANIX AVINEST PRO</div><h2>🤝 Financement de bande — Investisseurs</h2><p>Financer l\'alimentation jusqu\'à la ponte · remboursement adossé aux ventes d\'œufs · sans entrée au capital</p></div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande</button><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production</button>'+(rec?'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDup()"><i class="fas fa-copy"></i></button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finImprimer()"><i class="fas fa-print"></i> Dossier PDF</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'pdf\')" title="Business plan PDF complet"><i class="fas fa-file-pdf"></i> PDF BP</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'word\')" title="Business plan Word"><i class="fas fa-file-word"></i> Word</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'excel\')" title="Business plan Excel"><i class="fas fa-file-excel"></i> Excel</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'ppt\')" title="Business plan PowerPoint"><i class="fas fa-file-powerpoint"></i> PowerPoint</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDel()"><i class="fas fa-trash"></i></button>':'')+'</div></div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande</button><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production</button>'+(rec?'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDup()"><i class="fas fa-copy"></i></button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finImprimerMenu()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'pdf\')" title="Business plan PDF complet"><i class="fas fa-file-pdf"></i> PDF BP</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'word\')" title="Business plan Word"><i class="fas fa-file-word"></i> Word</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'excel\')" title="Business plan Excel"><i class="fas fa-file-excel"></i> Excel</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'ppt\')" title="Business plan PowerPoint"><i class="fas fa-file-powerpoint"></i> PowerPoint</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finArchiver()" title="Archiver ce dossier"><i class="fas fa-box-archive"></i></button>':'')+'</div></div>'
     +(rec?'<div style="margin-top:12px"><select style="border-radius:6px;padding:5px 8px;font-size:12px;min-width:240px" onchange="finPick(this.value)">'+B.list.map(function(x){return '<option value="'+x.id+'"'+(x.id===rec.id?' selected':'')+'>'+esc(x.nom)+' — '+(x.portee==='production'?'en production':'nouvelle')+' · '+esc(x.statut||'brouillon')+'</option>';}).join('')+'</select></div>':'')+'</div>';
   if(!rec){
     ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd" style="text-align:center;padding:36px;color:var(--text3)"><i class="fas fa-handshake" style="font-size:42px;opacity:.3"></i><p style="margin:12px 0">Aucun dossier. Le premier est créé à partir de la Simulation de Déploiement de Bande (pondeuses).</p><button class="btn btn-p" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande (depuis la simulation)</button> <button class="btn btn-p" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production (lot réel)</button></div></div></div>';
@@ -25765,10 +25768,139 @@ async function renderFinBande(ca){
   try{ E=finRun(rec); }catch(e){ console.error(e); ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd">Erreur de calcul : '+esc(e.message)+'</div></div></div>'; return; }
   var t=B.tab||'synthese';
   if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
-  else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else body=await finTabSuivi(rec,E);
+  else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
   ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
+
+// ══ Cycle de vie du dossier : enregistrement, journal des modifications, verrouillage, archivage, suppression, impression ══
+var _finPrev={}, FIN_IGN={journal:1,docs:1,ts:1,reel:1,verrou:1,archive:1,ver:1};
+function finUserName(){ return (typeof currentUser!=='undefined'&&currentUser&&(currentUser.nom||currentUser.email||currentUser.username))||'—'; }
+function finShort(v){ var s=(v&&typeof v==='object')?JSON.stringify(v):String(v==null?'—':v); return s.length>60?s.slice(0,57)+'…':s; }
+function finDiff(a,b,p,out){
+  out=out||[]; p=p||'';
+  var oa=a&&typeof a==='object'&&!Array.isArray(a), ob=b&&typeof b==='object'&&!Array.isArray(b);
+  if(oa&&ob){ var keys={}; Object.keys(a).concat(Object.keys(b)).forEach(function(k){ if(!p&&FIN_IGN[k]) return; keys[k]=1; }); Object.keys(keys).forEach(function(k){ finDiff(a[k],b[k],p?p+'.'+k:k,out); }); }
+  else if(Array.isArray(a)&&Array.isArray(b)){ if(JSON.stringify(a)===JSON.stringify(b)) return out; if(a.length!==b.length){ out.push({c:p,a:a.length+' élément(s)',n:b.length+' élément(s)'}); return out; } for(var i=0;i<a.length;i++) finDiff(a[i],b[i],p+'['+i+']',out); }
+  else if(JSON.stringify(a)!==JSON.stringify(b)) out.push({c:p,a:finShort(a),n:finShort(b)});
+  return out;
+}
+// Enregistrement : journal des modifications (qui, quand, quel champ, ancienne → nouvelle valeur) et refus des modifications sur un dossier verrouillé
+async function finSave(rec){
+  var prevS=_finPrev[rec.id], diffs=[];
+  if(prevS){
+    var prev=JSON.parse(prevS); diffs=finDiff(prev,rec);
+    if(diffs.length&&rec.verrou&&diffs.some(function(d){return !/^(suivi|statut)/.test(d.c);})){
+      Object.keys(rec).forEach(function(k){ delete rec[k]; }); Object.assign(rec,prev);
+      toast('🔒 Dossier verrouillé (version v'+((prev.verrou&&prev.verrou.ver)||'?')+') : déverrouillez-le pour le modifier','err'); return;
+    }
+    if(diffs.length){ var u=finUserName(), ts=Date.now(), ent=diffs.length>12?[{c:'(modification multiple)',a:'',n:diffs.length+' champs'}]:diffs; rec.journal=(rec.journal||[]).concat(ent.map(function(d){ return {ts:ts,u:u,c:d.c,a:d.a,n:d.n}; })).slice(-400); }
+  }
+  await updRec(S.FINBANDE,rec.id,rec); _finPrev[rec.id]=JSON.stringify(rec);
+}
+async function finMeta(rec,j){ if(j) rec.journal=(rec.journal||[]).concat([{ts:Date.now(),u:finUserName(),c:j[0],a:j[1]||'',n:j[2]||''}]).slice(-400); await updRec(S.FINBANDE,rec.id,rec); _finPrev[rec.id]=JSON.stringify(rec); }
+async function finRegistrer(f,type,fmt){
+  var E=finRun(f), v=f.verrou?('v'+f.verrou.ver+' (émise)'):('brouillon v'+((f.ver||0)+1));
+  var key=JSON.stringify([f.taux,f.mode,f.sweepPct,f.differeMois,f.dureeRemb,Math.round(E.montant),(f.investisseurs||[]).length,f.simu,f.immos,f.com]);
+  f.docs=(f.docs||[]).concat([{ts:Date.now(),u:finUserName(),type:type,fmt:fmt,ver:v,montant:Math.round(E.montant),irr:E.irrInvN,solde:Math.round(E.soldeFin),hash:String(simpleHashLegacy(key)).toUpperCase().slice(0,10)}]).slice(-200);
+  await finMeta(f);
+}
+window.finEmettre=async function(){
+  var r=window._fb.rec; if(!r) return; if(r.verrou){ toast('Version déjà émise','err'); return; }
+  if(!confirm('Émettre la version v'+((r.ver||0)+1)+' ?\nLe dossier sera verrouillé : toute modification exigera un déverrouillage motivé (tracé).')) return;
+  r.ver=(r.ver||0)+1; r.verrou={ts:Date.now(),u:finUserName(),ver:r.ver};
+  await finMeta(r,['Version émise','','v'+r.ver]); await finRegistrer(r,'Émission de version','—'); finRefresh(); toast('🔒 Version v'+r.ver+' émise et verrouillée');
+};
+window.finDeverrouiller=async function(){
+  if(!canDelete('finbande')){ toast('⛔ Déverrouillage non autorisé pour votre rôle','err'); return; }
+  var r=window._fb.rec; if(!r||!r.verrou) return; var m=prompt('Motif du déverrouillage (obligatoire, tracé dans le journal) :'); if(!m||m.trim().length<3){ toast('Motif requis','err'); return; }
+  var v=r.verrou.ver; r.verrou=null; await finMeta(r,['Déverrouillage','v'+v,m.trim().slice(0,200)]); finRefresh(); toast('🔓 Dossier déverrouillé');
+};
+window.finArchiver=async function(){
+  if(!canDelete('finbande')){ toast('⛔ Archivage non autorisé pour votre rôle','err'); return; }
+  var r=window._fb.rec; if(!r) return; var m=prompt('Archiver « '+r.nom+' » ? Motif (facultatif) :',''); if(m===null) return;
+  r.archive={ts:Date.now(),u:finUserName(),motif:(m||'').slice(0,200)}; await finMeta(r,['Dossier archivé','',m||'']); window._fb.id=null; finRefresh(); toast('📦 Dossier archivé (restaurable depuis « Documents & historique »)');
+};
+window.finDel=window.finArchiver;
+window.finRestaurer=async function(id){
+  var r=((window._fb&&window._fb.all)||[]).filter(function(x){return x.id===id;})[0]; if(!r) return;
+  r.archive=null; await finMeta(r,['Dossier restauré','','']); window._fb.id=r.id; finRefresh(); toast('✅ Dossier restauré');
+};
+window.finSupprimerDef=async function(id){
+  if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée pour votre rôle','err'); return; }
+  var r=((window._fb&&window._fb.all)||[]).filter(function(x){return x.id===id;})[0]; if(!r) return;
+  if(!r.archive){ toast('Archivez d\'abord le dossier','err'); return; }
+  if(Object.keys(r.suivi||{}).length){ toast('Écritures comptables déjà passées — suppression refusée','err'); return; }
+  var t=prompt('SUPPRESSION DÉFINITIVE et irréversible.\nTapez le nom exact du dossier pour confirmer :\n'+r.nom); if(t!==r.nom){ toast('Confirmation incorrecte — suppression annulée','err'); return; }
+  try{ await addRec(S.ACTIVITY,{ts:Date.now(),date:new Date().toISOString().slice(0,10),user:finUserName(),action:'finbande.supprime',ref:r.nom,detail:JSON.stringify({id:r.id,statut:r.statut,ver:r.ver||0,docs:(r.docs||[]).length,montant:r.montantManuel||0})}); }catch(e){}
+  await delRec(S.FINBANDE,r.id); delete _finPrev[r.id]; if(window._fb.id===r.id) window._fb.id=null; finRefresh(); toast('🗑️ Dossier supprimé définitivement');
+};
+
+// ── Moteur d'impression : le business plan complet est rendu en HTML imprimable (mêmes chapitres que Word/PDF) ──
+function finBpHtml(D,o){
+  o=o||{}; var blocks=finBpBlocks(D), f=D.f, E=D.E, B=D.sc.base, S=D.S, out=[], n1=0, X=esc;
+  var tx=function(t){ return X(String(t==null?'':t)).replace(/\n/g,'<br>'); };
+  var css='@page{size:A4;margin:15mm 14mm}*{box-sizing:border-box}body{font-family:Calibri,Arial,sans-serif;font-size:11px;color:#1f2937;margin:0;line-height:1.45}.cover{background:#0b2b20;color:#fff;border-left:10px solid #16a34a;padding:60px 44px;min-height:230mm;page-break-after:always;position:relative}.cover .kick{color:#f59e0b;font-weight:700;letter-spacing:3px;font-size:12px}.cover h1{font-size:40px;line-height:1.12;margin:22px 0 14px;color:#fff}.cover h1 span{color:#86efac}.cover .sub{font-size:16px;color:#dcfce7}.cover .mut{color:#9ca3af;font-size:11px;margin-top:8px}.cover .ks{display:flex;gap:18px;margin-top:70px}.cover .ks div{flex:1;border-top:3px solid #f59e0b;padding-top:8px;font-size:11px;color:#9ca3af}.cover .ks b{display:block;color:#fff;font-size:18px;margin-top:3px}.qr{position:absolute;right:30px;bottom:24px;background:#fff;padding:6px;border-radius:6px}h1.c{font-size:20px;color:#14532d;border-bottom:2px solid #16a34a;padding-bottom:5px;margin:22px 0 12px;page-break-after:avoid}h2{font-size:13.5px;color:#14532d;margin:16px 0 8px;padding-left:8px;border-left:4px solid #16a34a;page-break-after:avoid}p{margin:0 0 8px}ul{margin:0 0 10px;padding-left:18px}li{margin-bottom:3px}table{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:10px;page-break-inside:auto}thead{display:table-header-group}tr{page-break-inside:avoid}th{background:#14532d;color:#fff;text-align:left;padding:5px 7px}td{padding:5px 7px;border-bottom:1px solid #e5e7eb;vertical-align:top}tbody tr:nth-child(even) td{background:#f3f6f4}.r{text-align:right}.neg{color:#dc2626}.tot td{background:#dcfce7!important;font-weight:700}.ks2{display:flex;gap:8px;margin:8px 0 12px}.ks2 div{flex:1;background:#f0fdf4;border-top:3px solid #16a34a;padding:8px 10px;font-size:10px;color:#6b7280}.ks2 b{display:block;font-size:17px;color:#14532d;margin:2px 0}.ks2 b.bad{color:#dc2626}.call{background:#fffbeb;border-left:5px solid #f59e0b;padding:10px 14px;margin:8px 0 12px}.call h3{margin:0 0 6px;font-size:12px;color:#14532d}.call p{margin:0 0 5px}.bar{display:flex;align-items:flex-end;gap:3px;height:120px;border-bottom:1px solid #e5e7eb;margin:6px 0 4px}.bar div{flex:1;background:#16a34a;min-height:1px}.barl{display:flex;gap:3px;font-size:8px;color:#6b7280}.barl span{flex:1;text-align:center}.pb{page-break-before:always}.toc a{display:block;color:#1f2937;text-decoration:none;padding:5px 0;border-bottom:1px dotted #d1d5db;font-size:12px}.wm{position:fixed;top:42%;left:6%;font-size:110px;font-weight:800;color:rgba(220,38,38,.10);transform:rotate(-28deg);z-index:0;pointer-events:none;letter-spacing:8px}@media print{.noprint{display:none}}';
+  out.push('<div class="cover"><div class="kick">BUSINESS PLAN · FINANCEMENT DE BANDE</div><h1>'+X(D.layer?'Élever '+finN(S.nbBetes)+' pondeuses,':'Élever '+finN(S.nbBetes)+' poulets de chair,')+'<br><span>'+X(D.layer?'financer la bande jusqu\'à la ponte':'financer le cycle')+'</span></h1><div class="sub">'+X(D.nom+(D.cfg.ville?' — '+D.cfg.ville:'')+(D.cfg.pays?', '+D.cfg.pays:''))+'</div><div class="mut">Dossier de financement partiel par des investisseurs / un établissement financier</div>'
+    +'<div class="ks"><div>Besoin<b>'+X(finMf(E.montant))+'</b></div><div>Taux / TEG<b>'+X(finN(f.taux)+' % / '+finP(B.teg))+'</b></div><div>TRI net financeur<b>'+X(finP(B.irr))+'</b></div><div>Version<b>'+X(f.verrou?'v'+f.verrou.ver:'brouillon')+'</b></div></div>'
+    +'<div class="mut" style="margin-top:40px">Document confidentiel — édité le '+new Date().toLocaleDateString('fr-FR')+' par '+X(finUserName())+'. Projections à valider avec l\'expert-comptable.</div>'+(o.qr?'<div class="qr">'+buildSecurityQR(D.cfg,'BUSINESS-PLAN',(f.nom||'')+(f.verrou?' v'+f.verrou.ver:' brouillon'),Math.round(E.montant),new Date().toISOString().slice(0,10))+'</div>':'')+'</div>');
+  var h1s=blocks.filter(function(k){return k.t==='h1';});
+  blocks.forEach(function(k){
+    if(k.t==='pb') out.push('<div class="pb"></div>');
+    else if(k.t==='toc') out.push('<div class="toc"><h1 class="c">Sommaire</h1>'+h1s.map(function(x,i){ return '<a href="#c'+i+'">'+X(x.x)+'</a>'; }).join('')+'</div>');
+    else if(k.t==='h1') out.push('<h1 class="c" id="c'+(n1++)+'">'+X(k.x)+'</h1>');
+    else if(k.t==='h2') out.push('<h2>'+X(k.x)+'</h2>');
+    else if(k.t==='p') out.push('<p'+(k.o.i?' style="font-style:italic;color:#6b7280;font-size:10px"':'')+(k.o.b?' style="font-weight:700"':'')+'>'+tx(k.x)+'</p>');
+    else if(k.t==='bl') out.push('<ul>'+k.a.map(function(t){ var p=Array.isArray(t)?t:[null,t]; return '<li>'+(p[0]?'<b>'+X(p[0])+'</b>':'')+tx(p[1])+'</li>'; }).join('')+'</ul>');
+    else if(k.t==='t'){ var r=k.o.right||[]; out.push('<table><thead><tr>'+k.head.map(function(h,j){ return '<th'+(r.indexOf(j)>=0?' class="r"':'')+'>'+X(h)+'</th>'; }).join('')+'</tr></thead><tbody>'+k.rows.map(function(row,i){ return '<tr'+(k.o.totalLast&&i===k.rows.length-1?' class="tot"':'')+'>'+row.map(function(v,j){ var neg=r.indexOf(j)>=0&&/^-\d/.test(String(v).trim()); return '<td class="'+(r.indexOf(j)>=0?'r':'')+(neg?' neg':'')+'">'+tx(v)+'</td>'; }).join('')+'</tr>'; }).join('')+'</tbody></table>'); }
+    else if(k.t==='k') out.push('<div class="ks2">'+k.items.map(function(it){ return '<div>'+X(it[0])+'<b'+(it[2]==='DC2626'?' class="bad"':'')+'>'+X(it[1])+'</b>'+X(it[3]||'')+'</div>'; }).join('')+'</div>');
+    else if(k.t==='c') out.push('<div class="call"><h3>'+X(k.title)+'</h3>'+k.lines.map(function(l){ var p=Array.isArray(l)?l:[null,l]; return '<p>'+(p[0]?'<b>'+X(p[0])+'</b>':'')+tx(p[1])+'</p>'; }).join('')+'</div>');
+    else if(k.t==='bar'){ var mx=Math.max.apply(null,k.values.concat([0.0001])); out.push('<p><b>'+X(k.title)+'</b></p><div class="bar">'+k.values.map(function(v){ return '<div style="height:'+Math.max(1,Math.round(v/mx*100))+'%"></div>'; }).join('')+'</div><div class="barl">'+k.labels.map(function(l){ return '<span>'+X(l)+'</span>'; }).join('')+'</div>'); }
+  });
+  return '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Business plan — '+X(D.titre)+'</title><style>'+css+'</style></head><body>'+(o.wm?'<div class="wm">BROUILLON</div>':'')+out.join('')+'</body></html>';
+}
+window.finImprimerMenu=function(){
+  var f=window._fb&&window._fb.rec; if(!f) return; var old=document.getElementById('finPrintM'); if(old) old.remove();
+  var m=document.createElement('div'); m.id='finPrintM'; m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:14px';
+  m.innerHTML='<div style="background:#fff;border-radius:14px;padding:22px;width:min(480px,94vw);font-size:13px"><h3 style="margin:0 0 12px">🖨️ Moteur d\'impression</h3>'
+    +'<label style="display:block;margin-bottom:6px;font-weight:600">Document</label><select id="fpDoc" style="width:100%;padding:7px;border-radius:8px;border:1.5px solid #d1d5db;margin-bottom:12px"><option value="bp">Business plan complet (16 chapitres + annexes)</option><option value="note">Note d\'information investisseur + convention type</option></select>'
+    +'<label style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><input type="checkbox" id="fpWm" '+(f.verrou?'':'checked')+'> Filigrane « BROUILLON » '+(f.verrou?'(version émise : désactivé)':'(version non émise)')+'</label>'
+    +'<label style="display:flex;gap:8px;align-items:center;margin-bottom:14px"><input type="checkbox" id="fpQr" checked> QR code de sécurité (authenticité du document)</label>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn btn-s btn-sm" onclick="document.getElementById(\'finPrintM\').remove()">Annuler</button><button class="btn btn-s btn-sm" onclick="finLancerImpression(\'view\')">Aperçu</button><button class="btn btn-p btn-sm" onclick="finLancerImpression(\'print\')"><i class="fas fa-print"></i> Imprimer</button></div></div>';
+  m.addEventListener('click',function(e){ if(e.target===m) m.remove(); }); document.body.appendChild(m);
+};
+window.finLancerImpression=async function(mode){
+  var f=window._fb&&window._fb.rec; if(!f) return; var g=function(i){ var e=document.getElementById(i); return e&&e.checked; }, doc=(document.getElementById('fpDoc')||{}).value||'bp', wm=g('fpWm'), qr=g('fpQr'), pm=document.getElementById('finPrintM'); if(pm) pm.remove();
+  try{
+    if(doc==='note'){ await window.finImprimer(); await finRegistrer(f,'Note investisseur','Impression'); }
+    else{
+      toast('Préparation du document…'); var D=await finBpData(f), html=finBpHtml(D,{wm:wm,qr:qr});
+      var w=window.open('','_blank','width=1000,height=780'); if(!w){ toast('Autoriser les pop-ups','err'); return; }
+      w.document.write(html); w.document.close(); if(mode==='print') setTimeout(function(){ try{ w.focus(); w.print(); }catch(e){} },900);
+      await finRegistrer(f,'Business plan',mode==='print'?'Impression':'Aperçu');
+    }
+    if(window._fb.tab==='docs') finRefresh();
+  }catch(e){ console.error(e); toast('Impression impossible : '+e.message,'err'); }
+};
+
+// ── Onglet « Documents & historique » ──
+function finTabDocs(f,E){
+  var fd=function(ts){ return new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); };
+  var docs=(f.docs||[]).slice().reverse(), jr=(f.journal||[]).slice().reverse().slice(0,100), arch=((window._fb&&window._fb.all)||[]).filter(function(x){return x.archive;});
+  var st=f.verrou?'<span class="badge b-r">🔒 Version v'+f.verrou.ver+' émise — verrouillé</span> <span style="font-size:11px;color:var(--text3)">le '+fd(f.verrou.ts)+' par '+esc(f.verrou.u)+'</span>':'<span class="badge b-a">✏️ Brouillon — modifiable (prochaine version : v'+((f.ver||0)+1)+')</span>';
+  var h='<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>📁 État du dossier</span><span>'+st+'</span></div><div class="card-bd" style="display:flex;gap:8px;flex-wrap:wrap">'
+    +(f.verrou?'<button class="btn btn-s btn-sm" onclick="finDeverrouiller()"><i class="fas fa-lock-open"></i> Déverrouiller (motif requis)</button>':'<button class="btn btn-p btn-sm" onclick="finEmettre()"><i class="fas fa-lock"></i> Émettre la version v'+((f.ver||0)+1)+' (verrouiller)</button>')
+    +'<button class="btn btn-s btn-sm" onclick="finDup()"><i class="fas fa-copy"></i> Dupliquer</button><button class="btn btn-s btn-sm" onclick="finArchiver()"><i class="fas fa-box-archive"></i> Archiver</button></div>'
+    +'<div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Émettre une version fige le dossier : toute modification est alors refusée tant qu\'il n\'est pas déverrouillé avec un motif (tracé au journal). Les écritures de suivi comptable restent possibles.</div></div>';
+  h+='<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🖨️ Impression et exports</span></div><div class="card-bd" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-p btn-sm" onclick="finImprimerMenu()"><i class="fas fa-print"></i> Imprimer…</button><button class="btn btn-s btn-sm" onclick="finExporter(\'pdf\')"><i class="fas fa-file-pdf"></i> PDF</button><button class="btn btn-s btn-sm" onclick="finExporter(\'word\')"><i class="fas fa-file-word"></i> Word</button><button class="btn btn-s btn-sm" onclick="finExporter(\'excel\')"><i class="fas fa-file-excel"></i> Excel</button><button class="btn btn-s btn-sm" onclick="finExporter(\'ppt\')"><i class="fas fa-file-powerpoint"></i> PowerPoint</button></div></div>';
+  h+='<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🗂️ Registre des documents émis</span><span style="font-size:11px;color:var(--text3)">'+docs.length+' enregistrement(s)</span></div><div class="card-bd tbl-wrap"><table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Utilisateur</th><th>Document</th><th>Format</th><th>Version</th><th>Montant</th><th>TRI net</th><th>Empreinte</th></tr></thead><tbody>'
+    +(docs.length?docs.map(function(d){ return '<tr><td>'+fd(d.ts)+'</td><td>'+esc(d.u)+'</td><td>'+esc(d.type)+'</td><td>'+esc(d.fmt)+'</td><td>'+esc(d.ver)+'</td><td style="text-align:right">'+ff(d.montant)+'</td><td style="text-align:right">'+finPc(d.irr)+'</td><td style="font-family:monospace">'+esc(d.hash)+'</td></tr>'; }).join(''):'<tr><td colspan="8" style="text-align:center;color:var(--text3)">Aucun document enregistré. Chaque impression ou export est consigné ici.</td></tr>')
+    +'</tbody></table><p style="font-size:10px;color:var(--text3);margin-top:6px">L\'empreinte identifie les paramètres du dossier au moment de l\'émission : deux documents de même empreinte reposent sur les mêmes hypothèses.</p></div></div>';
+  h+='<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🕑 Journal des modifications</span><span style="font-size:11px;color:var(--text3)">100 dernières</span></div><div class="card-bd tbl-wrap"><table class="tbl" style="font-size:11px"><thead><tr><th>Date</th><th>Utilisateur</th><th>Champ / action</th><th>Ancienne valeur</th><th>Nouvelle valeur</th></tr></thead><tbody>'
+    +(jr.length?jr.map(function(j){ return '<tr><td>'+fd(j.ts)+'</td><td>'+esc(j.u)+'</td><td>'+esc(j.c)+'</td><td>'+esc(j.a)+'</td><td>'+esc(j.n)+'</td></tr>'; }).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--text3)">Aucune modification enregistrée.</td></tr>')+'</tbody></table></div></div>';
+  if(arch.length) h+='<div class="card"><div class="card-hd"><span>📦 Dossiers archivés</span></div><div class="card-bd tbl-wrap"><table class="tbl" style="font-size:11px"><thead><tr><th>Dossier</th><th>Archivé le</th><th>Par</th><th>Motif</th><th></th></tr></thead><tbody>'+arch.map(function(a){ return '<tr><td>'+esc(a.nom)+'</td><td>'+fd(a.archive.ts)+'</td><td>'+esc(a.archive.u)+'</td><td>'+esc(a.archive.motif||'—')+'</td><td style="white-space:nowrap"><button class="btn btn-s btn-sm" onclick="finRestaurer('+a.id+')"><i class="fas fa-rotate-left"></i> Restaurer</button> <button class="btn btn-s btn-sm" style="color:var(--red)" onclick="finSupprimerDef('+a.id+')"><i class="fas fa-trash"></i> Supprimer</button></td></tr>'; }).join('')+'</tbody></table><p style="font-size:10px;color:var(--text3);margin-top:6px">Suppression définitive : réservée aux dossiers archivés sans écriture comptable, avec confirmation par saisie du nom, et consignée dans le journal d\'activité.</p></div></div>';
+  return h;
+}
 
 // ══ Export du business plan : Word, Excel, PowerPoint (générés dans le navigateur, bibliothèques locales chargées à la demande) ══
 var FIN_LIBS={docx:'vendor/docx.umd.js',exceljs:'vendor/exceljs.min.js',pptx:'vendor/pptxgen.bundle.js',jspdf:'vendor/jspdf.umd.min.js',autotable:'vendor/jspdf.plugin.autotable.min.js'}, _finLibP={};
@@ -25894,6 +26026,9 @@ function finBpBlocks(D){
   H2('8.2 Besoins et ressources');
   T(['Besoins','Montant'],D.plan.besoins.filter(function(x){return x[1]>0;}).map(function(x){return [x[0],finF(x[1])];}).concat([['TOTAL BESOINS',finF(D.plan.tb)]]),{right:[1],totalLast:true});
   T(['Ressources','Montant'],D.plan.ressources.filter(function(x){return x[1]>0;}).map(function(x){return [x[0],finF(x[1])];}).concat([['TOTAL RESSOURCES',finF(D.plan.tr)]]),{right:[1],totalLast:true});
+  var AQ=finAcquis(f);
+  if(AQ.on&&AQ.val>0) P('Acquis valorisés de la ferme pris en compte comme apport en nature : '+finF(AQ.val)+' ('+AQ.items.length+' actif(s) existant(s)), soit '+finN(E.montant>0?AQ.val/E.montant:0,2)+' × le financement demandé. Ils ne génèrent aucun décaissement et renforcent la couverture du financeur : la valorisation doit être justifiée (factures, titres de propriété, expertise) avant remise.');
+  else P('Les acquis existants de la ferme ne sont pas pris en compte dans le plan de financement.',{i:true});
   P(D.plan.ecart>=0?'Ressources supérieures aux besoins de '+finF(D.plan.ecart)+' : l\'excédent couvre le service de la dette (pic de trésorerie remboursements inclus : '+finF(D.peak)+').':'Besoin non couvert : '+finF(-D.plan.ecart)+' à financer (apport, banque). Pic de trésorerie remboursements inclus : '+finF(D.peak)+'.',{b:D.plan.ecart<0});
   H2('8.3 Calendrier des tirages');
   T(['Mois','Date','Tirage','Cumul tiré'],E.rows.filter(function(r){return r.tir>0;}).map(function(r,i,a){ return ['M'+r.t,r.date,finF(r.tir),finF(a.slice(0,i+1).reduce(function(s,x){return s+x.tir;},0))]; }),{right:[2,3]});
@@ -26269,7 +26404,7 @@ window.finExporter=async function(kind){
   toast('Génération en cours…');
   try{
     var D=await finBpData(f), blob=await (kind==='word'?finBpWord(D):kind==='excel'?finBpExcel(D):kind==='pdf'?finBpPdf(D):finBpPpt(D));
-    finDownload(blob,finFileName(f,tag)); toast('✓ Business plan exporté ('+tag.toUpperCase()+')');
+    finDownload(blob,finFileName(f,tag)); await finRegistrer(f,'Business plan',{word:'Word',excel:'Excel',ppt:'PowerPoint',pdf:'PDF'}[kind]); toast('✓ Business plan exporté ('+tag.toUpperCase()+')'); if(window._fb.tab==='docs') finRefresh();
   }catch(e){ console.error(e); toast('Export impossible : '+e.message,'err'); }
 };
 
