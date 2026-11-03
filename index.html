@@ -24793,7 +24793,7 @@ window.finSet=async function(k,v,num){ var r=window._fb.rec; if(!r) return; r[k]
 window.finSetBool=async function(k,v){ var r=window._fb.rec; r[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetG=async function(k,v){ var r=window._fb.rec; r.garanties=r.garanties||{}; r.garanties[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetSimu=async function(k,v){ var r=window._fb.rec; r.simu=r.simu||{}; r.simu[k]=parseFloat(v)||0; await finSave(r); finRefresh(); };
-window.finTab=function(t){ window._fb.tab=t; finRefresh(); };
+window.fbTab=function(t){ window._fb.tab=t; finRefresh(); };
 window.finPick=function(id){ window._fb.id=parseInt(id)||null; window._fb.mc=null; finRefresh(); };
 window.finNew=async function(){
   var sp={}; try{ sp=JSON.parse(localStorage.getItem('avico_simu_params')||'{}'); }catch(e){}
@@ -25079,7 +25079,7 @@ async function renderFinBande(ca){
   var t=B.tab||'synthese';
   if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else body=await finTabSuivi(rec,E);
-  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="finTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+body+'</div>';
+  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
 
