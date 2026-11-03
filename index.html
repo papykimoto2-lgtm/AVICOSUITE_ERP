@@ -25225,7 +25225,7 @@ window.finSetG=async function(k,v){ var r=window._fb.rec; r.garanties=r.garantie
 window.finSetSimuTxt=async function(k,v){ var r=window._fb.rec; r.simu=Object.assign({},r.simu); r.simu[k]=v; await finSave(r); finRefresh(); };
 window.finSetSimuBool=async function(k,v){ var r=window._fb.rec; r.simu=Object.assign({},r.simu); r.simu[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetSimu=async function(k,v){ var r=window._fb.rec; r.simu=r.simu||{}; r.simu[k]=parseFloat(v)||0; await finSave(r); finRefresh(); };
-window.fbTab=function(t){ window._fb.tab=t; finRefresh(); };
+window.fbTab=function(t){ finEditImmo=null; window._fb.tab=t; finRefresh(); };
 window.finPick=function(id){ window._fb.id=parseInt(id)||null; window._fb.mc=null; finRefresh(); };
 // Valeurs usuelles selon portée + type (semPonte = dernière semaine financée, relative au départ du dossier)
 function finDefauts(portee,type){
@@ -25320,7 +25320,17 @@ window.finAddImmo=async function(){
   r.immos=(r.immos||[]).concat([{libelle:lib,cat:g('fm_cat'),valeur:val,dureeAns:parseFloat(g('fm_dur'))||5,quote:parseFloat(g('fm_q'))||100,residuel:parseFloat(g('fm_res'))||0,date:g('fm_date')||r.dateDebut,neuf:!!(document.getElementById('fm_neuf')||{}).checked}]);
   await finSave(r); finRefresh();
 };
-window.finDelImmo=async function(i){ if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée','err'); return; } var r=window._fb.rec; r.immos.splice(i,1); await finSave(r); finRefresh(); };
+var finEditImmo=null;
+window.finEditImmoStart=function(i){ finEditImmo=i; finRefresh(); setTimeout(function(){ var e=document.getElementById('fm_lib'); if(e) e.scrollIntoView({block:'center'}); },50); };
+window.finEditImmoCancel=function(){ finEditImmo=null; finRefresh(); };
+window.finSaveImmo=async function(){
+  var r=window._fb.rec; if(!r||finEditImmo==null||!(r.immos||[])[finEditImmo]) return; var g=function(i){return (document.getElementById(i)||{}).value||'';};
+  var val=parseFloat(g('fm_val'))||0; if(val<=0){ toast('Valeur requise','err'); return; }
+  var old=r.immos[finEditImmo], q=parseFloat(g('fm_q')), dur=parseFloat(g('fm_dur'));
+  r.immos[finEditImmo]=Object.assign({},old,{libelle:g('fm_lib').trim()||((FIN_IMMO_CAT.filter(function(c){return c[0]===g('fm_cat');})[0]||[])[1]||'Matériel'),cat:g('fm_cat'),valeur:val,dureeAns:dur>0?dur:5,quote:isNaN(q)?100:Math.min(100,Math.max(0,q)),residuel:Math.max(0,parseFloat(g('fm_res'))||0),date:g('fm_date')||r.dateDebut,neuf:!!(document.getElementById('fm_neuf')||{}).checked});
+  finEditImmo=null; await finSave(r); finRefresh(); toast('Ligne modifiée','ok');
+};
+window.finDelImmo=async function(i){ if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée','err'); return; } var r=window._fb.rec; r.immos.splice(i,1); finEditImmo=null; await finSave(r); finRefresh(); };
 window.finImmoCat=function(sel){ var c=FIN_IMMO_CAT.filter(function(x){return x[0]===sel.value;})[0], d=document.getElementById('fm_dur'); if(c&&d) d.value=c[2]; };
 window.finMCrun=function(){
   var r=window._fb.rec; if(!r) return; toast('Simulation Monte Carlo (400 tirages)…');
@@ -25444,12 +25454,14 @@ function finAmortHtml(f){
 }
 function finBlocImmos(f,E){
   var im=f.immos||[], det=E.imm.det, today=f.dateDebut||new Date().toISOString().slice(0,10);
+  var ed=(finEditImmo!=null&&im[finEditImmo])?im[finEditImmo]:null; if(finEditImmo!=null&&!ed) finEditImmo=null;
+  var ev=function(k,d){ return ed&&ed[k]!=null?esc(String(ed[k])):d; };
   return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🏗️ Investissements matériels & amortissement</span><span style="font-size:11px;color:var(--text3)">Dotation mensuelle imputée : '+finM(E.imm.mensTot)+' · acquisitions : '+finM(E.imm.capexTot)+'</span></div><div class="card-bd tbl-wrap">'
     +'<table class="tbl" style="font-size:11px"><thead><tr><th>Matériel</th><th>Valeur</th><th>Durée (ans)</th><th>Quote bande</th><th>Mise en service</th><th>Statut</th><th>Dotation/mois</th><th>VNC fin période</th><th></th></tr></thead><tbody>'
-    +im.map(function(m,i){ var d=det[i]||{mens:0,vnc:0}; return '<tr><td>'+esc(m.libelle)+'</td><td>'+ff(m.valeur)+'</td><td>'+m.dureeAns+'</td><td>'+(m.quote==null?100:m.quote)+' %</td><td>'+esc(m.date||'')+'</td><td>'+(m.neuf?'<span class="badge b-a">À acquérir</span>':'<span class="badge b-gr">Déjà possédé</span>')+'</td><td>'+ff(d.mens)+'</td><td>'+ff(d.vnc)+'</td><td><button class="btn btn-s btn-sm" onclick="finDelImmo('+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
-    +'<tr><td><input id="fm_lib" placeholder="Libellé (optionnel)"><select id="fm_cat" onchange="finImmoCat(this)">'+FIN_IMMO_CAT.map(function(c){return '<option value="'+c[0]+'">'+c[1]+'</option>';}).join('')+'</select></td>'
-    +'<td><input id="fm_val" type="number" placeholder="Valeur F"><input id="fm_res" type="number" placeholder="Résiduel F"></td><td><input id="fm_dur" type="number" value="'+FIN_IMMO_CAT[0][2]+'"></td><td><input id="fm_q" type="number" value="100"></td><td><input id="fm_date" type="date" value="'+esc(today)+'"></td>'
-    +'<td><label style="font-size:11px"><input id="fm_neuf" type="checkbox"> à acquérir</label></td><td colspan="3"><button class="btn btn-p btn-sm" onclick="finAddImmo()"><i class="fas fa-plus"></i> Ajouter</button></td></tr>'
+    +im.map(function(m,i){ var d=det[i]||{mens:0,vnc:0}; return '<tr'+(finEditImmo===i?' style="background:#fef9c3"':'')+'><td>'+esc(m.libelle)+'</td><td>'+ff(m.valeur)+'</td><td>'+m.dureeAns+'</td><td>'+(m.quote==null?100:m.quote)+' %</td><td>'+esc(m.date||'')+'</td><td>'+(m.neuf?'<span class="badge b-a">À acquérir</span>':'<span class="badge b-gr">Déjà possédé</span>')+'</td><td>'+ff(d.mens)+'</td><td>'+ff(d.vnc)+'</td><td style="white-space:nowrap"><button class="btn btn-s btn-sm" title="Modifier cette ligne" onclick="finEditImmoStart('+i+')"><i class="fas fa-pen"></i></button> <button class="btn btn-s btn-sm" title="Supprimer" onclick="finDelImmo('+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
+    +'<tr'+(ed?' style="background:#fef9c3"':'')+'><td>'+(ed?'<div style="font-size:11px;font-weight:700;margin-bottom:3px">✏️ Modification de la ligne n° '+(finEditImmo+1)+'</div>':'')+'<input id="fm_lib" placeholder="Libellé (optionnel)" value="'+ev('libelle','')+'"><select id="fm_cat" onchange="finImmoCat(this)">'+FIN_IMMO_CAT.map(function(c){return '<option value="'+c[0]+'"'+(ed&&ed.cat===c[0]?' selected':'')+'>'+c[1]+'</option>';}).join('')+'</select></td>'
+    +'<td><input id="fm_val" type="number" placeholder="Valeur F" value="'+ev('valeur','')+'"><input id="fm_res" type="number" placeholder="Résiduel F" value="'+ev('residuel','')+'"></td><td><input id="fm_dur" type="number" value="'+ev('dureeAns',FIN_IMMO_CAT[0][2])+'"></td><td><input id="fm_q" type="number" value="'+ev('quote','100')+'"></td><td><input id="fm_date" type="date" value="'+(ed&&ed.date?esc(ed.date):esc(today))+'"></td>'
+    +'<td><label style="font-size:11px"><input id="fm_neuf" type="checkbox"'+(ed&&ed.neuf?' checked':'')+'> à acquérir</label></td><td colspan="3">'+(ed?'<button class="btn btn-p btn-sm" onclick="finSaveImmo()"><i class="fas fa-check"></i> Enregistrer</button> <button class="btn btn-s btn-sm" onclick="finEditImmoCancel()">Annuler</button>':'<button class="btn btn-p btn-sm" onclick="finAddImmo()"><i class="fas fa-plus"></i> Ajouter</button>')+'</td></tr>'
     +'</tbody></table>'
     +'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finInitImmos()"><i class="fas fa-list-check"></i> Charger les investissements types ('+(f.typeLot==='broiler'?'chair':'pondeuses')+')</button> <span style="font-size:11px;color:var(--text3)">Valeurs indicatives par sujet logé, à confirmer par devis ; durées d\'amortissement usuelles.</span></div></div>'
     +finAmortHtml(f)
