@@ -25801,9 +25801,28 @@ async function renderFinBande(ca){
   var t=B.tab||'synthese';
   if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
-  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+body+'</div>';
+  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
+// Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
+const FIN_NOTES = {
+  synthese:'Vue d\'ensemble du dossier : besoin de financement, coût pour la ferme, rendement des investisseurs (TRI), indicateurs clés et points de contrôle. À consulter en premier ; tous les chiffres sont recalculés dès qu\'un onglet est modifié.',
+  montage:'Paramétrage du dossier : hypothèses de la bande (effectif, prix, mortalité, ponte), objets financés, conditions de financement et liste des investisseurs avec leur ticket et leur type de financement. C\'est l\'onglet où l\'on saisit les données de départ.',
+  commercial:'Plan commercial (débouchés, prix, volumes d\'œufs ou de viande) et charges externes de la bande. Ces éléments alimentent le compte d\'exploitation et la capacité de remboursement.',
+  plan:'Plan de financement : besoins (investissements, fonds de roulement) face aux ressources (capital, emprunts, investisseurs). Les options « Cheptel existant » et « Stocks existants » y valorisent, avec décote de prudence, les actifs déjà détenus par la ferme comme apport en nature (sans effet sur la trésorerie). Le bilan d\'ouverture en découle.',
+  cep:'Compte d\'exploitation prévisionnel (SYSCOHADA) : produits, charges, résultat, capacité d\'autofinancement et trésorerie mois par mois, intérêts du financement inclus.',
+  echeancier:'Tableau d\'amortissement : calendrier des tirages et des remboursements (capital, intérêts, différé) pour chaque investisseur, selon le type de financement choisi.',
+  evaluation:'Évaluation de l\'opération : rentabilité pour l\'investisseur (TRI brut et net, TEG), délai de retour et valeur créée pour la ferme. Sert à juger si les conditions proposées sont équilibrées.',
+  risques:'Tests de robustesse : scénarios (mortalité, prix, retard de ponte…) et simulation probabiliste (P10 / P50 / P90). Montre dans quelles conditions le remboursement reste assuré.',
+  juridique:'Cadre juridique et fiscal, garanties, contrôle (KYC/LBC-FT, seuil d\'appel public à l\'épargne) et convention de financement par investisseur. Modèles indicatifs, à faire valider par un conseil juridique.',
+  suivi:'Suivi de la bande une fois financée (réel vs prévu) et écritures comptables générées : fonds reçus (compte 168), intérêts (671), remboursements.',
+  docs:'Exports (Word, Excel, PowerPoint, PDF), pièces jointes et journal des modifications du dossier.'
+};
+function finNote(t){
+  var n=FIN_NOTES[t]; if(!n) return '';
+  var open=true; try{ open=localStorage.getItem('finNote_'+t)!=='0'; }catch(e){}
+  return '<details class="fb-note" '+(open?'open':'')+' ontoggle="try{localStorage.setItem(\'finNote_'+t+'\',this.open?\'1\':\'0\')}catch(e){}" style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:10px;padding:8px 14px;margin:0 0 14px;font-size:12px;color:#1e3a8a"><summary style="cursor:pointer;font-weight:700"><i class="fas fa-circle-info"></i> À quoi sert cet onglet ?</summary><div style="margin-top:6px;line-height:1.5">'+n+'</div></details>';
+}
 
 // ══ Cycle de vie du dossier : enregistrement, journal des modifications, verrouillage, archivage, suppression, impression ══
 var _finPrev={}, FIN_IGN={journal:1,docs:1,ts:1,reel:1,verrou:1,archive:1,ver:1};
