@@ -25153,6 +25153,7 @@ function finConformite(f, E){
   add(nInv<FIN_SEUIL_APE-10?'ok':'ko','Investisseurs : '+nInv+' — seuil indicatif d\'appel public à l\'épargne : '+FIN_SEUIL_APE+' personnes sans lien (à vérifier) ; surtout : aucune publicité ni démarchage, collecte occasionnelle.');
   add(nInv>0&&tot>=E.montant?'ok':'warn','Tickets souscrits '+finM(tot)+' / besoin '+finM(E.montant)+'.');
   add((f.investisseurs||[]).every(function(i){return i.nom&&i.contact&&i.origine;})&&nInv>0?'ok':'warn','Identification (KYC/LBC-FT) : nom + contact + origine des fonds pour chaque investisseur.');
+  var AQ=finAcquis(f); add(AQ.on&&AQ.val>0?(AQ.val>=E.montant?'ok':'warn'):'warn',AQ.on&&AQ.val>0?'Acquis valorisés de la ferme pris en compte : '+finM(AQ.val)+' ('+(E.montant>0?(AQ.val/E.montant).toFixed(2):'—')+' × le financement) — couverture complémentaire du financeur.':'Acquis valorisés de la ferme non pris en compte (option « Non » ou aucun actif existant saisi).');
   add(Object.keys(g).some(function(k){return g[k];})?'ok':'warn','Au moins une sûreté/garantie retenue (voir onglet Juridique).');
   add(g.assurance?'ok':'warn','Assurance mortalité/sinistre sur la bande.');
   add(E.ltv!=null&&E.ltv<=0.8?'ok':'warn','Dette / valeur des poulettes à la ponte : '+finPc(E.ltv)+' (cible ≤ 80 %).');
@@ -25452,6 +25453,7 @@ function finBlocImmos(f,E){
     +'</tbody></table>'
     +'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finInitImmos()"><i class="fas fa-list-check"></i> Charger les investissements types ('+(f.typeLot==='broiler'?'chair':'pondeuses')+')</button> <span style="font-size:11px;color:var(--text3)">Valeurs indicatives par sujet logé, à confirmer par devis ; durées d\'amortissement usuelles.</span></div></div>'
     +finAmortHtml(f)
+    +'<div style="padding:10px 18px;border-top:1px solid var(--border);display:flex;gap:12px;align-items:center;flex-wrap:wrap"><strong style="font-size:12px">Prendre en compte les acquis valorisés de la ferme ?</strong><select onchange="finSetAcquis(this.value)" style="padding:5px 8px;border-radius:6px"><option value="1"'+(f.acquisOn!==false?' selected':'')+'>Oui</option><option value="0"'+(f.acquisOn===false?' selected':'')+'>Non</option></select><span style="font-size:11px;color:var(--text3)">'+(function(){ var A=finAcquis(f); return A.items.length?(A.on?'Oui : '+finM(A.val)+' d\'actifs existants comptés en apport en nature (plan de financement, couverture du financeur). Aucun effet sur la trésorerie.':'Non : '+finM(A.val)+' d\'actifs existants ignorés dans le plan de financement.'):'Aucun investissement « déjà possédé » saisi : chargez les investissements types ou ajoutez vos actifs existants.'; })()+'</span></div>'
     +'<div class="simu-params-body">'+finChk('Cheptel pondeuses : élevage immobilisé puis amorti sur la ponte','pouletteImmo',f.pouletteImmo!==false,'finSetBool')
     +finIn('Valeur de reprise du matériel en fin de période (% VNC)','reprisePct',f.reprisePct==null?50:f.reprisePct,5)+finIn('Impôt sur le résultat (%) — 0 si exonéré','tauxIS',f.tauxIS||0,1)+'</div>'
     +'<div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Amortissement linéaire, durées indicatives (bâtiment 20 ans, cages 10, mangeoires 5…) à valider par l\'expert-comptable. <strong>Quote bande</strong> : part du matériel imputée à cette bande si plusieurs bandes l\'utilisent. <strong>À acquérir</strong> : décaissé au mois de mise en service (fonds propres) ; sinon seul l\'amortissement est comptabilisé. Sans matériel saisi, le forfait « amortissement » de la Simulation est utilisé. L\'amortissement n\'est pas une sortie de trésorerie.</div></div>';
@@ -25545,15 +25547,21 @@ function finTabMontage(f,E){
 }
 
 // Plan de financement (besoins / ressources) et bilan d'ouverture
+// Acquis valorisés de la ferme : immobilisations déjà possédées (terrain, bâtiments, matériel…) valorisées à leur valeur retenue × quote bande ; option Oui/Non
+function finAcquis(f){
+  var items=(f.immos||[]).filter(function(i){return !i.neuf;}).map(function(i){ return {lib:i.libelle||'—',cat:i.cat,val:(+i.valeur||0)*((i.quote==null?100:+i.quote)/100)}; }).filter(function(x){return x.val>0;});
+  return {on:f.acquisOn!==false,items:items,val:items.reduce(function(a,x){return a+x.val;},0)};
+}
+window.finSetAcquis=async function(v){ var r=window._fb.rec; r.acquisOn=(v==='1'); await finSave(r); finRefresh(); };
 function finPlanCalc(f,E){
-  var pl=f.plan||{}, v=function(k){return +pl[k]||0;};
+  var pl=f.plan||{}, v=function(k){return +pl[k]||0;}, AQ=finAcquis(f), aq=(AQ.on&&AQ.val>0)?AQ.val:0;
   var besoins=[['Frais d\'établissement',v('fraisEtab'),'fraisEtab'],['Immobilisations incorporelles (logiciel, licences)',v('incorp'),'incorp'],['Immobilisations corporelles à acquérir (voir Montage)',E.imm.capexTot],
-    ['Immobilisations financières (cautions, dépôts)',v('immoFin'),'immoFin'],['Besoin en fonds de roulement (pic de trésorerie d\'exploitation)',E.bfrPic],['Frais de dossier du financement',E.frais]];
+    ['Immobilisations financières (cautions, dépôts)',v('immoFin'),'immoFin'],['Besoin en fonds de roulement (pic de trésorerie d\'exploitation)',E.bfrPic],['Frais de dossier du financement',E.frais]].concat(aq?[['Immobilisations existantes mises à disposition (acquis valorisés de la ferme)',aq]]:[]);
   var ressources=[['Apport en capital',v('capital'),'capital'],['Comptes courants d\'associés',v('cca'),'cca'],['Subvention d\'investissement',v('subvention'),'subvention'],['Emprunt bancaire moyen / long terme',v('empruntBanque'),'empruntBanque'],
-    ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)',E.montant]];
+    ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)',E.montant]].concat(aq?[['Apport en nature : acquis valorisés de la ferme',aq]]:[]);
   var tb=besoins.reduce(function(a,x){return a+x[1];},0), tr=ressources.reduce(function(a,x){return a+x[1];},0);
   var immoTot=v('fraisEtab')+v('incorp')+E.imm.capexTot+v('immoFin');
-  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-E.montant;
+  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-E.montant-aq;
   return {besoins:besoins,ressources:ressources,tb:tb,tr:tr,ecart:tr-tb,immoTot:immoTot,tir1:tir1,aTirer:Math.max(0,E.montant-tir1),totPassif:hors+tir1,dispo:hors+tir1-immoTot,pl:pl};
 }
 function finTabPlan(f,E){
@@ -26018,6 +26026,9 @@ function finBpBlocks(D){
   H2('8.2 Besoins et ressources');
   T(['Besoins','Montant'],D.plan.besoins.filter(function(x){return x[1]>0;}).map(function(x){return [x[0],finF(x[1])];}).concat([['TOTAL BESOINS',finF(D.plan.tb)]]),{right:[1],totalLast:true});
   T(['Ressources','Montant'],D.plan.ressources.filter(function(x){return x[1]>0;}).map(function(x){return [x[0],finF(x[1])];}).concat([['TOTAL RESSOURCES',finF(D.plan.tr)]]),{right:[1],totalLast:true});
+  var AQ=finAcquis(f);
+  if(AQ.on&&AQ.val>0) P('Acquis valorisés de la ferme pris en compte comme apport en nature : '+finF(AQ.val)+' ('+AQ.items.length+' actif(s) existant(s)), soit '+finN(E.montant>0?AQ.val/E.montant:0,2)+' × le financement demandé. Ils ne génèrent aucun décaissement et renforcent la couverture du financeur : la valorisation doit être justifiée (factures, titres de propriété, expertise) avant remise.');
+  else P('Les acquis existants de la ferme ne sont pas pris en compte dans le plan de financement.',{i:true});
   P(D.plan.ecart>=0?'Ressources supérieures aux besoins de '+finF(D.plan.ecart)+' : l\'excédent couvre le service de la dette (pic de trésorerie remboursements inclus : '+finF(D.peak)+').':'Besoin non couvert : '+finF(-D.plan.ecart)+' à financer (apport, banque). Pic de trésorerie remboursements inclus : '+finF(D.peak)+'.',{b:D.plan.ecart<0});
   H2('8.3 Calendrier des tirages');
   T(['Mois','Date','Tirage','Cumul tiré'],E.rows.filter(function(r){return r.tir>0;}).map(function(r,i,a){ return ['M'+r.t,r.date,finF(r.tir),finF(a.slice(0,i+1).reduce(function(s,x){return s+x.tir;},0))]; }),{right:[2,3]});
