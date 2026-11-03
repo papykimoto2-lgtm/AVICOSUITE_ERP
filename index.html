@@ -3115,41 +3115,22 @@ const defaultProphy=[
   {type:'layer',ageDays:56,action:'Vaccin EDS',productRequired:'Vaccin EDS',unit:'dose'},
   {type:'layer',ageDays:112,action:'Rappel EDS avant ponte',productRequired:'Vaccin EDS',unit:'dose'},
 ];
+// ── Référentiel souches : facteurs d'ingéré relatifs à la référence (pondeuse : table « Général » ; chair : simulation calée Ross 308) ──
+// Dérivés des tables nutritionnelles ci-dessous (écarts moyens par phase). Pic de ponte guide = repère affiché, jamais appliqué automatiquement
+// (le taux de ponte saisi reste maître : il intègre déjà la souche et les conditions de la ferme).
+const BREED_STD={
+  layer:{'Général':{feedF:1,pic:null},'Isa Brown':{feedF:1.02,pic:95},'Lohmann Brown':{feedF:0.98,pic:94},'Hy-Line Brown':{feedF:1.01,pic:95}},
+  broiler:{'Général':{feedF:1},'Ross 308':{feedF:1},'Cobb 500':{feedF:1.04},'Arbor Acres':{feedF:0.96},'Hubbard Classic':{feedF:0.94}}
+};
+function breedStd(type,breed){ var t=BREED_STD[type==='broiler'?'broiler':'layer']; return t[breed]||t['Général']; }
+// Phases pondeuse en JOURS d'âge, alignées sur la Simulation (S1-6, S7-18, S19-24, S25-40, S41-56, S57+) ; ingéré « Général » en g/sujet/j
+const LAYER_PH=[[0,41,'Démarrage',22],[42,125,'Poulette',55],[126,167,'Pré-ponte',98],[168,279,'Pic de ponte',118],[280,391,'Ponte soutenue',115],[392,999,'Ponte tardive',108]];
+function layerFeed(breed,phase){ var r=LAYER_PH.filter(function(x){return x[2]===phase;})[0]; return r?Math.round(r[3]*breedStd('layer',breed).feedF):0; }
+function layerWater(breed,phase){ return layerFeed(breed,phase)*2; }
 // ── Tables nutritionnelles de référence par souche ──
 // Structure : nutDataByBreed[type][breed] = [...phases]
 const nutDataByBreed={
-  layer:{
-    'Général':[
-      {ageMin:0,ageMax:6,feedGPD:12,waterMlPD:25,phase:'Démarrage'},
-      {ageMin:7,ageMax:20,feedGPD:35,waterMlPD:70,phase:'Poulette'},
-      {ageMin:21,ageMax:42,feedGPD:55,waterMlPD:110,phase:'Pré-ponte'},
-      {ageMin:43,ageMax:200,feedGPD:115,waterMlPD:230,phase:'Ponte'}
-    ],
-    'Isa Brown':[
-      {ageMin:0,ageMax:6,feedGPD:14,waterMlPD:28,phase:'Démarrage'},
-      {ageMin:7,ageMax:20,feedGPD:36,waterMlPD:72,phase:'Poulette'},
-      {ageMin:21,ageMax:42,feedGPD:57,waterMlPD:114,phase:'Pré-ponte'},
-      {ageMin:43,ageMax:72,feedGPD:118,waterMlPD:236,phase:'Pic de ponte'},
-      {ageMin:73,ageMax:100,feedGPD:116,waterMlPD:232,phase:'Ponte soutenue'},
-      {ageMin:101,ageMax:200,feedGPD:113,waterMlPD:226,phase:'Ponte tardive'}
-    ],
-    'Lohmann Brown':[
-      {ageMin:0,ageMax:6,feedGPD:13,waterMlPD:26,phase:'Démarrage'},
-      {ageMin:7,ageMax:20,feedGPD:34,waterMlPD:68,phase:'Poulette'},
-      {ageMin:21,ageMax:42,feedGPD:56,waterMlPD:112,phase:'Pré-ponte'},
-      {ageMin:43,ageMax:72,feedGPD:112,waterMlPD:224,phase:'Pic de ponte'},
-      {ageMin:73,ageMax:100,feedGPD:112,waterMlPD:224,phase:'Ponte soutenue'},
-      {ageMin:101,ageMax:200,feedGPD:110,waterMlPD:220,phase:'Ponte tardive'}
-    ],
-    'Hy-Line Brown':[
-      {ageMin:0,ageMax:6,feedGPD:13,waterMlPD:26,phase:'Démarrage'},
-      {ageMin:7,ageMax:20,feedGPD:36,waterMlPD:72,phase:'Poulette'},
-      {ageMin:21,ageMax:42,feedGPD:58,waterMlPD:116,phase:'Pré-ponte'},
-      {ageMin:43,ageMax:72,feedGPD:114,waterMlPD:228,phase:'Pic de ponte'},
-      {ageMin:73,ageMax:100,feedGPD:114,waterMlPD:228,phase:'Ponte soutenue'},
-      {ageMin:101,ageMax:200,feedGPD:111,waterMlPD:222,phase:'Ponte tardive'}
-    ]
-  },
+  layer:Object.keys(BREED_STD.layer).reduce(function(o,b){ o[b]=LAYER_PH.map(function(x){ return {ageMin:x[0],ageMax:x[1],feedGPD:layerFeed(b,x[2]),waterMlPD:layerWater(b,x[2]),phase:x[2]}; }); return o; },{}),
   broiler:{
     'Général':[
       {ageMin:0,ageMax:9,feedGPD:22,waterMlPD:44,phase:'Démarrage'},
@@ -3191,7 +3172,8 @@ const nutData={
 function getNut(type,age,breed){
   const breedKey=breed&&nutDataByBreed[type]&&nutDataByBreed[type][breed]?breed:'Général';
   const table=nutDataByBreed[type]?nutDataByBreed[type][breedKey]:(nutData[type]||[]);
-  return table.find(r=>age>=r.ageMin&&age<=r.ageMax)||null;
+  if(!table||!table.length) return null;
+  return table.find(r=>age>=r.ageMin&&age<=r.ageMax)||(age<table[0].ageMin?table[0]:table[table.length-1]);
 }
 function getAge(start){return start?Math.max(0,Math.floor((Date.now()-new Date(start))/(86400000))):0;}
 function getPhase(type,age){
@@ -6478,6 +6460,7 @@ async function renderLotNutrition(lot,el){
   // Phase active : priorité breed du lot, sinon Général
   const breedForActive=(availableBreeds.includes(lotBreed)&&lotBreed!=='Général')?lotBreed:'Général';
   const rowsForActive=allNuts.filter(n=>n.type===lot.type&&(n.breed||'Général')===breedForActive).sort((a,b)=>a.ageMin-b.ageMin);
+  const nutAncien=lot.type==='layer'&&nutLegacy(allNuts.filter(n=>n.type==='layer'));
   const active=rowsForActive.find(n=>age>=n.ageMin&&age<=n.ageMax);
 
   const phaseColors={'Démarrage':'var(--blue)','Poulette':'var(--g2)','Pré-ponte':'var(--amber-d)','Pic de ponte':'#7c3aed','Ponte soutenue':'var(--g2)','Ponte tardive':'var(--text2)','Croissance':'var(--g2)','Finition':'var(--amber-d)','Finition tardive':'var(--red)'};
@@ -6519,6 +6502,7 @@ async function renderLotNutrition(lot,el){
 
   el.innerHTML=`
     ${activeBand}
+    ${nutAncien?'<div style="background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px">⚠️ <strong>Protocole pondeuse ancien</strong> : âges saisis en semaines (J0–J6, J7–J20…) alors que l\'âge du lot est en jours. Le suivi aliment utilise provisoirement les tables corrigées. Cliquez <strong>Réinitialiser</strong> pour les enregistrer (les phases personnalisées de ce type seront remplacées).</div>':''}
     <div class="card">
       <div class="card-hd">
         <span>🥗 Programme nutritionnel — ${esc(lot.nom)} (${lot.type==='layer'?'Pondeuse':'Chair'})</span>
@@ -6626,33 +6610,33 @@ window.resetNutrition=async function(type){
   for(const n of all.filter(x=>x.type===type)) await delRec(S.NUTRITION,n.id);
   const layerDefaults=[
     // Général
-    {type:'layer',breed:'Général',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:12,waterMlPD:25,proteinPct:20,energyKcal:2900,notes:'Aliment starter riche en protéines'},
-    {type:'layer',breed:'Général',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:35,waterMlPD:70,proteinPct:18,energyKcal:2800,notes:'Croissance osseuse et musculaire'},
-    {type:'layer',breed:'Général',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:55,waterMlPD:110,proteinPct:16,energyKcal:2750,notes:'Préparer l\'appareil reproducteur'},
-    {type:'layer',breed:'Général',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:115,waterMlPD:230,proteinPct:17,energyKcal:2700,notes:'Pic de ponte — surveiller consommation eau'},
-    {type:'layer',breed:'Général',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:115,waterMlPD:235,proteinPct:16.5,energyKcal:2700,notes:'Maintenir taux de ponte > 80%'},
-    {type:'layer',breed:'Général',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:112,waterMlPD:224,proteinPct:16,energyKcal:2650,notes:'Réduire légèrement la ration si prise de poids'},
+    {type:'layer',breed:'Général',ageMin:0,ageMax:41,phase:'Démarrage',feedGPD:layerFeed('Général','Démarrage'),waterMlPD:layerWater('Général','Démarrage'),proteinPct:20,energyKcal:2900,notes:'Aliment starter riche en protéines'},
+    {type:'layer',breed:'Général',ageMin:42,ageMax:125,phase:'Poulette',feedGPD:layerFeed('Général','Poulette'),waterMlPD:layerWater('Général','Poulette'),proteinPct:18,energyKcal:2800,notes:'Croissance osseuse et musculaire'},
+    {type:'layer',breed:'Général',ageMin:126,ageMax:167,phase:'Pré-ponte',feedGPD:layerFeed('Général','Pré-ponte'),waterMlPD:layerWater('Général','Pré-ponte'),proteinPct:16,energyKcal:2750,notes:'Préparer l\'appareil reproducteur'},
+    {type:'layer',breed:'Général',ageMin:168,ageMax:279,phase:'Pic de ponte',feedGPD:layerFeed('Général','Pic de ponte'),waterMlPD:layerWater('Général','Pic de ponte'),proteinPct:17,energyKcal:2700,notes:'Pic de ponte — surveiller consommation eau'},
+    {type:'layer',breed:'Général',ageMin:280,ageMax:391,phase:'Ponte soutenue',feedGPD:layerFeed('Général','Ponte soutenue'),waterMlPD:layerWater('Général','Ponte soutenue'),proteinPct:16.5,energyKcal:2700,notes:'Maintenir taux de ponte > 80%'},
+    {type:'layer',breed:'Général',ageMin:392,ageMax:999,phase:'Ponte tardive',feedGPD:layerFeed('Général','Ponte tardive'),waterMlPD:layerWater('Général','Ponte tardive'),proteinPct:16,energyKcal:2650,notes:'Réduire légèrement la ration si prise de poids'},
     // Isa Brown
-    {type:'layer',breed:'Isa Brown',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:14,waterMlPD:28,proteinPct:20,energyKcal:2900,notes:'Starter Isa Brown — broyat fin, température 32°C'},
-    {type:'layer',breed:'Isa Brown',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:36,waterMlPD:72,proteinPct:18,energyKcal:2800,notes:'Croissance régulière — contrôle poids hebdo (cible 750g J56)'},
-    {type:'layer',breed:'Isa Brown',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:57,waterMlPD:114,proteinPct:16.5,energyKcal:2750,notes:'Augmenter Ca progressivement à 3,5g/j — photostimulation J112'},
-    {type:'layer',breed:'Isa Brown',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:118,waterMlPD:236,proteinPct:17,energyKcal:2700,notes:'Pic attendu 95%+ — Ca 4g/j — ajuster si consommation < standard'},
-    {type:'layer',breed:'Isa Brown',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:116,waterMlPD:232,proteinPct:16.5,energyKcal:2700,notes:'Taux de ponte cible > 90% — surveiller qualité coquille'},
-    {type:'layer',breed:'Isa Brown',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:113,waterMlPD:226,proteinPct:16,energyKcal:2650,notes:'Qualité oeuf prioritaire — supplémenter Vit D3 et Mn si coquille molle'},
+    {type:'layer',breed:'Isa Brown',ageMin:0,ageMax:41,phase:'Démarrage',feedGPD:layerFeed('Isa Brown','Démarrage'),waterMlPD:layerWater('Isa Brown','Démarrage'),proteinPct:20,energyKcal:2900,notes:'Starter Isa Brown — broyat fin, température 32°C'},
+    {type:'layer',breed:'Isa Brown',ageMin:42,ageMax:125,phase:'Poulette',feedGPD:layerFeed('Isa Brown','Poulette'),waterMlPD:layerWater('Isa Brown','Poulette'),proteinPct:18,energyKcal:2800,notes:'Croissance régulière — contrôle poids hebdo (cible 750g J56)'},
+    {type:'layer',breed:'Isa Brown',ageMin:126,ageMax:167,phase:'Pré-ponte',feedGPD:layerFeed('Isa Brown','Pré-ponte'),waterMlPD:layerWater('Isa Brown','Pré-ponte'),proteinPct:16.5,energyKcal:2750,notes:'Augmenter Ca progressivement à 3,5g/j — photostimulation J112'},
+    {type:'layer',breed:'Isa Brown',ageMin:168,ageMax:279,phase:'Pic de ponte',feedGPD:layerFeed('Isa Brown','Pic de ponte'),waterMlPD:layerWater('Isa Brown','Pic de ponte'),proteinPct:17,energyKcal:2700,notes:'Pic attendu 95%+ — Ca 4g/j — ajuster si consommation < standard'},
+    {type:'layer',breed:'Isa Brown',ageMin:280,ageMax:391,phase:'Ponte soutenue',feedGPD:layerFeed('Isa Brown','Ponte soutenue'),waterMlPD:layerWater('Isa Brown','Ponte soutenue'),proteinPct:16.5,energyKcal:2700,notes:'Taux de ponte cible > 90% — surveiller qualité coquille'},
+    {type:'layer',breed:'Isa Brown',ageMin:392,ageMax:999,phase:'Ponte tardive',feedGPD:layerFeed('Isa Brown','Ponte tardive'),waterMlPD:layerWater('Isa Brown','Ponte tardive'),proteinPct:16,energyKcal:2650,notes:'Qualité oeuf prioritaire — supplémenter Vit D3 et Mn si coquille molle'},
     // Lohmann Brown
-    {type:'layer',breed:'Lohmann Brown',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:13,waterMlPD:26,proteinPct:20,energyKcal:2900,notes:'Aliment LB starter — méthionine 0,45% minimum'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:34,waterMlPD:68,proteinPct:17.5,energyKcal:2780,notes:'Croissance homogène — éviter surpoids (cible J63 : 560g)'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:56,waterMlPD:112,proteinPct:16,energyKcal:2750,notes:'Transition aliment ponte — Ca à 3g/j minimum'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:112,waterMlPD:224,proteinPct:16.5,energyKcal:2700,notes:'Pic de ponte attendu 93-96% — ratio Ca:P = 12:1'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:112,waterMlPD:224,proteinPct:16,energyKcal:2680,notes:'Souche robuste — résistante stress thermique'},
-    {type:'layer',breed:'Lohmann Brown',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:110,waterMlPD:220,proteinPct:15.5,energyKcal:2650,notes:'Réduire si prise de poids — maintenir Ca 4,2g/j'},
+    {type:'layer',breed:'Lohmann Brown',ageMin:0,ageMax:41,phase:'Démarrage',feedGPD:layerFeed('Lohmann Brown','Démarrage'),waterMlPD:layerWater('Lohmann Brown','Démarrage'),proteinPct:20,energyKcal:2900,notes:'Aliment LB starter — méthionine 0,45% minimum'},
+    {type:'layer',breed:'Lohmann Brown',ageMin:42,ageMax:125,phase:'Poulette',feedGPD:layerFeed('Lohmann Brown','Poulette'),waterMlPD:layerWater('Lohmann Brown','Poulette'),proteinPct:17.5,energyKcal:2780,notes:'Croissance homogène — éviter surpoids (cible J63 : 560g)'},
+    {type:'layer',breed:'Lohmann Brown',ageMin:126,ageMax:167,phase:'Pré-ponte',feedGPD:layerFeed('Lohmann Brown','Pré-ponte'),waterMlPD:layerWater('Lohmann Brown','Pré-ponte'),proteinPct:16,energyKcal:2750,notes:'Transition aliment ponte — Ca à 3g/j minimum'},
+    {type:'layer',breed:'Lohmann Brown',ageMin:168,ageMax:279,phase:'Pic de ponte',feedGPD:layerFeed('Lohmann Brown','Pic de ponte'),waterMlPD:layerWater('Lohmann Brown','Pic de ponte'),proteinPct:16.5,energyKcal:2700,notes:'Pic de ponte attendu 93-96% — ratio Ca:P = 12:1'},
+    {type:'layer',breed:'Lohmann Brown',ageMin:280,ageMax:391,phase:'Ponte soutenue',feedGPD:layerFeed('Lohmann Brown','Ponte soutenue'),waterMlPD:layerWater('Lohmann Brown','Ponte soutenue'),proteinPct:16,energyKcal:2680,notes:'Souche robuste — résistante stress thermique'},
+    {type:'layer',breed:'Lohmann Brown',ageMin:392,ageMax:999,phase:'Ponte tardive',feedGPD:layerFeed('Lohmann Brown','Ponte tardive'),waterMlPD:layerWater('Lohmann Brown','Ponte tardive'),proteinPct:15.5,energyKcal:2650,notes:'Réduire si prise de poids — maintenir Ca 4,2g/j'},
     // Hy-Line Brown
-    {type:'layer',breed:'Hy-Line Brown',ageMin:0,ageMax:6,phase:'Démarrage',feedGPD:13,waterMlPD:26,proteinPct:20.5,energyKcal:2950,notes:'Hy-Line starter — densité élevée requise, lysine 1,1%'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:7,ageMax:20,phase:'Poulette',feedGPD:36,waterMlPD:72,proteinPct:18,energyKcal:2820,notes:'Contrôle homogénéité du lot — cible J70 : 650g ± 50g'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:21,ageMax:42,phase:'Pré-ponte',feedGPD:58,waterMlPD:116,proteinPct:16.5,energyKcal:2750,notes:'Photostimulation 15h lumière — Ca monter à 4g/j avant ponte'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:43,ageMax:72,phase:'Pic de ponte',feedGPD:114,waterMlPD:228,proteinPct:17,energyKcal:2700,notes:'Pic ponte 96%+ possible — surveiller eau/aliment ratio = 2:1'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:73,ageMax:100,phase:'Ponte soutenue',feedGPD:114,waterMlPD:228,proteinPct:16.5,energyKcal:2680,notes:'Persistance ponte exceptionnelle — bonne résistance chaleur'},
-    {type:'layer',breed:'Hy-Line Brown',ageMin:101,ageMax:200,phase:'Ponte tardive',feedGPD:111,waterMlPD:222,proteinPct:16,energyKcal:2650,notes:'Hy-Line guide: réduire 2g/sujet si T° > 30°C — Ca maintenu'},
+    {type:'layer',breed:'Hy-Line Brown',ageMin:0,ageMax:41,phase:'Démarrage',feedGPD:layerFeed('Hy-Line Brown','Démarrage'),waterMlPD:layerWater('Hy-Line Brown','Démarrage'),proteinPct:20.5,energyKcal:2950,notes:'Hy-Line starter — densité élevée requise, lysine 1,1%'},
+    {type:'layer',breed:'Hy-Line Brown',ageMin:42,ageMax:125,phase:'Poulette',feedGPD:layerFeed('Hy-Line Brown','Poulette'),waterMlPD:layerWater('Hy-Line Brown','Poulette'),proteinPct:18,energyKcal:2820,notes:'Contrôle homogénéité du lot — cible J70 : 650g ± 50g'},
+    {type:'layer',breed:'Hy-Line Brown',ageMin:126,ageMax:167,phase:'Pré-ponte',feedGPD:layerFeed('Hy-Line Brown','Pré-ponte'),waterMlPD:layerWater('Hy-Line Brown','Pré-ponte'),proteinPct:16.5,energyKcal:2750,notes:'Photostimulation 15h lumière — Ca monter à 4g/j avant ponte'},
+    {type:'layer',breed:'Hy-Line Brown',ageMin:168,ageMax:279,phase:'Pic de ponte',feedGPD:layerFeed('Hy-Line Brown','Pic de ponte'),waterMlPD:layerWater('Hy-Line Brown','Pic de ponte'),proteinPct:17,energyKcal:2700,notes:'Pic ponte 96%+ possible — surveiller eau/aliment ratio = 2:1'},
+    {type:'layer',breed:'Hy-Line Brown',ageMin:280,ageMax:391,phase:'Ponte soutenue',feedGPD:layerFeed('Hy-Line Brown','Ponte soutenue'),waterMlPD:layerWater('Hy-Line Brown','Ponte soutenue'),proteinPct:16.5,energyKcal:2680,notes:'Persistance ponte exceptionnelle — bonne résistance chaleur'},
+    {type:'layer',breed:'Hy-Line Brown',ageMin:392,ageMax:999,phase:'Ponte tardive',feedGPD:layerFeed('Hy-Line Brown','Ponte tardive'),waterMlPD:layerWater('Hy-Line Brown','Ponte tardive'),proteinPct:16,energyKcal:2650,notes:'Hy-Line guide: réduire 2g/sujet si T° > 30°C — Ca maintenu'},
   ];
   const broilerDefaults=[
     // Général
@@ -13994,10 +13978,12 @@ window.switchFinControleLot=function(v){ finControleLot=v; renderFinControle(doc
 // ── CONSO ALIMENTS — bâtiment > ligne > lot (sujet), vs standard souche/âge (Simulation) ──
 let finAlimentsFiltreBat='';
 const CONSO_SEUIL_ATTENTION=10, CONSO_SEUIL_CRITIQUE=20; // % écart vs standard
+function nutLegacy(rows){ return rows.some(function(n){return n.type==='layer'&&n.phase==='Démarrage'&&n.ageMax<=6;}); } // anciens protocoles pondeuse (âges en semaines, incohérents avec l'âge en jours)
 function getStandardConso(nutritions, type, breed, ageJours){
   const b=breed||'Général';
   let rows=nutritions.filter(function(n){return n.type===type&&(n.breed||'Général')===b;});
   if(!rows.length) rows=nutritions.filter(function(n){return n.type===type&&(n.breed||'Général')==='Général';});
+  if(type==='layer'&&nutLegacy(rows)) return getNut(type,ageJours,b);
   let phase=rows.find(function(n){return ageJours>=n.ageMin&&ageJours<=n.ageMax;});
   if(!phase&&rows.length) phase=ageJours<rows[0].ageMin?rows[0]:rows[rows.length-1];
   return phase||null;
@@ -14020,8 +14006,12 @@ async function computeConsoAliments(){
     const jours=ageJours;
     const coutAliment=charges.filter(function(x){return x.flockId===f.id&&x.categorie==='aliment';}).reduce(function(a,x){return a+(x.montant||0);},0);
     const kgSujet=vivants>0?totalKg/vivants:0;
+    // Ingéré récent : 14 derniers jours réellement saisis (pas la moyenne depuis J0, comparée à tort au standard de l'âge courant)
+    const since14=new Date(today.getTime()-14*864e5).toISOString().slice(0,10), f14=fFeeds.filter(function(x){return (x.date||'')>=since14;}), d14={};
+    f14.forEach(function(x){d14[x.date]=1;});
+    const nj14=Object.keys(d14).length;
     const kgSujetJour=vivants>0?totalKg/vivants/jours:0;
-    const gSujetJour=kgSujetJour*1000;
+    const gSujetJour=(vivants>0&&nj14>=3)?f14.reduce(function(a,x){return a+(x.quantityKg||0);},0)*1000/nj14/vivants:0;
     const line=lines.find(function(l){return l.id===f.lineId;});
     const building=buildings.find(function(b){return b.id===(f.buildingId||(line?line.buildingId:null));});
     const souche=f.breed||'Général';
@@ -23010,7 +23000,7 @@ const SIMU_DEFAULTS = {
   // PARAMÈTRES CHEPTEL
   nbBetes: 500,
   typeLot: 'broiler',      // 'broiler' | 'layer'
-  tauxMortalite: 4.5,       // % global sur la bande
+  tauxMortalite: 8,         // % global sur la bande (élevage + ponte jusqu'à la réforme ; 4,5 % était optimiste)
 
   // COÛTS DIRECTS
   coutPoussin: 650,         // FCFA / poussin chair
@@ -23019,6 +23009,7 @@ const SIMU_DEFAULTS = {
   rendReformeKg: 68,        // % rendement carcasse réforme (< broiler)
   prixReformeKg: 1200,      // FCFA/kg réforme (marché local — viande dure, prix décoté)
   coutAlimentD: 300,        // Démarrage FCFA/kg — prix d'achat réel constaté (nov. 2026)
+  coutAlimentPP: 400,       // pondeuse : aliment pré-ponte FCFA/kg (relevé ferme-jolan)
   coutAlimentC: 350,        // Croissance/Finition FCFA/kg (entre démarrage 300 et pré-ponte 400)
   coutAlimentP: 300,        // Ponte FCFA/kg — prix d'achat réel constaté
   coutVacc: 800,            // FCFA/tête (total vaccinations)
@@ -23042,6 +23033,7 @@ const SIMU_DEFAULTS = {
   tauxPonteMoy: 85,         // % moyen
   tauxCasse: 1.5,           // % œufs cassés/déclassés (réel ≈ 1,3 %)
   dureeExploitation: 14,    // semaines de ponte exploitées en simu
+  souche: 'Général',        // souche (Isa Brown, Lohmann Brown, Hy-Line Brown, Ross 308, Cobb 500…) : ajuste l'ingéré
   mixCalibres: true,        // pondeuse : calibre des œufs selon l'âge de ponte (petits œufs en début de ponte, moins chers)
   ratioPetit: 77,           // prix du petit calibre en % du gros (réel : 20 400 / 26 400 F le carton)
   semReforme: 72            // pondeuses : âge de réforme (semaines) — pratique courante 72-80 ; 60 = ancien cycle court
@@ -23059,8 +23051,8 @@ const PHASES_LAYER = [
   // ponteFactor = facteur multiplicateur du tauxPonteMoy saisi (0=pas de ponte, 1=pic référence)
   // mortalitePhasePct = mortalité cumulée sur toute la phase (pas par semaine)
   {id:'demarrage',  label:'Démarrage',        semDeb:1,  semFin:6,  icon:'🐣', color:'#d1fae5', border:'#059669', feedGPD:22,  mortalitePhasePct:2.5,  ponteFactor:0.00},
-  {id:'poulette',   label:'Poulette',          semDeb:7,  semFin:18, icon:'🐓', color:'#dbeafe', border:'#2563eb', feedGPD:42,  mortalitePhasePct:1.5,  ponteFactor:0.00},
-  {id:'preponte',   label:'Pré-ponte',         semDeb:19, semFin:24, icon:'🌱', color:'#f0fdf4', border:'#16a34a', feedGPD:62,  mortalitePhasePct:0.8,  ponteFactor:0.38},
+  {id:'poulette',   label:'Poulette',          semDeb:7,  semFin:18, icon:'🐓', color:'#dbeafe', border:'#2563eb', feedGPD:55,  mortalitePhasePct:1.5,  ponteFactor:0.00},
+  {id:'preponte',   label:'Pré-ponte',         semDeb:19, semFin:24, icon:'🌱', color:'#f0fdf4', border:'#16a34a', feedGPD:98,  mortalitePhasePct:0.8,  ponteFactor:0.38},
   {id:'picponte',   label:'Pic de ponte',      semDeb:25, semFin:40, icon:'🥚', color:'#fef3c7', border:'#d97706', feedGPD:118, mortalitePhasePct:1.8,  ponteFactor:1.00},
   {id:'pontesout',  label:'Ponte soutenue',    semDeb:41, semFin:56, icon:'📦', color:'#ede9fe', border:'#7c3aed', feedGPD:115, mortalitePhasePct:2.5,  ponteFactor:0.82},
   {id:'reforme',    label:'Réforme',           semDeb:57, semFin:60, icon:'🔄', color:'#fee2e2', border:'#dc2626', feedGPD:108, mortalitePhasePct:0.5,  ponteFactor:0.00}
@@ -23096,7 +23088,10 @@ function simuPhasesLayer(sr){
 }
 function simuGetPhases(type,sr){ return type==='broiler'?PHASES_BROILER:simuPhasesLayer(sr); }
 
+// Applique la souche : facteur d'ingéré (idempotent). Le taux de ponte et la mortalité saisis restent maîtres.
+function simuSouche(p){ if(p._sou) return p; var q=Object.assign({},p,{_sou:1}); q.feedF=breedStd(p.typeLot,p.souche).feedF; return q; }
 function simuCalcBande(p){
+  p = simuSouche(p);
   // p = paramètres (objet fusionnant SIMU_DEFAULTS + saisie utilisateur)
   const phases = simuGetPhases(p.typeLot, p.semReforme);
   const dureeLot = phases[phases.length-1].semFin; // semaines du cycle (6 chair, 72 pondeuse par défaut)
@@ -23128,13 +23123,14 @@ function simuCalcBande(p){
     const vivantsFin = Math.max(0, vivants - mortPhase);
 
     // Consommation aliment
-    const feedGPDPhase = ph.feedGPD;
+    const feedGPDPhase = Math.round(ph.feedGPD * (p.feedF||1));
     const totalFeedKg = (feedGPDPhase * ((vivantsDebut + vivantsFin) / 2) * nbJours) / 1000;
 
     // Choix prix aliment par phase
     let pxAlim = p.coutAlimentC;
     if(ph.id==='demarrage') pxAlim = p.coutAlimentD;
-    if(ph.id==='picponte'||ph.id==='pontesout'||ph.id==='preponte'||ph.id==='reforme') pxAlim = p.coutAlimentP;
+    if(ph.id==='picponte'||ph.id==='pontesout'||ph.id==='reforme') pxAlim = p.coutAlimentP;
+    if(ph.id==='preponte') pxAlim = p.coutAlimentPP||p.coutAlimentP;
 
     const coutAlimentPhase = totalFeedKg * pxAlim;
 
@@ -23421,6 +23417,11 @@ async function renderSimuBande(ca){
         </select>
       </div>
       <div class="fg">
+        <div class="sbl">Souche</div>
+        <select id="sp_souche" onchange="simuRecalc()">${Object.keys(BREED_STD[p.typeLot==='broiler'?'broiler':'layer']).map(b=>`<option value="${b}" ${(p.souche||'Général')===b?'selected':''}>${b}</option>`).join('')}</select>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px">Ingéré ×${breedStd(p.typeLot,p.souche).feedF}${breedStd(p.typeLot,p.souche).pic?' · pic guide ≈ '+breedStd(p.typeLot,p.souche).pic+' % (saisir le taux réel de la ferme)':''}</div>
+      </div>
+      <div class="fg">
         <div class="sbl">Taux ponte pic — référence (%)</div>
         <input type="number" id="sp_tauxPonteMoy" value="${p.tauxPonteMoy}" min="50" max="100" step="0.5" oninput="simuRecalc()">
       </div>
@@ -23456,6 +23457,7 @@ async function renderSimuBande(ca){
       <div class="fg"><div class="sbl">Poussin pondeuse (F/u)</div><input type="number" id="sp_coutPoussineLayer" value="${p.coutPoussineLayer||1150}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Aliment démarrage (F/kg)</div><input type="number" id="sp_coutAlimentD" value="${p.coutAlimentD}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Aliment croissance (F/kg)</div><input type="number" id="sp_coutAlimentC" value="${p.coutAlimentC}" oninput="simuRecalc()"></div>
+      <div class="fg"><div class="sbl">Aliment pré-ponte (F/kg)</div><input type="number" id="sp_coutAlimentPP" value="${p.coutAlimentPP||400}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Aliment ponte (F/kg)</div><input type="number" id="sp_coutAlimentP" value="${p.coutAlimentP}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Vaccins total (F/tête)</div><input type="number" id="sp_coutVacc" value="${p.coutVacc}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Médicaments (F/tête)</div><input type="number" id="sp_coutMed" value="${p.coutMed}" oninput="simuRecalc()"></div>
@@ -24067,6 +24069,7 @@ function simuSeuilAnalysis(result, p){
   const sensAlim = [-20,-10,0,10,20,30].map(delta=>{
     const pMod = Object.assign({}, p, {
       coutAlimentP: p.coutAlimentP*(1+delta/100),
+      coutAlimentPP: (p.coutAlimentPP||400)*(1+delta/100),
       coutAlimentD: p.coutAlimentD*(1+delta/100),
       coutAlimentC: p.coutAlimentC*(1+delta/100)
     });
@@ -24408,6 +24411,7 @@ function simuGetCurrentParams(){
   return {
     nbBetes:           read('sp_nbBetes'),
     typeLot:           document.getElementById('sp_typeLot')?.value || SIMU_DEFAULTS.typeLot,
+    souche:            document.getElementById('sp_souche')?.value || 'Général',
     tauxPonteMoy:      read('sp_tauxPonteMoy'),
     poidsMoyenVif:     read('sp_poidsMoyenVif'),
     rendCarcasse:      read('sp_rendCarcasse'),
@@ -24420,6 +24424,7 @@ function simuGetCurrentParams(){
     semReforme:        read('sp_semReforme'),
     coutAlimentD:      read('sp_coutAlimentD'),
     coutAlimentC:      read('sp_coutAlimentC'),
+    coutAlimentPP:     read('sp_coutAlimentPP')||SIMU_DEFAULTS.coutAlimentPP,
     coutAlimentP:      read('sp_coutAlimentP'),
     coutVacc:          read('sp_coutVacc'),
     coutMed:           read('sp_coutMed'),
@@ -24453,6 +24458,7 @@ window.simuPrefillFromLot = async function(){
   if(!lot) return;
   const p = Object.assign({}, SIMU_DEFAULTS, simuGetCurrentParams());
   p.typeLot = lot.type==='layer' ? 'layer' : 'broiler';
+  p.souche = BREED_STD[p.typeLot][lot.breed] ? lot.breed : 'Général';
   if(lot.initialStock>0) p.nbBetes = lot.initialStock;
   if(lot.costPerChick>0){
     if(p.typeLot==='layer') p.coutPoussineLayer = lot.costPerChick;
@@ -24804,7 +24810,7 @@ function finRun(f, m){
   var p0=Object.assign({},SIMU_DEFAULTS,f.simu||{},{typeLot:typeLot}), p=Object.assign({},p0);
   if(m.oeuf) p.prixOeufUnit*=m.oeuf; // le petit calibre suit (ratio du prix du gros)
   if(m.ponte) p.tauxPonteMoy=Math.min(98,p.tauxPonteMoy*m.ponte);
-  if(m.alim){ p.coutAlimentD*=m.alim; p.coutAlimentC*=m.alim; p.coutAlimentP*=m.alim; }
+  if(m.alim){ p.coutAlimentD*=m.alim; p.coutAlimentC*=m.alim; p.coutAlimentP*=m.alim; p.coutAlimentPP=(p.coutAlimentPP||400)*m.alim; }
   if(m.mort) p.tauxMortalite=Math.min(60,p.tauxMortalite*m.mort);
   var wk=finWeekly(p,f.courbe), W=wk.W, lag=Math.max(0,f.delaiEncaiss|0), diff=Math.max(0,f.differeMois|0), N=Math.max(1,f.dureeRemb|0), warn=[];
   // Cheptel pondeuses : coûts d'élevage (avant S19) immobilisés puis amortis sur la période de ponte (valeur de réforme = résiduel)
@@ -24819,7 +24825,7 @@ function finRun(f, m){
     if((R.age||0)>maxAge) warn.push('Lot au-delà du cycle modélisé (S'+W.length+') : projection limitée à la fin de cycle.');
     var w0=base0[age-1], vSim=w0.vivants||1, r=R.vivants>0?R.vivants/vSim:1;
     var mr=w0.vivants>0?w0.oeufs/(w0.vivants*7):0, kP=(typeLot==='layer'&&R.tauxPonte>0&&mr>0&&age>=26)?finClamp(R.tauxPonte/100/mr,0.5,1.3):1;
-    var ph0=simuGetPhases(typeLot).filter(function(x){return x.id===w0.ph;})[0], kA=(R.gPouleJour>0&&ph0&&ph0.feedGPD>0)?finClamp(R.gPouleJour/ph0.feedGPD,0.7,1.5):1;
+    var ph0=simuGetPhases(typeLot).filter(function(x){return x.id===w0.ph;})[0], kA=(R.gPouleJour>0&&ph0&&ph0.feedGPD>0)?finClamp(R.gPouleJour/(ph0.feedGPD*breedStd(typeLot,p0.souche).feedF),0.7,1.5):1;
     if(R.tauxBrut>100) warn.push('Taux de ponte saisi > 100 % sur le lot (erreur de saisie probable) : plafonné.');
     if(!(R.vivants>0)) warn.push('Effectif vivant du lot nul : actualisez les données du lot.');
     W=W.slice(age).map(function(x){ return Object.assign({},x,{wr:x.w-age,vivants:x.vivants*r,alim:x.alim*r*kA,poussin:0,vacc:x.vacc*r,med:x.med*r,eau:x.eau*r,lit:0,capi:(immoP&&x.elev)?(x.alim*r*kA+x.vacc*r+x.med*r+x.eau*r):0,dotP:(x.dotP||0)*r,oeufs:x.oeufs*r*kP,recOeufs:x.recOeufs*r*kP,recRef:x.recRef*r}); });
@@ -25126,6 +25132,7 @@ async function finRefresh(){ var ca=document.getElementById('contentArea'); if(c
 window.finSet=async function(k,v,num){ var r=window._fb.rec; if(!r) return; r[k]=num?(parseFloat(v)||0):v; await finSave(r); finRefresh(); };
 window.finSetBool=async function(k,v){ var r=window._fb.rec; r[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetG=async function(k,v){ var r=window._fb.rec; r.garanties=r.garanties||{}; r.garanties[k]=!!v; await finSave(r); finRefresh(); };
+window.finSetSimuTxt=async function(k,v){ var r=window._fb.rec; r.simu=Object.assign({},r.simu); r.simu[k]=v; await finSave(r); finRefresh(); };
 window.finSetSimuBool=async function(k,v){ var r=window._fb.rec; r.simu=Object.assign({},r.simu); r.simu[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetSimu=async function(k,v){ var r=window._fb.rec; r.simu=r.simu||{}; r.simu[k]=parseFloat(v)||0; await finSave(r); finRefresh(); };
 window.fbTab=function(t){ window._fb.tab=t; finRefresh(); };
@@ -25162,10 +25169,11 @@ async function finLireLot(lotId){
   var jours=Object.keys(jE).length, tp=(jours&&vivants)?sum(e30,'eggCount')/jours/vivants*100:0;
   var f30=mine(all[5]).filter(function(x){return (x.date||'')>=since;}), jF={}; f30.forEach(function(x){jF[x.date]=1;});
   var jf=Object.keys(jF).length, g=(jf&&vivants)?sum(f30,'quantityKg')*1000/jf/vivants:0;
-  return {lotNom:lot.nom,age:age,vivants:vivants,initial:lot.initialStock||0,morts:morts,tauxBrut:Math.round(tp*10)/10,tauxPonte:Math.min(98,Math.round(tp*10)/10),gPouleJour:Math.round(g),ts:Date.now()};
+  return {souche:BREED_STD[lot.type==='broiler'?'broiler':'layer'][lot.breed]?lot.breed:'Général',lotNom:lot.nom,age:age,vivants:vivants,initial:lot.initialStock||0,morts:morts,tauxBrut:Math.round(tp*10)/10,tauxPonte:Math.min(98,Math.round(tp*10)/10),gPouleJour:Math.round(g),ts:Date.now()};
 }
 window.finSetLot=async function(id){
   var r=window._fb.rec; r.lotId=id?parseInt(id):null; r.reel=(r.lotId&&r.portee==='production')?await finLireLot(r.lotId):null;
+  if(r.reel&&r.reel.souche) r.simu=Object.assign({},r.simu,{souche:r.reel.souche});
   await finSave(r); finRefresh();
 };
 window.finActualiserLot=async function(){ var r=window._fb.rec; if(!r.lotId) return; r.reel=await finLireLot(r.lotId); await finSave(r); finRefresh(); toast('Données du lot actualisées'); };
@@ -25283,6 +25291,7 @@ function finKpi(l,v,sub,cls){ return '<div class="kpi '+(cls||'kpi-b')+'"><div c
 function finIn(l,k,v,step){ return '<div class="fg"><div class="sbl">'+l+'</div><input type="number" step="'+(step||'any')+'" value="'+esc(v==null?'':v)+'" onchange="finSet(\''+k+'\',this.value,1)"></div>'; }
 function finSimIn(l,k,v,step){ return '<div class="fg"><div class="sbl">'+l+'</div><input type="number" step="'+(step||'any')+'" value="'+esc(v==null?'':v)+'" onchange="finSetSimu(\''+k+'\',this.value)"></div>'; }
 function finSel(l,k,v,opts){ return '<div class="fg"><div class="sbl">'+l+'</div><select onchange="finSet(\''+k+'\',this.value,0)">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(o[0])===String(v)?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div>'; }
+function finSimSel(l,k,v,opts){ return '<div class="fg"><div class="sbl">'+l+'</div><select onchange="finSetSimuTxt(\''+k+'\',this.value)">'+opts.map(function(o){return '<option value="'+esc(o)+'"'+(o===v?' selected':'')+'>'+esc(o)+'</option>';}).join('')+'</select></div>'; }
 function finChk(l,k,v,fn){ return '<label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" '+(v?'checked':'')+' onchange="'+fn+'(\''+k+'\',this.checked)"> '+l+'</label>'; }
 function finBadge(s){ return s==='ok'?'<span class="badge b-g">✓</span>':s==='warn'?'<span class="badge b-a">!</span>':'<span class="badge b-r">✗</span>'; }
 
@@ -25366,12 +25375,12 @@ function finTabMontage(f,E){
     +'</div></div>'
     +finBlocLot(f)
     +'<div class="card" style="margin-bottom:14px"><div class="card-hd">🐔 Hypothèses d\'exploitation (issues de la Simulation) <button class="btn btn-s btn-sm" onclick="finResync()"><i class="fas fa-rotate"></i> Resynchroniser</button></div><div class="simu-params-body">'
-    +finSimIn('Effectif logé','nbBetes',s.nbBetes)+finSimIn('Mortalité cycle (%)','tauxMortalite',s.tauxMortalite,0.1)
+    +finSimIn('Effectif logé','nbBetes',s.nbBetes)+finSimSel('Souche','souche',s.souche||'Général',Object.keys(BREED_STD[f.typeLot==='broiler'?'broiler':'layer']))+finSimIn('Mortalité cycle (%)','tauxMortalite',s.tauxMortalite,0.1)
     +(f.typeLot==='broiler'
       ?finSimIn('Poussin chair (F)','coutPoussin',s.coutPoussin)+finSimIn('Poids vif abattage (kg)','poidsMoyenVif',s.poidsMoyenVif,0.05)+finSimIn('Rendement carcasse (%)','rendCarcasse',s.rendCarcasse,0.5)+finSimIn('Prix carcasse (F/kg)','prixCarcasseKg',s.prixCarcasseKg)
         +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)
       :finSimIn('Taux ponte pic (%)','tauxPonteMoy',s.tauxPonteMoy,0.5)+finSimIn('Prix œuf calibre gros (F)','prixOeufUnit',s.prixOeufUnit)+finChk('Mix de calibres par âge de ponte','mixCalibres',s.mixCalibres!==false,'finSetSimuBool')+finSimIn('Petit calibre (% du prix du gros)','ratioPetit',s.ratioPetit||77,1)+finSimIn('Casse (%)','tauxCasse',s.tauxCasse==null?1.5:s.tauxCasse,0.1)+finSimIn('Âge de réforme (sem.)','semReforme',s.semReforme||72,1)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
-        +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)+finSimIn('Aliment ponte (F/kg)','coutAlimentP',s.coutAlimentP)
+        +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)+finSimIn('Aliment pré-ponte (F/kg)','coutAlimentPP',s.coutAlimentPP||400)+finSimIn('Aliment ponte (F/kg)','coutAlimentP',s.coutAlimentP)
         +finSel('Courbe de ponte','courbe',f.courbe,[['lisse','Réaliste (lissée)'],['simu','Identique Simulation (paliers)']]))
     +finIn('Délai encaissement (mois)','delaiEncaiss',f.delaiEncaiss,1)+finIn('Valeur de marché du cheptel (F/tête)','prixPoulette',f.prixPoulette)
     +'</div></div>'
