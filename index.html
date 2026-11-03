@@ -22959,7 +22959,7 @@ const SIMU_DEFAULTS = {
 
   // COÛTS DIRECTS
   coutPoussin: 650,         // FCFA / poussin chair
-  coutPoussineLayer: 750,   // FCFA / poussin pondeuse (J0 — femelle sexée, légèrement + cher)
+  coutPoussineLayer: 1150,  // FCFA / poussin pondeuse (J0) — coût réel constaté ferme-jolan (nov. 2026)
   poidsReformeKg: 1.9,      // kg poids vif moyen poule de réforme
   rendReformeKg: 68,        // % rendement carcasse réforme (< broiler)
   prixReformeKg: 1200,      // FCFA/kg réforme (marché local — viande dure, prix décoté)
@@ -22985,6 +22985,7 @@ const SIMU_DEFAULTS = {
   prixCarcasseKg: 2800,     // FCFA/kg carcasse
   prixOeufUnit: 80,         // FCFA/œuf (layer) — plateau 30 œufs bord-ferme 2 400 F (fév. 2026)
   tauxPonteMoy: 85,         // % moyen
+  tauxCasse: 1.5,           // % œufs cassés/déclassés (réel ≈ 1,3 %)
   dureeExploitation: 14     // semaines de ponte exploitées en simu
 };
 
@@ -23104,7 +23105,7 @@ function simuCalcBande(p){
       // Effectif moyen sur la phase pour le calcul d'œufs
       const effectifMoyPonte = (vivantsDebut + vivantsFin) / 2;
       oeufsPhase = Math.round(effectifMoyPonte * nbJours * tauxEffectifPhase);
-      recettePhase = oeufsPhase * p.prixOeufUnit;
+      recettePhase = oeufsPhase * (1 - (p.tauxCasse||0)/100) * p.prixOeufUnit; // œufs vendables
       cumOeufs += oeufsPhase;
     }
 
@@ -23361,7 +23362,7 @@ async function renderSimuBande(ca){
       <!-- Col 2 : Coûts directs -->
       <div style="grid-column:1/-1;font-size:11px;font-weight:700;color:var(--blue);padding:8px 0 2px;border-bottom:1px solid var(--border);margin-bottom:4px">💰 Coûts directs (FCFA)</div>
       <div class="fg"><div class="sbl">Poussin chair (F/u)</div><input type="number" id="sp_coutPoussin" value="${p.coutPoussin}" oninput="simuRecalc()"></div>
-      <div class="fg"><div class="sbl">Poussin pondeuse (F/u)</div><input type="number" id="sp_coutPoussineLayer" value="${p.coutPoussineLayer||750}" oninput="simuRecalc()"></div>
+      <div class="fg"><div class="sbl">Poussin pondeuse (F/u)</div><input type="number" id="sp_coutPoussineLayer" value="${p.coutPoussineLayer||1150}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Aliment démarrage (F/kg)</div><input type="number" id="sp_coutAlimentD" value="${p.coutAlimentD}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Aliment croissance (F/kg)</div><input type="number" id="sp_coutAlimentC" value="${p.coutAlimentC}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Aliment ponte (F/kg)</div><input type="number" id="sp_coutAlimentP" value="${p.coutAlimentP}" oninput="simuRecalc()"></div>
@@ -23383,6 +23384,7 @@ async function renderSimuBande(ca){
       <div class="fg"><div class="sbl">Prix vif (F/kg)</div><input type="number" id="sp_prixVifKg" value="${p.prixVifKg}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Prix carcasse chair (F/kg)</div><input type="number" id="sp_prixCarcasseKg" value="${p.prixCarcasseKg}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Prix œuf (F/unité)</div><input type="number" id="sp_prixOeufUnit" value="${p.prixOeufUnit}" oninput="simuRecalc()"></div>
+      <div class="fg"><div class="sbl">Casse / déclassés (%)</div><input type="number" id="sp_tauxCasse" value="${p.tauxCasse??1.5}" min="0" max="20" step="0.1" oninput="simuRecalc()"></div>
 
       <div style="grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
         <button class="btn btn-s btn-sm" onclick="simuResetParams()"><i class="fas fa-undo"></i> Réinitialiser</button>
@@ -24335,7 +24337,8 @@ function simuGetCurrentParams(){
     coutDivers:        read('sp_coutDivers'),
     prixVifKg:         read('sp_prixVifKg'),
     prixCarcasseKg:    read('sp_prixCarcasseKg'),
-    prixOeufUnit:      read('sp_prixOeufUnit')
+    prixOeufUnit:      read('sp_prixOeufUnit'),
+    tauxCasse:         read('sp_tauxCasse')
   };
 }
 
@@ -24598,7 +24601,7 @@ function finWeekly(p, courbe){
       W.push({w:w, ph:ph.id, vivants:vm, alim:r.coutAlimentPhase/n,
         poussin:first?res.coutPinit:0, vacc:r.coutVaccPhase/n, med:r.coutMedPhase/n, eau:r.coutEauPhase/n,
         lit:first?r.coutLitierePhase:0, indir:r.coutIndirectPhase/n,
-        oeufs:oeufs, recOeufs:oeufs*p.prixOeufUnit,
+        oeufs:oeufs, recOeufs:oeufs*(1-(p.tauxCasse||0)/100)*p.prixOeufUnit,
         recRef:((ph.id==='reforme'||ph.id==='abattage')&&i===n-1)?r.recettePhase:0});
     }
   });
@@ -24915,7 +24918,7 @@ function finTabMontage(f,E){
     +'</div></div>'
     +'<div class="card" style="margin-bottom:14px"><div class="card-hd">🐔 Hypothèses d\'exploitation (issues de la Simulation) <button class="btn btn-s btn-sm" onclick="finResync()"><i class="fas fa-rotate"></i> Resynchroniser</button></div><div class="simu-params-body">'
     +finSimIn('Effectif logé','nbBetes',s.nbBetes)+finSimIn('Taux ponte pic (%)','tauxPonteMoy',s.tauxPonteMoy,0.5)+finSimIn('Mortalité cycle (%)','tauxMortalite',s.tauxMortalite,0.1)
-    +finSimIn('Prix œuf (F)','prixOeufUnit',s.prixOeufUnit)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
+    +finSimIn('Prix œuf (F)','prixOeufUnit',s.prixOeufUnit)+finSimIn('Casse (%)','tauxCasse',s.tauxCasse==null?1.5:s.tauxCasse,0.1)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
     +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)+finSimIn('Aliment ponte (F/kg)','coutAlimentP',s.coutAlimentP)
     +finSel('Courbe de ponte','courbe',f.courbe,[['lisse','Réaliste (lissée)'],['simu','Identique Simulation (paliers)']])
     +finIn('Délai encaissement (mois)','delaiEncaiss',f.delaiEncaiss,1)+finIn('Valeur poulette prête à pondre (F)','prixPoulette',f.prixPoulette)
