@@ -24744,7 +24744,7 @@ function finObjets(f){
 function finImmoClass(im){ return (im.cat==='batiment'||im.cat==='amenagement'||im.cat==='terrain')?'construction':'materiel'; }
 function finObjList(f){ var o=finObjets(f); return FIN_OBJETS.filter(function(x){return o[x[0]];}).map(function(x){return x[1].toLowerCase();}); }
 const FIN_TABS = [['synthese','Synthèse','fa-gauge-high'],['present','1. Présentation','fa-id-card'],['montage','2. Projet & montage','fa-sliders'],['marche','3. Étude de marché','fa-chart-pie'],['commercial','4. Commercial & charges','fa-bullhorn'],['organisation','5. Organisation & stratégie','fa-sitemap'],
-  ['plan','6. Plan de financement','fa-scale-balanced'],['echeancier','7. Amortissement','fa-table'],['cep','8. Compte d\'exploitation','fa-file-invoice'],['evaluation','9. Évaluation','fa-scale-balanced'],['risques','10. Risques & scénarios','fa-dice'],['juridique','11. Juridique','fa-gavel'],['suivi','12. Suivi & compta','fa-book'],['docs','13. Documents & historique','fa-folder-open']];
+  ['plan','6. Plan de financement','fa-scale-balanced'],['echeancier','7. Amortissement','fa-table'],['cep','8. Compte d\'exploitation','fa-file-invoice'],['evaluation','9. Évaluation','fa-scale-balanced'],['graphes','10. Graphiques & analyse','fa-chart-pie'],['risques','11. Risques & scénarios','fa-dice'],['juridique','12. Juridique','fa-gavel'],['suivi','13. Suivi & compta','fa-book'],['docs','14. Documents & historique','fa-folder-open']];
 
 function finParams(f,inv,amt,share){
   var c=(inv&&inv.cond)||{}, t=(inv&&inv.fin)||'pret', pick=function(k,d){ return c[k]!=null&&c[k]!==''?+c[k]:d; };
@@ -25811,13 +25811,14 @@ async function renderFinBande(ca){
   var E, body='';
   try{ E=finRun(rec); }catch(e){ console.error(e); ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd">Erreur de calcul : '+esc(e.message)+'</div></div></div>'; return; }
   var t=B.tab||'synthese';
-  if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
+  if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
   ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
 const FIN_NOTES = {
+  graphes:'Camemberts (structure des coûts, sources de financement, canaux de vente), histogrammes (flux, dette, charges, sensibilités) et courbes (recettes, trésorerie, scénarios), chacun avec une interprétation automatique. À relire avant de présenter le dossier.',
   present:'Étape 1 — Qui porte le projet ? Mission, vision, valeurs, contexte et équipe dirigeante. Ces textes alimentent le chapitre 2 du business plan ; laissez un champ vide pour conserver le texte type.',
   marche:'Étape 3 — Pour qui produit-on ? Demande et saisonnalité, concurrence et positionnement. Chapitre 4 du business plan : citez des sources datées, aucune donnée de marché n\'est inventée par l\'outil.',
   organisation:'Étape 5 — Comment le projet sera-t-il conduit ? Conduite d\'élevage, aliment, biosécurité, qualité-hygiène-sécurité, puis analyse SWOT et matrice des risques. Chapitres 6 et 7 du business plan ; champ vide = texte type.',
@@ -25877,7 +25878,7 @@ function finTabOrga(f,E){
     +finBpCard('🛡️ Biosécurité et prophylaxie',finBpTa(f,'biosec','Mesures de biosécurité (le calendrier de vaccination est généré automatiquement)',4,'Accès contrôlé, pédiluve, vide sanitaire, gestion des mortalités, lutte contre les nuisibles…'))
     +finBpCard('📋 Qualité, hygiène, sécurité, environnement',finBpTa(f,'qhse','Une ligne = une puce',4,'Traçabilité par lot\nGestion des fientes\nSécurité du personnel\nBien-être animal'),'Les ressources humaines et prestataires chiffrés viennent de l\'onglet « 4. Commercial & charges ».')
     +finBpCard('🔎 Analyse SWOT','<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">'+finBpTa(f,'sw_forces','💪 Forces (une par ligne)',5,'')+finBpTa(f,'sw_faiblesses','⚠️ Faiblesses',5,'')+finBpTa(f,'sw_opportunites','🌱 Opportunités',5,'')+finBpTa(f,'sw_menaces','⛈️ Menaces',5,'')+'</div>','Chapitre 7.1. Forces/faiblesses = interne ; opportunités/menaces = externe. Vide = SWOT type.')
-    +finBpCard('🎲 Matrice des risques',finBpTbl(f,'risques',['Risque','Probabilité','Impact','Mesure d\'atténuation'],[170,100,90,260]),'Chapitre 7.2. Les tests chiffrés (scénarios, Monte-Carlo) sont dans l\'onglet « 10. Risques & scénarios ».');
+    +finBpCard('🎲 Matrice des risques',finBpTbl(f,'risques',['Risque','Probabilité','Impact','Mesure d\'atténuation'],[170,100,90,260]),'Chapitre 7.2. Les tests chiffrés (scénarios, Monte-Carlo) sont dans l\'onglet « 11. Risques & scénarios ».');
 }
 // Avancement de la rédaction du business plan (affiché dans la Synthèse)
 function finBpProgress(f){
@@ -25891,6 +25892,119 @@ function finBpProgressHtml(f){
   return '<details class="card" style="margin-bottom:14px"'+(n<L.length?' open':'')+'><summary class="card-hd" style="cursor:pointer"><span>📝 Avancement du business plan</span><span>'+n+' / '+L.length+' sections rédigées</span></summary><div class="card-bd" style="font-size:12px">'
     +L.map(function(x){ return '<div style="padding:3px 0"><span>'+(x[2]?'✅':'⬜')+'</span> <a href="#" onclick="fbTab(\''+x[1]+'\');return false" style="color:inherit">'+x[0]+'</a></div>'; }).join('')
     +'<p style="font-size:11px;color:var(--text3);margin:8px 0 0">Une section non rédigée est remplacée dans le document par un texte type ou par « [à compléter] ».</p></div></details>';
+}
+
+// ══ Graphiques (SVG) et interprétations automatiques : camemberts, histogrammes, courbes ══
+var FIN_PAL=['#2b5f45','#f59e0b','#3b82f6','#c1121f','#8b5cf6','#14b8a6','#a3a3a3','#ec4899'];
+function finSvgEsc(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function finSvgM(v){ var m=v/1e6; return finN(m,Math.abs(m)>=10?0:1)+' M'; }
+function finSvgDonut(items,title,pctOnly){
+  var tot=items.reduce(function(a,x){return a+x.v;},0), W=560, H=Math.max(230,items.length*24+50), cx=115, cy=H/2, R=100, r=58, a0=-Math.PI/2, out='', leg='';
+  if(tot<=0) return '';
+  items.forEach(function(it,i){
+    var c=FIN_PAL[i%FIN_PAL.length], fr=it.v/tot, a1=a0+fr*2*Math.PI, lg=fr>0.5?1:0;
+    if(fr>=0.9999) out+='<circle cx="'+cx+'" cy="'+cy+'" r="'+((R+r)/2)+'" fill="none" stroke="'+c+'" stroke-width="'+(R-r)+'"/>';
+    else if(fr>0){ var P=function(a,rad){ return (cx+rad*Math.cos(a)).toFixed(1)+' '+(cy+rad*Math.sin(a)).toFixed(1); };
+      out+='<path d="M'+P(a0,R)+' A'+R+' '+R+' 0 '+lg+' 1 '+P(a1,R)+' L'+P(a1,r)+' A'+r+' '+r+' 0 '+lg+' 0 '+P(a0,r)+' Z" fill="'+c+'" stroke="#fff" stroke-width="1.5"/>'; }
+    a0=a1;
+    var ly=24+i*24; leg+='<rect x="250" y="'+(ly-10)+'" width="12" height="12" rx="2" fill="'+c+'"/><text x="268" y="'+ly+'" font-size="12" fill="currentColor">'+finSvgEsc(String(it.l).slice(0,30))+' — <tspan font-weight="700">'+finN(fr*100,fr<0.1?1:0)+' %</tspan>'+(pctOnly?'':' ('+finSvgM(it.v)+')')+'</text>';
+  });
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px" role="img" aria-label="'+finSvgEsc(title)+'">'+out+'<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-size="11" fill="currentColor" opacity=".65">Total</text><text x="'+cx+'" y="'+(cy+16)+'" text-anchor="middle" font-size="15" font-weight="700" fill="currentColor">'+(pctOnly?'100 %':finSvgM(tot))+'</text>'+leg+'</svg>';
+}
+// Histogramme vertical (séries groupées) ou horizontal (valeurs signées)
+function finSvgBars(labels,series,o){
+  o=o||{}; var fmt=o.fmt||finSvgM, n=labels.length; if(!n) return '';
+  var all=[]; series.forEach(function(s){ all=all.concat(s.v); });
+  var mx=Math.max.apply(null,all.concat([0])), mn=Math.min.apply(null,all.concat([0])); if(mx===mn) mx=mn+1;
+  if(o.horiz){
+    var W=640, L=200, Rr=70, rh=26, H=n*rh+20, x=function(v){ return L+(mn<0?64:0)+(v-mn)/(mx-mn)*(W-L-Rr-(mn<0?64:0)); }, out='<line x1="'+x(0)+'" x2="'+x(0)+'" y1="6" y2="'+(H-6)+'" stroke="currentColor" opacity=".35"/>';
+    labels.forEach(function(l,i){ var v=series[0].v[i], y=10+i*rh, x0=x(0), x1=x(v), col=v<0?'#c1121f':series[0].c||FIN_PAL[0];
+      out+='<text x="'+(L-8)+'" y="'+(y+14)+'" text-anchor="end" font-size="11.5" fill="currentColor">'+finSvgEsc(String(l).length>32?String(l).slice(0,31)+'…':String(l))+'</text><rect x="'+Math.min(x0,x1).toFixed(1)+'" y="'+y+'" width="'+Math.max(1,Math.abs(x1-x0)).toFixed(1)+'" height="'+(rh-8)+'" rx="2" fill="'+col+'"/>'
+        +'<text x="'+(v<0?Math.min(x0,x1)-4:Math.max(x0,x1)+4).toFixed(1)+'" y="'+(y+14)+'" text-anchor="'+(v<0?'end':'start')+'" font-size="11" font-weight="700" fill="currentColor">'+finSvgEsc(fmt(v))+'</text>'; });
+    return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px" role="img" aria-label="'+finSvgEsc(o.title||'')+'">'+out+'</svg>';
+  }
+  var W2=640, H2=270, l=56, b=34, t=28, r2=10, pw=W2-l-r2, ph=H2-t-b, y=function(v){ return t+ph-(v-mn)/(mx-mn)*ph; }, g='', i, k;
+  for(k=0;k<=4;k++){ var tv=mn+(mx-mn)*k/4; g+='<line x1="'+l+'" x2="'+(W2-r2)+'" y1="'+y(tv).toFixed(1)+'" y2="'+y(tv).toFixed(1)+'" stroke="currentColor" opacity=".12"/><text x="'+(l-6)+'" y="'+(y(tv)+4).toFixed(1)+'" text-anchor="end" font-size="10" fill="currentColor" opacity=".7">'+finSvgEsc(fmt(tv))+'</text>'; }
+  var gw=pw/n, bw=gw*0.78/series.length, bars='', xl='';
+  labels.forEach(function(lb,i){ series.forEach(function(s,j){ var v=s.v[i]||0, y0=y(Math.max(0,mn)), y1=y(v); bars+='<rect x="'+(l+i*gw+gw*0.11+j*bw).toFixed(1)+'" y="'+Math.min(y0,y1).toFixed(1)+'" width="'+Math.max(1,bw-1).toFixed(1)+'" height="'+Math.max(0.5,Math.abs(y1-y0)).toFixed(1)+'" fill="'+(s.c||FIN_PAL[j%FIN_PAL.length])+'"><title>'+finSvgEsc(lb+' · '+s.n+' : '+fmt(v))+'</title></rect>'; });
+    if(i%Math.max(1,Math.ceil(n/12))===0) xl+='<text x="'+(l+i*gw+gw/2).toFixed(1)+'" y="'+(H2-14)+'" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">'+finSvgEsc(lb)+'</text>'; });
+  var lg=series.map(function(s,j){ return '<rect x="'+(l+j*170)+'" y="6" width="10" height="10" rx="2" fill="'+(s.c||FIN_PAL[j%FIN_PAL.length])+'"/><text x="'+(l+j*170+15)+'" y="15" font-size="11" fill="currentColor">'+finSvgEsc(s.n)+'</text>'; }).join('');
+  return '<svg viewBox="0 0 '+W2+' '+H2+'" style="width:100%;max-width:'+W2+'px" role="img" aria-label="'+finSvgEsc(o.title||'')+'">'+g+bars+xl+lg+'</svg>';
+}
+function finSvgLines(labels,series,o){
+  o=o||{}; var fmt=o.fmt||finSvgM, n=labels.length; if(n<2) return '';
+  var all=[]; series.forEach(function(s){ all=all.concat(s.v); });
+  var mx=Math.max.apply(null,all.concat([0])), mn=Math.min.apply(null,all.concat([0])); if(mx===mn) mx=mn+1;
+  var W=640, H=270, l=56, b=34, t=28, r=10, pw=W-l-r, ph=H-t-b, x=function(i){ return l+i*pw/(n-1); }, y=function(v){ return t+ph-(v-mn)/(mx-mn)*ph; }, g='', k;
+  for(k=0;k<=4;k++){ var tv=mn+(mx-mn)*k/4; g+='<line x1="'+l+'" x2="'+(W-r)+'" y1="'+y(tv).toFixed(1)+'" y2="'+y(tv).toFixed(1)+'" stroke="currentColor" opacity=".12"/><text x="'+(l-6)+'" y="'+(y(tv)+4).toFixed(1)+'" text-anchor="end" font-size="10" fill="currentColor" opacity=".7">'+finSvgEsc(fmt(tv))+'</text>'; }
+  if(mn<0) g+='<line x1="'+l+'" x2="'+(W-r)+'" y1="'+y(0).toFixed(1)+'" y2="'+y(0).toFixed(1)+'" stroke="currentColor" opacity=".45"/>';
+  var xl=''; labels.forEach(function(lb,i){ if(i%Math.max(1,Math.ceil(n/12))===0) xl+='<text x="'+x(i).toFixed(1)+'" y="'+(H-14)+'" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">'+finSvgEsc(lb)+'</text>'; });
+  var ln=series.map(function(s,j){ var c=s.c||FIN_PAL[j%FIN_PAL.length]; return '<polyline fill="none" stroke="'+c+'" stroke-width="2.2" stroke-linejoin="round"'+(s.dash?' stroke-dasharray="5 4"':'')+' points="'+s.v.map(function(v,i){ return x(i).toFixed(1)+','+y(v).toFixed(1); }).join(' ')+'"/>'; }).join('');
+  var lg=series.map(function(s,j){ return '<rect x="'+(l+j*165)+'" y="6" width="10" height="10" rx="2" fill="'+(s.c||FIN_PAL[j%FIN_PAL.length])+'"/><text x="'+(l+j*165+15)+'" y="15" font-size="11" fill="currentColor">'+finSvgEsc(s.n)+'</text>'; }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px" role="img" aria-label="'+finSvgEsc(o.title||'')+'">'+g+ln+xl+lg+'</svg>';
+}
+// Jeu de graphiques du dossier : {id,type,title,svg,text,labels,series}
+function finGraphs(f,E){
+  var G=[], R=E.rows||[], rw=(E.res&&E.res.rows)||[], mo=function(v){ return finMf(v); }, labsM=R.map(function(r){ return 'M'+r.t; });
+  var add=function(g){ if(g.svg) G.push(g); }, sm=function(k){ return rw.reduce(function(a,r){ return a+(r[k]||0); },0); };
+  // 1. Camembert : structure du coût du cycle
+  var fam=[['Aliment',sm('coutAlimentPhase')],['Poussins / poulettes',E.res.coutPinit||0],['Prophylaxie',sm('coutVaccPhase')+sm('coutMedPhase')],['Eau et litière',sm('coutEauPhase')+sm('coutLitierePhase')],['Main d\'œuvre',sm('coutMainPhase')],['Énergie, amort., transport',sm('coutEnergiePhase')+sm('coutAmortPhase')+sm('coutTransportPhase')+sm('coutDiversPhase')],['Charges externes',sm('coutExtPhase')]].filter(function(x){ return x[1]>0; });
+  if(fam.length){ var ft=fam.reduce(function(a,x){return a+x[1];},0), top=fam.slice().sort(function(a,b){return b[1]-a[1];})[0], al=fam[0][0]==='Aliment'?fam[0][1]:0;
+    add({id:'couts',type:'camembert',title:'Structure du coût du cycle',svg:finSvgDonut(fam.map(function(x){return {l:x[0],v:x[1]};}),'Structure du coût du cycle'),labels:fam.map(function(x){return x[0];}),series:[{n:'Coût (M F)',v:fam.map(function(x){return Math.round(x[1]/1e4)/100;})}],
+      text:'Le poste « '+top[0]+' » domine avec '+finP(top[1]/ft,0)+' du coût total ('+mo(ft)+').'+(al>0?' Une hausse de 10 % du prix de l\'aliment ajouterait environ '+mo(al*0.1)+' de charges sur le cycle : c\'est le premier levier à sécuriser (contrats, stock tampon, achats groupés).':' Surveillez en priorité ce poste dans le suivi des coûts.')}); }
+  // 2. Camembert : sources de financement
+  try{ var PL=finPlanCalc(f,E), res=PL.ressources.filter(function(r){ return r[1]>0; });
+    if(res.length){ var rt=res.reduce(function(a,x){return a+x[1];},0), inv=res.filter(function(r){ return /investisseur/i.test(r[0]); }).reduce(function(a,x){return a+x[1];},0);
+      add({id:'sources',type:'camembert',title:'Sources de financement',svg:finSvgDonut(res.map(function(x){return {l:x[0].replace(/ \(.*$/,''),v:x[1]};}),'Sources de financement'),labels:res.map(function(x){return x[0].replace(/ \(.*$/,'');}),series:[{n:'Ressources (M F)',v:res.map(function(x){return Math.round(x[1]/1e4)/100;})}],
+        text:'Les ressources totalisent '+mo(rt)+(inv>0?', dont '+finP(inv/rt,0)+' proviennent des investisseurs.':'.')+' '+(PL.ecart>=0?'Elles couvrent les besoins ('+mo(PL.tb)+') avec une marge de '+mo(PL.ecart)+'.':'Elles ne couvrent pas les besoins ('+mo(PL.tb)+') : il manque '+mo(-PL.ecart)+' (apport, banque).')+' Plus la part d\'apport propre est élevée, plus le dossier rassure le financeur.'}); } }catch(e){}
+  // 3. Camembert : canaux de vente
+  var cn=((f.com&&f.com.canaux)||[]).filter(function(x){ return (+x.part||0)>0; });
+  if(cn.length){ var ct=cn.reduce(function(a,x){return a+(+x.part||0);},0), tc=cn.slice().sort(function(a,b){return b.part-a.part;})[0], dl=cn.reduce(function(a,x){return a+(+x.part||0)*(+x.delai||0);},0)/ct;
+    add({id:'canaux',type:'camembert',title:'Répartition des ventes par canal',svg:finSvgDonut(cn.map(function(x){return {l:x.nom||'Canal',v:+x.part||0};}),'Répartition des ventes par canal',true),labels:cn.map(function(x){return x.nom||'Canal';}),series:[{n:'Part (%)',v:cn.map(function(x){return Math.round((+x.part||0)/ct*1000)/10;})}],
+      text:'Le canal « '+(tc.nom||'principal')+' » représente '+finN((+tc.part||0)/ct*100,0)+' % du volume. Délai moyen de paiement pondéré : '+finN(dl,0)+' jours'+(dl>30?' — un décalage d\'encaissement important : prévoyez la trésorerie correspondante':'')+'. Une forte concentration sur un seul canal expose la bande à ses retards ou à son départ.'}); }
+  // 4. Histogramme : tirages et remboursements
+  if(R.length){ var tir=R.map(function(r){return r.tir||0;}), rem=R.map(function(r){return (r.cap||0)+(r.intPaid||0);}), pt=tir.indexOf(Math.max.apply(null,tir)), lastRem=0; rem.forEach(function(v,i){ if(v>1) lastRem=i+1; });
+    var tt=tir.reduce(function(a,b){return a+b;},0), tr=rem.reduce(function(a,b){return a+b;},0);
+    add({id:'flux',type:'histogramme',title:'Tirages et remboursements par mois',svg:finSvgBars(labsM,[{n:'Fonds tirés',v:tir,c:'#3b82f6'},{n:'Remboursements (capital + intérêts)',v:rem,c:'#2b5f45'}],{title:'Tirages et remboursements par mois'}),labels:labsM,series:[{n:'Tirages (M F)',v:tir.map(function(v){return Math.round(v/1e4)/100;})},{n:'Remboursements (M F)',v:rem.map(function(v){return Math.round(v/1e4)/100;})}],
+      text:'Les fonds sont tirés au fil de la bande ('+mo(tt)+' au total, pic au mois '+(pt+1)+'), puis remboursés '+(lastRem?'jusqu\'au mois '+lastRem:'(aucun remboursement dans l\'horizon)')+' pour '+mo(tr)+' (intérêts inclus). Les barres vertes apparaissent après la carence : plus elles démarrent tôt et sont régulières, plus le risque du financeur diminue.'}); }
+  // 5. Histogramme : capital restant dû
+  if(R.length){ var cl=R.map(function(r){return r.close||0;}), mxI=cl.indexOf(Math.max.apply(null,cl));
+    add({id:'solde',type:'histogramme',title:'Capital restant dû en fin de mois',svg:finSvgBars(labsM,[{n:'Capital restant dû',v:cl,c:'#c1121f'}],{title:'Capital restant dû en fin de mois'}),labels:labsM,series:[{n:'Solde dû (M F)',v:cl.map(function(v){return Math.round(v/1e4)/100;})}],
+      text:'La dette culmine à '+mo(cl[mxI])+' au mois '+(mxI+1)+'. '+(E.soldeFin<=1?'Elle est intégralement remboursée'+(E.fullMonth?' au mois '+E.fullMonth:'')+' dans le scénario de base.':'Il reste '+mo(E.soldeFin)+' impayé à la fin de l\'horizon : les flux de la bande ne suffisent pas, il faut allonger la durée, réduire le montant ou renforcer les garanties.')}); }
+  // 6. Courbes : recettes, charges, cash-flow
+  if(R.length>1){ var rv=R.map(function(r){return r.rev||0;}), ox=R.map(function(r){return r.opex||0;}), cf=R.map(function(r,i){return rv[i]-ox[i];}), fm=-1; cf.forEach(function(v,i){ if(fm<0&&v>0) fm=i; });
+    add({id:'recettes',type:'courbes',title:'Recettes, charges et cash-flow d\'exploitation',svg:finSvgLines(labsM,[{n:'Recettes',v:rv,c:'#2b5f45'},{n:'Charges d\'exploitation',v:ox,c:'#f59e0b'},{n:'Cash-flow (recettes − charges)',v:cf,c:'#3b82f6',dash:true}],{title:'Recettes, charges et cash-flow'}),labels:labsM,series:[{n:'Recettes (M F)',v:rv.map(function(v){return Math.round(v/1e4)/100;})},{n:'Charges (M F)',v:ox.map(function(v){return Math.round(v/1e4)/100;})}],
+      text:(fm>=0?'Le cash-flow mensuel devient positif à partir du mois '+(fm+1)+' : c\'est le point où la bande commence à s\'autofinancer. ':'Le cash-flow mensuel reste négatif sur l\'horizon : la bande consomme de la trésorerie sans l\'avoir encore remboursée. ')+'Avant ce point, les charges sont portées par l\'apport des financeurs et de l\'exploitant ; l\'écart entre les courbes mesure la marge dégagée par la ponte.'}); }
+  // 7. Courbes : trésorerie exploitant vs dette
+  if(R.length>1){ var ca=R.map(function(r){return r.cash||0;}), cd=R.map(function(r){return r.close||0;}), mi=ca.indexOf(Math.min.apply(null,ca));
+    add({id:'treso',type:'courbes',title:'Trésorerie de l\'exploitant et dette',svg:finSvgLines(labsM,[{n:'Trésorerie exploitant cumulée',v:ca,c:'#2b5f45'},{n:'Capital restant dû',v:cd,c:'#c1121f'}],{title:'Trésorerie de l\'exploitant et dette'}),labels:labsM,series:[{n:'Trésorerie (M F)',v:ca.map(function(v){return Math.round(v/1e4)/100;})},{n:'Dette (M F)',v:cd.map(function(v){return Math.round(v/1e4)/100;})}],
+      text:'Le point bas de la trésorerie est de '+mo(ca[mi])+' au mois '+(mi+1)+(ca[mi]<0?' : l\'exploitant doit prévoir ce montant en fonds propres ou en ligne de découvert avant que les ventes ne prennent le relais.':' : la trésorerie reste positive sur toute la période.')+' Quand la courbe verte dépasse la courbe rouge, l\'exploitant pourrait solder la dette avec sa propre trésorerie.'}); }
+  // 8. Histogramme horizontal : charges externes
+  try{ var ex=EXT_DEFS.map(function(x){ return {l:x.lbl.replace(/ \(.*$/,'').slice(0,34),v:(E.extTot||{})[x.k]||0}; }).filter(function(x){return x.v>0;}).sort(function(a,b){return b.v-a.v;}).slice(0,8);
+    if(ex.length){ var et=Object.keys(E.extTot||{}).reduce(function(a,k){return a+E.extTot[k];},0), t3=ex.slice(0,3).reduce(function(a,x){return a+x.v;},0);
+      add({id:'ext',type:'histogramme',title:'Principales charges externes sur le cycle',svg:finSvgBars(ex.map(function(x){return x.l;}),[{n:'Charge',v:ex.map(function(x){return x.v;})}],{horiz:true,title:'Principales charges externes'}),labels:ex.map(function(x){return x.l;}),series:[{n:'Charge (M F)',v:ex.map(function(x){return Math.round(x.v/1e4)/100;})}],
+        text:'Les charges externes pèsent '+mo(et)+'. Les trois premiers postes ('+ex.slice(0,3).map(function(x){return x.l;}).join(', ')+') en représentent '+finP(et>0?t3/et:0,0)+'. Ce sont des estimations : faites-les confirmer par devis avant le décaissement.'}); } }catch(e){}
+  // 9. Histogramme horizontal : sensibilités (TRI net)
+  try{ var SN=[['Œuf −10 %',{oeuf:0.9}],['Œuf +10 %',{oeuf:1.1}],['Aliment +10 %',{alim:1.1}],['Aliment −10 %',{alim:0.9}],['Ponte −5 %',{ponte:0.95}],['Ponte +5 %',{ponte:1.05}],['Mortalité ×2',{mort:2}]].map(function(x){ var e=finRun(f,x[1]); return {l:x[0],v:(e.irrInvN||0)*100,s:e.soldeFin}; });
+    var base=(E.irrInvN||0)*100, worst=SN.slice().sort(function(a,b){return a.v-b.v;})[0], unp=SN.filter(function(x){return x.s>1;});
+    add({id:'sens',type:'histogramme',title:'Sensibilité du TRI net des financeurs',svg:finSvgBars(SN.map(function(x){return x.l;}),[{n:'TRI net',v:SN.map(function(x){return x.v;})}],{horiz:true,fmt:function(v){return finN(v,1)+' %';},title:'Sensibilité du TRI net'}),labels:SN.map(function(x){return x.l;}),series:[{n:'TRI net (%)',v:SN.map(function(x){return Math.round(x.v*10)/10;})}],
+      text:'TRI net de référence : '+finN(base,1)+' %. Le choc le plus pénalisant est « '+worst.l+' » ('+finN(worst.v,1)+' %). '+(unp.length?'Dans '+unp.length+' cas sur '+SN.length+', un impayé apparaît ('+unp.map(function(x){return x.l;}).join(', ')+') : le dossier est fragile sur ces variables.':'Aucun de ces chocs ne provoque d\'impayé : le dossier est robuste à une variation isolée de ±10 %.')}); }catch(e){}
+  // 10. Courbes : capital restant dû selon scénario
+  try{ var sc=[['base','Base','#2b5f45'],['opt','Optimiste','#3b82f6'],['pes','Pessimiste','#c1121f']].map(function(k){ var e=finRun(f,FIN_SCEN[k[0]].m); return {n:k[1],c:k[2],e:e,v:e.rows.map(function(r){return r.close||0;})}; });
+    if(R.length>1){ add({id:'scen',type:'courbes',title:'Capital restant dû selon le scénario',svg:finSvgLines(labsM,sc.map(function(s){return {n:s.n,v:s.v,c:s.c};}),{title:'Capital restant dû selon le scénario'}),labels:labsM,series:sc.map(function(s){return {n:s.n+' (M F)',v:s.v.map(function(v){return Math.round(v/1e4)/100;})};}),
+      text:sc.map(function(s){ return s.n+' : '+(s.e.soldeFin<=1?'remboursé'+(s.e.fullMonth?' au mois '+s.e.fullMonth:''):'impayé de '+mo(s.e.soldeFin)); }).join(' · ')+'. L\'écart entre les courbes mesure le risque : si la courbe pessimiste ne rejoint pas zéro, le remboursement dépend d\'un scénario favorable.'}); } }catch(e){}
+  // 11. Histogramme : coût de revient vs prix (pondeuses)
+  if(E.res&&E.res.cumOeufs>0&&E.prixMoyen>0){ var co=E.res.totalCout/E.res.cumOeufs, pm=E.prixMoyen;
+    add({id:'oeuf',type:'histogramme',title:'Coût de revient et prix de vente par œuf',svg:finSvgBars(['Coût de revient','Prix de vente moyen'],[{n:'F par œuf',v:[co,pm]}],{fmt:function(v){return finN(v,1)+' F';},title:'Coût de revient et prix de vente par œuf'}),labels:['Coût de revient','Prix de vente moyen'],series:[{n:'F par œuf',v:[Math.round(co*10)/10,Math.round(pm*10)/10]}],
+      text:'Chaque œuf coûte '+finN(co,1)+' F à produire et se vend '+finN(pm,1)+' F en moyenne : '+(pm>=co?'la marge est de '+finN(pm-co,1)+' F par œuf ('+finP((pm-co)/pm,0)+' du prix). Une baisse du prix de vente supérieure à '+finP((pm-co)/pm,0)+' ferait passer la bande à perte.':'le prix de vente est inférieur au coût de revient (perte de '+finN(co-pm,1)+' F par œuf) : le modèle n\'est pas rentable en l\'état.')}); }
+  return G;
+}
+function finTabGraph(f,E){
+  var G=finGraphs(f,E); if(!G.length) return '<div class="card"><div class="card-bd">Aucune donnée à représenter : renseignez le montage du dossier.</div></div>';
+  var tag={camembert:'🥧 Camembert',histogramme:'📊 Histogramme',courbes:'📈 Courbes'};
+  return '<p style="font-size:12px;color:var(--text3);margin:0 0 12px">Les graphiques se recalculent à chaque modification du dossier. Chaque graphique est suivi de son interprétation, rédigée automatiquement à partir des chiffres : relisez-la avant de la présenter à un financeur. Ils sont repris au chapitre 10.4 du business plan.</p>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:14px">'
+    +G.map(function(g){ return '<div class="card"><div class="card-hd"><span>'+g.title+'</span><span style="font-size:11px;color:var(--text3)">'+tag[g.type]+'</span></div><div class="card-bd">'+g.svg+'<div style="margin-top:8px;background:#eff6ff;border-left:4px solid #3b82f6;border-radius:6px;padding:8px 12px;font-size:12px;line-height:1.5;color:#1e3a8a"><strong>💡 Interprétation.</strong> '+esc(g.text)+'</div></div></div>'; }).join('')+'</div>';
 }
 function finNote(t){
   var n=FIN_NOTES[t]; if(!n) return '';
@@ -25980,6 +26094,7 @@ function finBpHtml(D,o){
     else if(k.t==='t'){ var r=k.o.right||[]; out.push('<table><thead><tr>'+k.head.map(function(h,j){ return '<th'+(r.indexOf(j)>=0?' class="r"':'')+'>'+X(h)+'</th>'; }).join('')+'</tr></thead><tbody>'+k.rows.map(function(row,i){ return '<tr'+(k.o.totalLast&&i===k.rows.length-1?' class="tot"':'')+'>'+row.map(function(v,j){ var neg=r.indexOf(j)>=0&&/^-\d/.test(String(v).trim()); return '<td class="'+(r.indexOf(j)>=0?'r':'')+(neg?' neg':'')+'">'+tx(v)+'</td>'; }).join('')+'</tr>'; }).join('')+'</tbody></table>'); }
     else if(k.t==='k') out.push('<div class="ks2">'+k.items.map(function(it){ return '<div>'+X(it[0])+'<b'+(it[2]==='DC2626'?' class="bad"':'')+'>'+X(it[1])+'</b>'+X(it[3]||'')+'</div>'; }).join('')+'</div>');
     else if(k.t==='c') out.push('<div class="call"><h3>'+X(k.title)+'</h3>'+k.lines.map(function(l){ var p=Array.isArray(l)?l:[null,l]; return '<p>'+(p[0]?'<b>'+X(p[0])+'</b>':'')+tx(p[1])+'</p>'; }).join('')+'</div>');
+    else if(k.t==='chart') out.push('<div style="page-break-inside:avoid;margin:10px 0"><p><b>'+X(k.title)+'</b></p><div style="max-width:640px">'+k.svg+'</div><p style="font-size:10.5px;background:#eff6ff;border-left:3px solid #3b82f6;padding:5px 9px"><b>Interprétation.</b> '+X(k.text)+'</p></div>');
     else if(k.t==='bar'){ var mx=Math.max.apply(null,k.values.concat([0.0001])); out.push('<p><b>'+X(k.title)+'</b></p><div class="bar">'+k.values.map(function(v){ return '<div style="height:'+Math.max(1,Math.round(v/mx*100))+'%"></div>'; }).join('')+'</div><div class="barl">'+k.labels.map(function(l){ return '<span>'+X(l)+'</span>'; }).join('')+'</div>'); }
   });
   return '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Business plan — '+X(D.titre)+'</title><style>'+css+'</style></head><body>'+(o.wm?'<div class="wm">BROUILLON</div>':'')+out.join('')+'</body></html>';
@@ -26183,6 +26298,9 @@ function finBpBlocks(D){
   H2('10.3 Ratios et seuil de rentabilité');
   var pt=B.pm>0?E.res.totalCout/B.pm:0, rec=E.res.cumRecette;
   T(['Indicateur','Valeur'],[['Chiffre d\'affaires du cycle',finF(rec)],['Coût total du cycle',finF(E.res.totalCout)],['Marge nette du cycle',finF(E.res.margeNette)],['Coût de revient par œuf',finN(coutOeuf,1)+' F'],['Prix moyen de vente par œuf',finN(B.pm,1)+' F'],['Point mort (œufs à vendre pour couvrir le coût)',layer?finN(pt):'—'],['DSCR minimal / moyen',(E.dscrMin==null?'—':finN(E.dscrMin,2))+' / '+(E.dscrAvg==null?'—':finN(E.dscrAvg,2))],['Dette / valeur des poulettes à la ponte',finP(E.ltv)],['Besoin en fonds de roulement (pic)',finF(D.bfr)]],{right:[1]});
+  H2('10.4 Graphiques et interprétation');
+  P('Les graphiques suivants sont calculés à partir des hypothèses du dossier ; chacun est suivi d\'une lecture rédigée à partir des chiffres.');
+  finGraphs(f,E).forEach(function(g){ b.push({t:'chart',title:g.title,svg:g.svg,text:g.text,labels:g.labels,series:g.series}); });
   // 11
   PB(); H1('11. Scénarios, sensibilités et risque de crédit');
   var K3=['prudent','base','optimiste'];
@@ -26261,6 +26379,7 @@ async function finBpWord(D){
     else if(k.t==='t') T(k.head,k.rows,k.o);
     else if(k.t==='k') KPIS(k.items);
     else if(k.t==='c') CALL(k.title,k.lines);
+    else if(k.t==='chart'){ ch.push(P(k.title,{b:true})); T(['Période'].concat(k.series.map(function(x){return x.n;})),k.labels.map(function(l,i){ return [l].concat(k.series.map(function(x){ return finN(x.v[i],2); })); }),{right:k.series.map(function(x,i){return i+1;}),sz:15}); ch.push(P('Interprétation : '+k.text,{i:true})); }
     else if(k.t==='bar'){ var mx=Math.max.apply(null,k.values.concat([0.0001])); ch.push(P(k.title,{b:true})); T(['Période','Valeur',''],k.labels.map(function(l,i){ return [l,finN(k.values[i],k.fmt||0),'█'.repeat(Math.max(0,Math.round(k.values[i]/mx*30)))]; }),{right:[1],sz:15}); }
   });
   var pg={page:{margin:{top:1100,bottom:1000,left:1100,right:1100}}};
@@ -26305,6 +26424,7 @@ async function finBpPdf(D){
       y=doc.lastAutoTable.finalY+5; }
     else if(k.t==='k'){ need(28); var n=k.items.length, gap=3, w=(CW-gap*(n-1))/n; k.items.forEach(function(it,i){ var x=M+i*(w+gap); doc.setFillColor(240,253,244); doc.roundedRect(x,y,w,23,1.5,1.5,'F'); doc.setFillColor.apply(doc,AC); doc.rect(x,y,w,1.2,'F'); setF(7.5,'normal',MUT); doc.text(san(it[0]),x+3,y+6.5); var col=it[2]==='DC2626'?RED:GR; setF(13,'bold',col); doc.text(san(it[1]),x+3,y+14); setF(7,'normal',MUT); doc.text(san(it[3]||''),x+3,y+19.5); }); y+=28; }
     else if(k.t==='c'){ setF(9.5,'normal'); var blocksTxt=k.lines.map(function(l){ var parts=Array.isArray(l)?l:[null,l]; return {lead:parts[0],lines:doc.splitTextToSize(san(parts[1]),CW-12)}; }); var h=12+blocksTxt.reduce(function(a,b){return a+(b.lead?lh(9.5):0)+b.lines.length*lh(9.5)+1.6;},0); need(h); doc.setFillColor(255,251,235); doc.rect(M,y,CW,h,'F'); doc.setFillColor.apply(doc,GOLD); doc.rect(M,y,1.8,h,'F'); setF(11,'bold',GR); doc.text(san(k.title),M+6,y+7); var yy=y+12; blocksTxt.forEach(function(b){ if(b.lead){ setF(9.5,'bold',GR); doc.text(san(b.lead.replace(/ : $/,'')),M+6,yy+3); yy+=lh(9.5); } b.lines.forEach(function(l){ setF(9.5,'normal',INK); doc.text(l,M+6,yy+3); yy+=lh(9.5); }); yy+=1.6; }); y+=h+5; }
+    else if(k.t==='chart'){ barOf({title:k.title+' ('+k.series[0].n+')',labels:k.labels,values:k.series[0].v.map(function(v){return Math.max(0,v);}),fmt:2}); para('Interprétation : '+k.text,{sz:8.5,col:MUT}); }
     else if(k.t==='bar') barOf(k);
   });
   // sommaire (page réservée)
