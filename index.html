@@ -24623,7 +24623,7 @@ const FIN_DEFAULTS = {
   simu:null
 };
 const FIN_MODES = {
-  ponte:'Indexé ponte (% du cash-flow net)', degressif:'Capital constant', annuite:'Annuités constantes', infine:'In fine (capital au terme)'
+  forfait:'Intérêt forfaitaire étalé (carence, capital in fine)', ponte:'Indexé ponte (% du cash-flow net)', degressif:'Capital constant', annuite:'Annuités constantes', infine:'In fine (capital au terme)'
 };
 const FIN_SEM_PONTE_DEBUT = 19;      // 1re semaine de ponte : coûts d'élevage avant S19 = actif biologique immobilisé
 const FIN_IMMO_CAT = [['batiment','Bâtiment d\'élevage',20],['cages','Cages / batteries de ponte',10],['mangeoires','Mangeoires, abreuvoirs',5],['ventilation','Ventilation / installation électrique',7],['groupe','Groupe électrogène',5],['transport','Matériel de transport',5],['amenagement','Aménagements / clôtures',10],['mobilier','Mobilier / informatique',3],['autre','Autre matériel',5]];
@@ -24760,9 +24760,13 @@ function finRun(f, m){
   var k=base>0?montant/base:0, frais=montant*f.fraisDossierPct/100;
   if(f.tirage==='unique'){ tir[1]=montant; } else { for(t=1;t<=T;t++) tir[t]=fin[t]*k; }
   var rm=f.taux/100/12, B=0, startB=null, rows=[], pmt=0, ret=f.retenuePct/100;
+  // Forfait : intérêt total = capital × taux × (carence + mensualités)/12, versé en N mensualités égales après la carence ; capital remboursé en une fois à la dernière
+  var totInt=f.mode==='forfait'?montant*f.taux/100*(diff+N)/12:0;
   for(t=1;t<=T;t++){
-    var open=B, d=tir[t], I=(open+d)*rm, intCap=0, intPaid=0, cap=0, kk=t-diff;
-    if(t<=diff){
+    var open=B, d=tir[t], I=f.mode==='forfait'?0:(open+d)*rm, intCap=0, intPaid=0, cap=0, kk=t-diff;
+    if(f.mode==='forfait'){
+      if(t>diff){ intPaid=kk<=N?totInt/N:0; I=intPaid; cap=kk>=N?open+d:0; }
+    } else if(t<=diff){
       if(f.interetDiffere==='paye') intPaid=I; else intCap=I;
     } else {
       if(startB===null){ startB=open+d; pmt=rm>0?startB*rm/(1-Math.pow(1+rm,-N)):startB/N; }
@@ -24952,34 +24956,44 @@ function finConformite(f, E){
 }
 
 // ── Contrat type (clauses) ──
-function finContrat(f, E, cfg){
+function finContrat(f, E, cfg, inv){
   var ex=(cfg&&cfg.nomExploitation)||'[Exploitation — dénomination]', fj=(cfg&&cfg.formeJuridique)||'[forme juridique]', rc=(cfg&&cfg.rccm)||'[RCCM]';
-  var inv=(f.investisseurs||[]).map(function(i){return i.nom||'[Investisseur]';}).join(', ')||'[Investisseur(s)]';
+  var fin=inv?(inv.nom||'[Financier]'):((f.investisseurs||[]).map(function(i){return i.nom||'[Investisseur]';}).join(', ')||'[Financier(s)]');
   var g=f.garanties||{}, gar=[];
   if(g.gageStock) gar.push('gage sans dépossession sur les stocks (œufs, aliments) par bordereau de gage de stocks (AUS révisé 2010)');
   if(g.cessionCreances) gar.push('cession/délégation des créances clients issues des ventes d\'œufs');
   if(g.caution) gar.push('cautionnement personnel du dirigeant');
   if(g.domiciliation) gar.push('domiciliation des encaissements sur compte dédié (mandat/compte séquestre)');
-  if(g.assurance) gar.push('assurance mortalité/sinistre avec subrogation au profit du prêteur');
-  var modeTxt={ponte:'par affectation de '+f.sweepPct+' % du cash-flow net mensuel d\'exploitation issu de la bande jusqu\'à extinction, avec exigibilité du solde à l\'échéance finale',
-    degressif:'par échéances mensuelles à capital constant',annuite:'par annuités mensuelles constantes',infine:'in fine, intérêts payés mensuellement'}[f.mode];
-  return [
-    ['Parties','Entre '+ex+' ('+fj+', RCCM '+rc+'), ci-après « l\'Exploitant », et '+inv+', ci-après « le(s) Prêteur(s) », il est convenu ce qui suit.'],
-    ['Objet',finObjet(f,E)+' Aucune entrée au capital ; aucun droit de vote ni de partage de résultat hors rémunération prévue.'],
-    ['Montant & mise à disposition','Montant maximal : '+finM(E.montant)+', mis à disposition '+(f.tirage==='unique'?'en une fois à la signature':'par tirages mensuels correspondant aux besoins en aliment')+'. Frais de dossier : '+f.fraisDossierPct+' %.'],
-    ['Affectation des fonds','Exclusivement à l\'achat d\'aliments pour la bande financée. Justificatifs (factures, bons de réception) communiqués sur demande ; le suivi est consultable dans l\'ERP.'],
-    ['Durée','Différé de '+f.differeMois+' mois (intérêts '+(f.interetDiffere==='paye'?'payés':'capitalisés')+'), puis remboursement sur '+f.dureeRemb+' mois maximum.'],
-    ['Rémunération','Intérêt nominal de '+f.taux+' % l\'an (TEG estimé '+finPc(E.teg)+'), inférieur au taux d\'usure en vigueur. Retenue à la source applicable selon la législation fiscale en vigueur ('+f.retenuePct+' % retenu par défaut — à confirmer).'],
-    ['Remboursement','Remboursement '+modeTxt+'. Tableau d\'amortissement en annexe (non contractuel pour les montants indexés sur la ponte, contractuel pour l\'échéance finale).'],
-    ['Intérêts de retard','Taux contractuel majoré de [x] points, sans dépasser le plafond légal d\'usure.'],
-    ['Garanties',gar.length?gar.join(' ; ')+'.':'[À définir : gage de stocks, cession de créances, caution, assurance].'],
-    ['Engagements de l\'Exploitant','Tenir une comptabilité SYSCOHADA ; conduire l\'élevage selon les règles de l\'art (programme sanitaire, biosécurité) ; informer sans délai de tout sinistre, mortalité anormale (> 2× le standard) ou maladie réputée contagieuse ; ne pas distraire les encaissements d\'œufs de la bande hors charges d\'exploitation et service de la dette.'],
+  if(g.assurance) gar.push('assurance mortalité/sinistre avec subrogation au profit du financier');
+  var tot=(f.investisseurs||[]).reduce(function(a,i){return a+(+i.montant||0);},0), sh=(inv&&tot>0)?inv.montant/tot:1, mt=Math.round(inv&&inv.montant?Math.min(inv.montant,E.montant):E.montant);
+  var carence=f.differeMois, n=f.dureeRemb, fin12=f.differeMois+f.dureeRemb;
+  var modeTxt={forfait:'le capital est remboursé en une seule fois, '+fin12+' mois après l\'entrée en vigueur ; l\'intérêt forfaitaire (taux annuel de '+f.taux+' % rapporté à '+fin12+' mois, soit '+finM(E.intTot*sh)+') est payé en '+n+' mensualités égales après '+carence+' mois de carence',
+    ponte:'par affectation de '+f.sweepPct+' % du cash-flow net mensuel d\'exploitation issu de la bande jusqu\'à extinction, le solde restant dû étant exigible à l\'échéance finale (mois '+fin12+')',
+    degressif:'par échéances mensuelles à capital constant après '+carence+' mois de différé',annuite:'par annuités mensuelles constantes après '+carence+' mois de différé',infine:'in fine (capital au mois '+fin12+'), les intérêts étant payés mensuellement après '+carence+' mois de différé'}[f.mode];
+  var cl=[
+    ['Parties','Entre '+ex+' ('+fj+', RCCM '+rc+'), ci-après « le Bénéficiaire », et '+fin+', ci-après « le Financier », il est convenu ce qui suit.'],
+    ['Définitions','« Financement » : fonds mis à disposition à titre de prêt ; « Remboursement » : restitution du capital et paiement des intérêts aux échéances convenues ; « Intérêt » : rémunération du financement ; « Bande » : le lot de volailles financé ; « Tableau d\'amortissement » : annexe 1.'],
+    ['Objet',finObjet(f,E)+' Prêt à intérêt : aucune entrée au capital, aucun droit de vote ni de partage de résultat hors rémunération prévue.'],
+    ['Montant & mise à disposition','Montant : '+finM(mt)+', mis à disposition '+(f.tirage==='unique'?'en une seule fois':'par tirages mensuels correspondant aux besoins en aliment')+'. Frais de dossier : '+f.fraisDossierPct+' %.'],
+    ['Affectation des fonds','Exclusivement à l\'objet ci-dessus. Le Bénéficiaire justifie l\'emploi des fonds (factures, bons de réception) sur demande ; le suivi est consultable dans l\'ERP.'],
+    ['Rémunération','Intérêt nominal de '+f.taux+' % l\'an. Coût effectif global (TEG) estimé : '+finPc(E.teg)+', inférieur au plafond d\'usure applicable ('+FIN_USURE_NON_BANCAIRE+' % hors établissements de crédit). Aucun frais ni intérêt supplémentaire ne peut être réclamé hors ceux prévus aux présentes.'],
+    ['Remboursement','Le remboursement s\'effectue ainsi : '+modeTxt+'. Les parties peuvent convenir par écrit d\'un paiement des intérêts en nature (livraison d\'œufs), en précisant la quantité, la fréquence et la valorisation retenue (prix moyen de vente du mois) ; à défaut le paiement est numéraire. Le tableau d\'amortissement figure en annexe 1.'],
+    ['Durée','La convention est conclue pour '+fin12+' mois à compter de son entrée en vigueur, jusqu\'au complet remboursement. Elle n\'est pas renouvelable par tacite reconduction ; toute prorogation fait l\'objet d\'un avenant écrit.'],
+    ['Remboursement anticipé','Le Bénéficiaire peut rembourser par anticipation, en tout ou partie, sur préavis de 15 jours. Pour le mode forfaitaire, les intérêts restant dus sont recalculés au prorata de la durée courue.'],
+    ['Garanties',gar.length?'En garantie du remboursement : '+gar.join(' ; ')+'.':'[À définir : gage de stocks, cession de créances, caution, assurance.]'],
+    ['Engagements du Bénéficiaire','Tenir une comptabilité conforme au SYSCOHADA ; conduire l\'élevage selon les règles de l\'art (programme sanitaire, biosécurité) ; informer sans délai de tout sinistre, mortalité anormale (> 2× le standard) ou maladie réputée contagieuse ; ne pas distraire les encaissements de la bande hors charges d\'exploitation et service du financement.'],
+    ['Engagements du Financier','Verser les fonds aux dates convenues ; ne rien faire qui entrave l\'exécution de l\'objet ; respecter la confidentialité.'],
     ['Information & reporting','Relevé mensuel : effectif, mortalité, consommation d\'aliment, taux de ponte, encaissements, solde dû.'],
-    ['Exigibilité anticipée','Défaut de paiement 30 jours après mise en demeure, fausse déclaration, détournement des fonds, cessation d\'activité, mortalité cumulée supérieure à [x] % sans déclaration d\'assurance.'],
-    ['Confidentialité & données','Données personnelles traitées conformément à la loi ivoirienne n° 2013-450 relative à la protection des données à caractère personnel.'],
-    ['Droit applicable & litiges','Droit ivoirien et actes uniformes OHADA. Médiation préalable puis [tribunal de commerce d\'Abidjan / arbitrage].'],
-    ['Formalités','Écrit sous seing privé en autant d\'exemplaires que de parties ; enregistrement auprès de la DGI selon la réglementation ; inscription des sûretés au RCCM le cas échéant.']
+    ['Intérêts de retard & clause pénale','Toute somme non payée à l\'échéance porte intérêt de plein droit au taux contractuel majoré de [x] points, sans excéder le plafond légal d\'usure, à compter de la mise en demeure. [Pénalité forfaitaire : x % du montant échu.]'],
+    ['Exigibilité anticipée','Le solde devient exigible 30 jours après mise en demeure restée sans effet en cas de : défaut de paiement, fausse déclaration, détournement des fonds, cessation d\'activité, perte de la Bande sans déclaration d\'assurance.'],
+    ['Force majeure & sinistre','Épizootie, catastrophe naturelle ou sinistre : le Bénéficiaire notifie sous 48 h et déclare l\'assurance ; les parties se concertent sur un rééchelonnement par avenant. Ne suspend ni les intérêts ni l\'exigibilité du capital.'],
+    ['Fiscalité','Retenue à la source sur intérêts applicable selon la législation fiscale en vigueur ('+f.retenuePct+' % retenu par défaut — à confirmer). Les droits d\'enregistrement sont supportés par [le Bénéficiaire / à parts égales].'],
+    ['Modification','Toute modification fait l\'objet d\'un avenant écrit et signé des deux parties.'],
+    ['Confidentialité & données','Les parties gardent la convention confidentielle. Les données personnelles sont traitées conformément à la loi ivoirienne n° 2013-450 relative à la protection des données à caractère personnel.'],
+    ['Droit applicable & litiges','Droit ivoirien et actes uniformes OHADA. Règlement amiable préalable (60 jours), puis [tribunal de commerce compétent / arbitrage].'],
+    ['Entrée en vigueur & formalités','À la signature. Écrit sous seing privé en deux exemplaires originaux ; enregistrement auprès de la DGI ; inscription des sûretés au RCCM le cas échéant.']
   ];
+  return cl;
 }
 
 // ═════════ PERSISTANCE / ÉTAT ═════════
@@ -25210,7 +25224,7 @@ function finTabMontage(f,E){
     +finChk('Poulettes J0','inclPoussin',f.inclPoussin,'finSetBool')+finChk('Vaccins','inclVacc',f.inclVacc,'finSetBool')+finChk('Médicaments','inclMed',f.inclMed,'finSetBool')+finChk('Eau + litière','inclEau',f.inclEau,'finSetBool')+'</div>'
     +'</div></div>'
     +finBlocImmos(f,E)
-    +'<div class="card" style="margin-bottom:14px"><div class="card-hd">🏦 Conditions de financement</div><div class="simu-params-body">'
+    +'<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🏦 Conditions de financement</span><button class="btn btn-s btn-sm" onclick="finPresetForfait()" title="Carence 2 mois, 10 mensualités d\'intérêt, capital in fine à 12 mois"><i class="fas fa-wand-magic-sparkles"></i> Modèle convention 12 mois</button></div><div class="simu-params-body">'
     +finIn('Taux nominal annuel (%)','taux',f.taux,0.25)+finSel('Remboursement','mode',f.mode,Object.keys(FIN_MODES).map(function(k){return [k,FIN_MODES[k]];}))
     +finIn('% cash-flow net affecté (mode ponte)','sweepPct',f.sweepPct,5)+finIn('Différé (mois)','differeMois',f.differeMois,1)+finIn('Durée de remboursement (mois)','dureeRemb',f.dureeRemb,1)
     +finSel('Intérêts pendant différé','interetDiffere',f.interetDiffere,[['capitalise','Capitalisés'],['paye','Payés']])+finSel('Mise à disposition','tirage',f.tirage,[['progressif','Tirages mensuels (réduit les intérêts)'],['unique','Versement unique']])
@@ -25322,8 +25336,8 @@ function finTabJuridique(f,E,cfg){
       '<table class="tbl" style="font-size:11px"><thead><tr><th>Risque</th><th>Parade</th></tr></thead><tbody>'
       +[['Mortalité / épizootie (Newcastle, grippe aviaire)','Plan prophylaxie suivi dans l\'ERP, biosécurité, assurance, seuil d\'alerte mortalité'],['Baisse du prix de l\'œuf','Clause de plafonnement, contrats clients, scénarios + seuil de rentabilité'],['Hausse aliment (TVA 9 % depuis 2026)','Fabrication interne d\'aliment, achats groupés, marge d\'aléas'],['Retard de ponte / sous-performance','Lignée performante, contrôle poids/uniformité, différé suffisant'],['Détournement des fonds','Tirages au réel sur factures, compte dédié, accès lecture investisseurs'],['Concentration clients / impayés','Cession de créances, délai encaissement paramétré']]
         .map(function(x){return '<tr><td>'+x[0]+'</td><td>'+x[1]+'</td></tr>';}).join('')+'</tbody></table>')
-    +box('6. Contrat type — clauses (modèle indicatif) <button class="btn btn-s btn-sm" onclick="finImprimer()"><i class="fas fa-print"></i> Imprimer</button>',
-      cl.map(function(c,i){return '<p><strong>Article '+(i+1)+' — '+c[0]+'.</strong> '+esc(c[1])+'</p>';}).join(''));
+    +box('6. Convention de financement — clauses (modèle indicatif) <span style="display:inline-flex;gap:6px;flex-wrap:wrap"><select id="fcv_inv" style="font-size:11px"><option value="-1">Tous les financiers</option>'+(f.investisseurs||[]).map(function(i,ix){return '<option value="'+ix+'">'+esc(i.nom)+'</option>';}).join('')+'</select><button class="btn btn-p btn-sm" onclick="finConvention()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-s btn-sm" onclick="finConvention(\'doc\')"><i class="fas fa-file-word"></i> Word</button></span>',
+      cl.map(function(c,i){return '<p><strong>'+(i?'Article '+i+' — ':'')+c[0]+'.</strong> '+esc(c[1])+'</p>';}).join(''));
 }
 
 async function finTabSuivi(f,E){
@@ -25352,6 +25366,25 @@ function finCEPhtml(f,E){
   return '<table><thead><tr><th>Poste</th>'+c.cols.map(function(x){return '<th>'+x.label+'</th>';}).join('')+'<th>TOTAL</th></tr></thead><tbody>'
     +c.lines.filter(function(l){return l.kind!=='memo';}).map(function(l){ var b=l.kind!=='item'; return '<tr'+(b?' style="font-weight:700;background:#eef3ec"':'')+'><td>'+l.lbl+'</td>'+c.cols.map(function(x){return '<td>'+fmt(l.f(x.d))+'</td>';}).join('')+'<td>'+fmt(l.f(c.total))+'</td></tr>'; }).join('')+'</tbody></table>';
 }
+// Convention de financement complète (une par financier) : parties, articles, annexe d'amortissement proratisée, signatures
+async function finConventionHtml(f,E,cfg,idx){
+  var invs=f.investisseurs||[], inv=(idx>=0&&invs[idx])?invs[idx]:null, tot=invs.reduce(function(a,i){return a+(+i.montant||0);},0), sh=(inv&&tot>0)?Math.min(1,inv.montant/Math.max(tot,E.montant)):1;
+  var cl=finContrat(f,E,cfg,inv), today=new Date().toLocaleDateString('fr-FR'), fmt=function(v){return ff(v*sh);};
+  var rowsH=E.rows.filter(function(r){return r.tir>0||r.service>0||r.intCap>0||r.close>0;}).map(function(r){return '<tr><td>'+r.t+'</td><td>'+r.date+'</td><td>'+fmt(r.open)+'</td><td>'+fmt(r.tir)+'</td><td>'+fmt(r.intPaid+r.intCap)+'</td><td>'+fmt(r.cap)+'</td><td>'+fmt(r.service)+'</td><td>'+fmt(r.close)+'</td></tr>';}).join('');
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Convention de financement</title><style>body{font-family:Arial,sans-serif;font-size:12px;color:#20241f;margin:0;padding:28px;line-height:1.55}h1{font-size:17px;text-align:center}h2{font-size:13px;margin-top:16px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#eef3ec;padding:5px;text-align:right}td{padding:4px 5px;border-bottom:1px solid #e2ddd1;text-align:right}td:first-child,th:first-child{text-align:left}@media print{h2{page-break-after:avoid}}</style></head><body>'
+    +'<h1>CONVENTION DE FINANCEMENT D\'UNE BANDE AVICOLE</h1><p style="text-align:center;color:#666">'+esc(f.nom)+' · '+today+'</p>'
+    +cl.map(function(c,i){ return i===0?'<p>'+esc(c[1])+'</p>':'<h2>Article '+i+' — '+esc(c[0])+'</h2><p>'+esc(c[1])+'</p>'; }).join('')
+    +'<h2>Annexe 1 — Tableau d\'amortissement'+(inv?' ('+esc(inv.nom)+')':'')+'</h2><table><thead><tr><th>Mois</th><th>Échéance</th><th>Capital dû</th><th>Fonds versés</th><th>Intérêts</th><th>Capital remboursé</th><th>Service</th><th>Solde</th></tr></thead><tbody>'+rowsH+'</tbody></table>'
+    +'<p>Montant : <b>'+ff(E.tirTotal*sh)+' F</b> · Intérêts totaux : <b>'+ff(E.intTot*sh)+' F</b> · TEG : <b>'+finPc(E.teg)+'</b> · Frais de dossier : <b>'+ff(E.frais*sh)+' F</b>.</p>'
+    +'<p style="margin-top:30px">Fait à ____________, le ____________, en deux (2) exemplaires originaux.</p><table style="margin-top:10px"><tr><td style="height:80px;text-align:left;width:50%">Le Bénéficiaire<br>'+esc((cfg&&cfg.nomExploitation)||'')+'</td><td style="text-align:left">Le Financier<br>'+esc(inv?inv.nom:'')+'<br><span style="color:#888">« Lu et approuvé »</span></td></tr></table></body></html>';
+}
+window.finConvention=async function(mode){
+  var f=window._fb.rec; if(!f) return; var E=finRun(f), cfg=await getExploitationSettings(), sel=document.getElementById('fcv_inv'), idx=sel?parseInt(sel.value):-1;
+  var html=await finConventionHtml(f,E,cfg,isNaN(idx)?-1:idx);
+  if(mode==='doc'){ var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+html],{type:'application/msword'})); a.download='convention_'+(f.nom||'bande').replace(/\W+/g,'_')+'.doc'; a.click(); return; }
+  var w=window.open('','_blank','width=900,height=780'); if(!w){ toast('Autoriser les pop-ups','err'); return; } w.document.write(html); w.document.close();
+};
+window.finPresetForfait=async function(){ var r=window._fb.rec; Object.assign(r,{mode:'forfait',tirage:'unique',differeMois:2,dureeRemb:10,taux:Math.min(r.taux,20),interetDiffere:'capitalise'}); await finSave(r); finRefresh(); toast('Modèle convention : carence 2 mois, 10 mensualités, capital in fine à 12 mois'); };
 window.finImprimer=async function(){
   var f=window._fb.rec; if(!f) return; var E=finRun(f), cfg=await getExploitationSettings(), cl=finContrat(f,E,cfg);
   var today=new Date().toLocaleDateString('fr-FR');
@@ -25364,7 +25397,7 @@ window.finImprimer=async function(){
     +'<h2>2. Objet & usage des fonds</h2><p>'+esc(finObjet(f,E))+' Remboursement à partir des ventes ('+(f.typeLot==='broiler'?'carcasses : '+ff(E.p.prixCarcasseKg)+' F/kg':'œufs : '+ff(E.p.prixOeufUnit)+' F/œuf, ponte pic '+E.p.tauxPonteMoy+' %')+', mortalité '+E.p.tauxMortalite+' %).</p>'
     +'<h2>3. Compte d\'exploitation prévisionnel (par phase)</h2>'+finCEPhtml(f,E)
     +'<h2>3bis. Tableau d\'amortissement</h2><table><thead><tr><th>Mois</th><th>Échéance</th><th>Solde début</th><th>Tirage</th><th>Intérêts</th><th>Int. payés</th><th>Capital</th><th>Service</th><th>Solde fin</th></tr></thead><tbody>'+rowsH+'</tbody></table>'
-    +'<h2>4. Conditions contractuelles (modèle)</h2>'+cl.map(function(c,i){return '<p><b>Art. '+(i+1)+' — '+c[0]+'.</b> '+esc(c[1])+'</p>';}).join('')
+    +'<h2>4. Conditions contractuelles (modèle)</h2>'+cl.map(function(c,i){return '<p><b>'+(i?'Art. '+i+' — ':'')+c[0]+'.</b> '+esc(c[1])+'</p>';}).join('')
     +'<h2>5. Signatures</h2><p>Fait à ____________, le ____________ en __ exemplaires.</p><table><tr><td style="height:70px;text-align:left">L\'Exploitant</td><td style="text-align:left">Le(s) Prêteur(s) (« lu et approuvé »)</td></tr></table>'
     +'<div style="display:flex;justify-content:flex-end;margin-top:10px">'+buildSecurityQR(cfg,'FINANCEMENT',f.nom,Math.round(E.montant),new Date().toISOString().slice(0,10))+'</div></body></html>';
   var w=window.open('','_blank','width=1000,height=780'); if(!w){ toast('Autoriser les pop-ups','err'); return; }
