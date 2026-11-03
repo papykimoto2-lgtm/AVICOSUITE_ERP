@@ -24692,6 +24692,7 @@ window.mobToggleLots = function(){
 // ════════════════════════════════════════════════════════════════════════
 const FIN_USURE_NON_BANCAIRE = 24;   // % l'an — UMOA, EFC/SFD/autres agents économiques (Déc. CM/UMOA n°19 du 29/12/2025)
 const FIN_USURE_BANQUES = 14;        // % l'an — banques, en vigueur au 01/06/2026
+const FIN_SEUIL_DSCR = 1.2, FIN_SEUIL_LTV = 0.8;   // cibles partagées par la conformité et l'analyse des onglets
 const FIN_SEUIL_APE = 100;           // APE : > 100 personnes sans lien juridique → visa AMF-UMOA
 
 const FIN_DEFAULTS = {
@@ -25157,8 +25158,8 @@ function finConformite(f, E){
   var AQ=finAcquis(f); add(AQ.on&&AQ.val>0?(AQ.val>=E.montant?'ok':'warn'):'warn',AQ.on&&AQ.val>0?'Acquis valorisés de la ferme pris en compte : '+finM(AQ.val)+' ('+(E.montant>0?(AQ.val/E.montant).toFixed(2):'—')+' × le financement) — couverture complémentaire du financeur.':'Acquis valorisés de la ferme non pris en compte (option « Non » ou aucun actif existant saisi).');
   add(Object.keys(g).some(function(k){return g[k];})?'ok':'warn','Au moins une sûreté/garantie retenue (voir onglet Juridique).');
   add(g.assurance?'ok':'warn','Assurance mortalité/sinistre sur la bande.');
-  add(E.ltv!=null&&E.ltv<=0.8?'ok':'warn','Dette / valeur des poulettes à la ponte : '+finPc(E.ltv)+' (cible ≤ 80 %).');
-  add(E.dscrMin==null||E.dscrMin>=1.2?'ok':'warn','DSCR minimal '+(E.dscrMin==null?'—':E.dscrMin.toFixed(2))+' (cible ≥ 1,2).');
+  add(E.ltv!=null&&E.ltv<=FIN_SEUIL_LTV?'ok':'warn','Dette / valeur des poulettes à la ponte : '+finPc(E.ltv)+' (cible ≤ '+finN(FIN_SEUIL_LTV*100,0)+' %).');
+  add(E.dscrMin==null||E.dscrMin>=FIN_SEUIL_DSCR?'ok':'warn','DSCR minimal '+(E.dscrMin==null?'—':E.dscrMin.toFixed(2))+' (cible ≥ '+finN(FIN_SEUIL_DSCR,1)+').');
   add(E.soldeFin<=1?'ok':'ko','Remboursement intégral avant le terme '+(E.soldeFin<=1?'(scénario courant)':': impayé estimé '+finM(E.soldeFin)+' (les flux d\'exploitation ne couvrent pas le service de la dette alors que le calendrier contractuel prévoit le remboursement intégral).'));
   return out;
 }
@@ -25607,8 +25608,8 @@ function finPlanCalc(f,E){
     ['Autres ressources',v('autres'),'autres'],['Financement investisseurs (cette convention)'+(invRes<E.montant-1?' — souscrit '+finM(invRes)+' sur '+finM(E.montant)+' nécessaires':''),invRes]].concat(aq?[['Apport en nature : acquis valorisés de la ferme',aq]]:[]);
   var tb=besoins.reduce(function(a,x){return a+x[1];},0), tr=ressources.reduce(function(a,x){return a+x[1];},0);
   var immoTot=v('fraisEtab')+v('incorp')+E.imm.capexTot+v('immoFin');
-  var tir1=(E.rows[0]&&E.rows[0].tir)||0, hors=tr-invRes-aq;
-  return {besoins:besoins,ressources:ressources,tb:tb,tr:tr,ecart:tr-tb,immoTot:immoTot,tir1:tir1,aTirer:Math.max(0,E.montant-tir1),totPassif:hors+tir1,dispo:hors+tir1-immoTot,pl:pl};
+  var tir1=Math.min(invRes,(E.rows[0]&&E.rows[0].tir)||0), hors=tr-invRes-aq;
+  return {besoins:besoins,ressources:ressources,tb:tb,tr:tr,ecart:tr-tb,immoTot:immoTot,tir1:tir1,aTirer:Math.max(0,invRes-tir1),totPassif:hors+tir1,dispo:hors+tir1-immoTot,pl:pl};
 }
 function finTabPlan(f,E){
   var P=finPlanCalc(f,E), fmt=function(n){return finM(n);}, inp=function(x){ return x[2]?'<input type="number" value="'+(x[1]||0)+'" style="width:130px;text-align:right" onchange="finSetPlan(\''+x[2]+'\',this.value)">':'<strong>'+fmt(x[1])+'</strong>'; };
@@ -25902,7 +25903,7 @@ var FIN_PAL=['#2b5f45','#f59e0b','#3b82f6','#c1121f','#8b5cf6','#14b8a6','#a3a3a
 function finSvgEsc(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function finSvgM(v){ var m=v/1e6; return finN(m,Math.abs(m)>=10?0:1)+' M'; }
 function finSvgDonut(items,title,pctOnly){
-  var tot=items.reduce(function(a,x){return a+x.v;},0), W=560, H=Math.max(230,items.length*24+50), cx=115, cy=H/2, R=100, r=58, a0=-Math.PI/2, out='', leg='';
+  var tot=items.reduce(function(a,x){return a+x.v;},0), W=640, H=Math.max(230,items.length*24+50), cx=115, cy=H/2, R=100, r=58, a0=-Math.PI/2, out='', leg='';
   if(tot<=0) return '';
   items.forEach(function(it,i){
     var c=FIN_PAL[i%FIN_PAL.length], fr=it.v/tot, a1=a0+fr*2*Math.PI, lg=fr>0.5?1:0;
@@ -25910,7 +25911,7 @@ function finSvgDonut(items,title,pctOnly){
     else if(fr>0){ var P=function(a,rad){ return (cx+rad*Math.cos(a)).toFixed(1)+' '+(cy+rad*Math.sin(a)).toFixed(1); };
       out+='<path d="M'+P(a0,R)+' A'+R+' '+R+' 0 '+lg+' 1 '+P(a1,R)+' L'+P(a1,r)+' A'+r+' '+r+' 0 '+lg+' 0 '+P(a0,r)+' Z" fill="'+c+'" stroke="#fff" stroke-width="1.5"/>'; }
     a0=a1;
-    var ly=24+i*24; leg+='<rect x="250" y="'+(ly-10)+'" width="12" height="12" rx="2" fill="'+c+'"/><text x="268" y="'+ly+'" font-size="12" fill="currentColor">'+finSvgEsc(String(it.l).slice(0,30))+' — <tspan font-weight="700">'+finN(fr*100,fr<0.1?1:0)+' %</tspan>'+(pctOnly?'':' ('+finSvgM(it.v)+')')+'</text>';
+    var ly=24+i*24; leg+='<rect x="250" y="'+(ly-10)+'" width="12" height="12" rx="2" fill="'+c+'"/><text x="268" y="'+ly+'" font-size="12" fill="currentColor">'+finSvgEsc(String(it.l).length>28?String(it.l).slice(0,27)+'…':String(it.l))+' — <tspan font-weight="700">'+finN(fr*100,fr<0.1?1:0)+' %</tspan>'+(pctOnly?'':' ('+finSvgM(it.v)+')')+'</text>';
   });
   return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px" role="img" aria-label="'+finSvgEsc(title)+'">'+out+'<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-size="11" fill="currentColor" opacity=".65">Total</text><text x="'+cx+'" y="'+(cy+16)+'" text-anchor="middle" font-size="15" font-weight="700" fill="currentColor">'+(pctOnly?'100 %':finSvgM(tot))+'</text>'+leg+'</svg>';
 }
@@ -25947,65 +25948,73 @@ function finSvgLines(labels,series,o){
   return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-width:'+W+'px" role="img" aria-label="'+finSvgEsc(o.title||'')+'">'+g+ln+xl+lg+'</svg>';
 }
 // Jeu de graphiques du dossier : {id,type,title,svg,text,labels,series}
-function finGraphs(f,E){
-  var G=[], R=E.rows||[], rw=(E.res&&E.res.rows)||[], mo=function(v){ return finMf(v); }, labsM=R.map(function(r){ return 'M'+r.t; });
+function finGraphs(f,E,D){
+  var G=[], errs=[], R=E.rows||[], rw=(E.res&&E.res.rows)||[], mo=function(v){ return finMf(v); }, labsM=R.map(function(r){ return 'M'+r.t; });
   var add=function(g){ if(g.svg) G.push(g); }, sm=function(k){ return rw.reduce(function(a,r){ return a+(r[k]||0); },0); };
   // 1. Camembert : structure du coût du cycle
   var fam=[['Aliment',sm('coutAlimentPhase')],['Poussins / poulettes',E.res.coutPinit||0],['Prophylaxie',sm('coutVaccPhase')+sm('coutMedPhase')],['Eau et litière',sm('coutEauPhase')+sm('coutLitierePhase')],['Main d\'œuvre',sm('coutMainPhase')],['Énergie, amort., transport',sm('coutEnergiePhase')+sm('coutAmortPhase')+sm('coutTransportPhase')+sm('coutDiversPhase')],['Charges externes',sm('coutExtPhase')]].filter(function(x){ return x[1]>0; });
   if(fam.length){ var ft=fam.reduce(function(a,x){return a+x[1];},0), top=fam.slice().sort(function(a,b){return b[1]-a[1];})[0], al=fam[0][0]==='Aliment'?fam[0][1]:0;
-    add({id:'couts',type:'camembert',title:'Structure du coût du cycle',svg:finSvgDonut(fam.map(function(x){return {l:x[0],v:x[1]};}),'Structure du coût du cycle'),labels:fam.map(function(x){return x[0];}),series:[{n:'Coût (M F)',v:fam.map(function(x){return Math.round(x[1]/1e4)/100;})}],
+    add({id:'couts',cat:'Poste',type:'camembert',title:'Structure du coût du cycle',svg:finSvgDonut(fam.map(function(x){return {l:x[0],v:x[1]};}),'Structure du coût du cycle'),labels:fam.map(function(x){return x[0];}),series:[{n:'Coût (M F)',v:fam.map(function(x){return Math.round(x[1]/1e4)/100;})}],
       text:'Le poste « '+top[0]+' » domine avec '+finP(top[1]/ft,0)+' du coût total ('+mo(ft)+').'+(al>0?' Une hausse de 10 % du prix de l\'aliment ajouterait environ '+mo(al*0.1)+' de charges sur le cycle : c\'est le premier levier à sécuriser (contrats, stock tampon, achats groupés).':' Surveillez en priorité ce poste dans le suivi des coûts.')}); }
   // 2. Camembert : sources de financement
   try{ var PL=finPlanCalc(f,E), res=PL.ressources.filter(function(r){ return r[1]>0; });
     if(res.length){ var rt=res.reduce(function(a,x){return a+x[1];},0), inv=res.filter(function(r){ return /investisseur/i.test(r[0]); }).reduce(function(a,x){return a+x[1];},0);
-      add({id:'sources',type:'camembert',title:'Sources de financement',svg:finSvgDonut(res.map(function(x){return {l:x[0].replace(/ \(.*$/,''),v:x[1]};}),'Sources de financement'),labels:res.map(function(x){return x[0].replace(/ \(.*$/,'');}),series:[{n:'Ressources (M F)',v:res.map(function(x){return Math.round(x[1]/1e4)/100;})}],
-        text:'Les ressources totalisent '+mo(rt)+(inv>0?', dont '+finP(inv/rt,0)+' proviennent des investisseurs.':'.')+' '+(PL.ecart>=0?'Elles couvrent les besoins ('+mo(PL.tb)+') avec une marge de '+mo(PL.ecart)+'.':'Elles ne couvrent pas les besoins ('+mo(PL.tb)+') : il manque '+mo(-PL.ecart)+' (apport, banque).')+' Plus la part d\'apport propre est élevée, plus le dossier rassure le financeur.'}); } }catch(e){}
+      add({id:'sources',cat:'Ressource',type:'camembert',title:'Sources de financement',svg:finSvgDonut(res.map(function(x){return {l:x[0].replace(/ \(.*$/,''),v:x[1]};}),'Sources de financement'),labels:res.map(function(x){return x[0].replace(/ \(.*$/,'');}),series:[{n:'Ressources (M F)',v:res.map(function(x){return Math.round(x[1]/1e4)/100;})}],
+        text:'Les ressources totalisent '+mo(rt)+(inv>0?', dont '+finP(inv/rt,0)+' proviennent des investisseurs.':'.')+' '+(PL.ecart>=0?'Elles couvrent les besoins ('+mo(PL.tb)+') avec une marge de '+mo(PL.ecart)+'.':'Elles ne couvrent pas les besoins ('+mo(PL.tb)+') : il manque '+mo(-PL.ecart)+' (apport, banque).')+' Plus la part d\'apport propre est élevée, plus le dossier rassure le financeur.'}); } }catch(e){ errs.push('Sources de financement'); if(window.console) console.error('finGraphs : Sources de financement',e); }
   // 3. Camembert : canaux de vente
   var cn=((f.com&&f.com.canaux)||[]).filter(function(x){ return (+x.part||0)>0; });
   if(cn.length){ var ct=cn.reduce(function(a,x){return a+(+x.part||0);},0), tc=cn.slice().sort(function(a,b){return b.part-a.part;})[0], dl=cn.reduce(function(a,x){return a+(+x.part||0)*(+x.delai||0);},0)/ct;
-    add({id:'canaux',type:'camembert',title:'Répartition des ventes par canal',svg:finSvgDonut(cn.map(function(x){return {l:x.nom||'Canal',v:+x.part||0};}),'Répartition des ventes par canal',true),labels:cn.map(function(x){return x.nom||'Canal';}),series:[{n:'Part (%)',v:cn.map(function(x){return Math.round((+x.part||0)/ct*1000)/10;})}],
+    add({id:'canaux',cat:'Canal',type:'camembert',title:'Répartition des ventes par canal',svg:finSvgDonut(cn.map(function(x){return {l:x.nom||'Canal',v:+x.part||0};}),'Répartition des ventes par canal',true),labels:cn.map(function(x){return x.nom||'Canal';}),series:[{n:'Part (%)',v:cn.map(function(x){return Math.round((+x.part||0)/ct*1000)/10;})}],
       text:'Le canal « '+(tc.nom||'principal')+' » représente '+finN((+tc.part||0)/ct*100,0)+' % du volume. Délai moyen de paiement pondéré : '+finN(dl,0)+' jours'+(dl>30?' — un décalage d\'encaissement important : prévoyez la trésorerie correspondante':'')+'. Une forte concentration sur un seul canal expose la bande à ses retards ou à son départ.'}); }
   // 4. Histogramme : tirages et remboursements
   if(R.length){ var tir=R.map(function(r){return r.tir||0;}), rem=R.map(function(r){return (r.cap||0)+(r.intPaid||0);}), pt=tir.indexOf(Math.max.apply(null,tir)), lastRem=0; rem.forEach(function(v,i){ if(v>1) lastRem=i+1; });
     var tt=tir.reduce(function(a,b){return a+b;},0), tr=rem.reduce(function(a,b){return a+b;},0);
-    add({id:'flux',type:'histogramme',title:'Tirages et remboursements par mois',svg:finSvgBars(labsM,[{n:'Fonds tirés',v:tir,c:'#3b82f6'},{n:'Remboursements (capital + intérêts)',v:rem,c:'#2b5f45'}],{title:'Tirages et remboursements par mois'}),labels:labsM,series:[{n:'Tirages (M F)',v:tir.map(function(v){return Math.round(v/1e4)/100;})},{n:'Remboursements (M F)',v:rem.map(function(v){return Math.round(v/1e4)/100;})}],
+    add({id:'flux',cat:'Période',type:'histogramme',title:'Tirages et remboursements par mois',svg:finSvgBars(labsM,[{n:'Fonds tirés',v:tir,c:'#3b82f6'},{n:'Remboursements (capital + intérêts)',v:rem,c:'#2b5f45'}],{title:'Tirages et remboursements par mois'}),labels:labsM,series:[{n:'Tirages (M F)',v:tir.map(function(v){return Math.round(v/1e4)/100;})},{n:'Remboursements (M F)',v:rem.map(function(v){return Math.round(v/1e4)/100;})}],
       text:'Les fonds sont tirés au fil de la bande ('+mo(tt)+' au total, pic au mois '+(pt+1)+'), puis remboursés '+(lastRem?'jusqu\'au mois '+lastRem:'(aucun remboursement dans l\'horizon)')+' pour '+mo(tr)+' (intérêts inclus). Les barres vertes apparaissent après la carence : plus elles démarrent tôt et sont régulières, plus le risque du financeur diminue.'}); }
   // 5. Histogramme : capital restant dû
   if(R.length){ var cl=R.map(function(r){return r.close||0;}), mxI=cl.indexOf(Math.max.apply(null,cl));
-    add({id:'solde',type:'histogramme',title:'Capital restant dû en fin de mois',svg:finSvgBars(labsM,[{n:'Capital restant dû',v:cl,c:'#c1121f'}],{title:'Capital restant dû en fin de mois'}),labels:labsM,series:[{n:'Solde dû (M F)',v:cl.map(function(v){return Math.round(v/1e4)/100;})}],
+    add({id:'solde',cat:'Période',type:'histogramme',title:'Capital restant dû en fin de mois',svg:finSvgBars(labsM,[{n:'Capital restant dû',v:cl,c:'#c1121f'}],{title:'Capital restant dû en fin de mois'}),labels:labsM,series:[{n:'Solde dû (M F)',v:cl.map(function(v){return Math.round(v/1e4)/100;})}],
       text:'La dette culmine à '+mo(cl[mxI])+' au mois '+(mxI+1)+'. '+(E.soldeFin<=1?'Elle est intégralement remboursée'+(E.fullMonth?' au mois '+E.fullMonth:'')+' dans le scénario de base.':'Le calendrier contractuel prévoit un remboursement intégral (d\'où une dette à zéro en fin de période), mais les flux d\'exploitation ne suffisent pas à l\'honorer : impayé estimé de '+mo(E.soldeFin)+'. Il faut allonger la durée, réduire le montant ou renforcer les garanties.')}); }
   // 6. Courbes : recettes, charges, cash-flow
   if(R.length>1){ var rv=R.map(function(r){return r.rev||0;}), ox=R.map(function(r){return r.opex||0;}), cf=R.map(function(r,i){return rv[i]-ox[i];}), fm=-1; cf.forEach(function(v,i){ if(fm<0&&v>0) fm=i; });
-    add({id:'recettes',type:'courbes',title:'Recettes, charges et cash-flow d\'exploitation',svg:finSvgLines(labsM,[{n:'Recettes',v:rv,c:'#2b5f45'},{n:'Charges d\'exploitation',v:ox,c:'#f59e0b'},{n:'Cash-flow (recettes − charges)',v:cf,c:'#3b82f6',dash:true}],{title:'Recettes, charges et cash-flow'}),labels:labsM,series:[{n:'Recettes (M F)',v:rv.map(function(v){return Math.round(v/1e4)/100;})},{n:'Charges (M F)',v:ox.map(function(v){return Math.round(v/1e4)/100;})}],
+    add({id:'recettes',cat:'Période',type:'courbes',title:'Recettes, charges et cash-flow d\'exploitation',svg:finSvgLines(labsM,[{n:'Recettes',v:rv,c:'#2b5f45'},{n:'Charges d\'exploitation',v:ox,c:'#f59e0b'},{n:'Cash-flow (recettes − charges)',v:cf,c:'#3b82f6',dash:true}],{title:'Recettes, charges et cash-flow'}),labels:labsM,series:[{n:'Recettes (M F)',v:rv.map(function(v){return Math.round(v/1e4)/100;})},{n:'Charges (M F)',v:ox.map(function(v){return Math.round(v/1e4)/100;})}],
       text:(fm>=0?'Le cash-flow mensuel devient positif à partir du mois '+(fm+1)+' : c\'est le point où la bande commence à s\'autofinancer. ':'Le cash-flow mensuel reste négatif sur l\'horizon : la bande consomme de la trésorerie sans l\'avoir encore remboursée. ')+'Avant ce point, les charges sont portées par l\'apport des financeurs et de l\'exploitant ; l\'écart entre les courbes mesure la marge dégagée par la ponte.'}); }
   // 7. Courbes : trésorerie exploitant vs dette
   if(R.length>1){ var ca=R.map(function(r){return r.cash||0;}), cd=R.map(function(r){return r.close||0;}), mi=ca.indexOf(Math.min.apply(null,ca));
-    add({id:'treso',type:'courbes',title:'Trésorerie de l\'exploitant et dette',svg:finSvgLines(labsM,[{n:'Trésorerie exploitant cumulée',v:ca,c:'#2b5f45'},{n:'Capital restant dû',v:cd,c:'#c1121f'}],{title:'Trésorerie de l\'exploitant et dette'}),labels:labsM,series:[{n:'Trésorerie (M F)',v:ca.map(function(v){return Math.round(v/1e4)/100;})},{n:'Dette (M F)',v:cd.map(function(v){return Math.round(v/1e4)/100;})}],
+    add({id:'treso',cat:'Période',type:'courbes',title:'Trésorerie de l\'exploitant et dette',svg:finSvgLines(labsM,[{n:'Trésorerie exploitant cumulée',v:ca,c:'#2b5f45'},{n:'Capital restant dû',v:cd,c:'#c1121f'}],{title:'Trésorerie de l\'exploitant et dette'}),labels:labsM,series:[{n:'Trésorerie (M F)',v:ca.map(function(v){return Math.round(v/1e4)/100;})},{n:'Dette (M F)',v:cd.map(function(v){return Math.round(v/1e4)/100;})}],
       text:'Le point bas de la trésorerie est de '+mo(ca[mi])+' au mois '+(mi+1)+(ca[mi]<0?' : l\'exploitant doit prévoir ce montant en fonds propres ou en ligne de découvert avant que les ventes ne prennent le relais.':' : la trésorerie reste positive sur toute la période.')+' Quand la courbe verte dépasse la courbe rouge, l\'exploitant pourrait solder la dette avec sa propre trésorerie.'}); }
   // 8. Histogramme horizontal : charges externes
   try{ var ex=EXT_DEFS.map(function(x){ return {l:x.lbl.replace(/ \(.*$/,'').slice(0,34),v:(E.extTot||{})[x.k]||0}; }).filter(function(x){return x.v>0;}).sort(function(a,b){return b.v-a.v;}).slice(0,8);
     if(ex.length){ var et=Object.keys(E.extTot||{}).reduce(function(a,k){return a+E.extTot[k];},0), t3=ex.slice(0,3).reduce(function(a,x){return a+x.v;},0);
-      add({id:'ext',type:'histogramme',title:'Principales charges externes sur le cycle',svg:finSvgBars(ex.map(function(x){return x.l;}),[{n:'Charge',v:ex.map(function(x){return x.v;})}],{horiz:true,title:'Principales charges externes'}),labels:ex.map(function(x){return x.l;}),series:[{n:'Charge (M F)',v:ex.map(function(x){return Math.round(x.v/1e4)/100;})}],
-        text:'Les charges externes pèsent '+mo(et)+'. Les trois premiers postes ('+ex.slice(0,3).map(function(x){return x.l;}).join(', ')+') en représentent '+finP(et>0?t3/et:0,0)+'. Ce sont des estimations : faites-les confirmer par devis avant le décaissement.'}); } }catch(e){}
+      add({id:'ext',cat:'Poste',type:'histogramme',title:'Principales charges externes sur le cycle',svg:finSvgBars(ex.map(function(x){return x.l;}),[{n:'Charge',v:ex.map(function(x){return x.v;})}],{horiz:true,title:'Principales charges externes'}),labels:ex.map(function(x){return x.l;}),series:[{n:'Charge (M F)',v:ex.map(function(x){return Math.round(x.v/1e4)/100;})}],
+        text:'Les charges externes pèsent '+mo(et)+'. Les trois premiers postes ('+ex.slice(0,3).map(function(x){return x.l;}).join(', ')+') en représentent '+finP(et>0?t3/et:0,0)+'. Ce sont des estimations : faites-les confirmer par devis avant le décaissement.'}); } }catch(e){ errs.push('Charges externes'); if(window.console) console.error('finGraphs : Charges externes',e); }
   // 9. Histogramme horizontal : sensibilités (TRI net)
-  try{ var SN=[['Œuf −10 %',{oeuf:0.9}],['Œuf +10 %',{oeuf:1.1}],['Aliment +10 %',{alim:1.1}],['Aliment −10 %',{alim:0.9}],['Ponte −5 %',{ponte:0.95}],['Ponte +5 %',{ponte:1.05}],['Mortalité ×2',{mort:2}]].map(function(x){ var e=finRun(f,x[1]); return {l:x[0],v:(e.irrInvN||0)*100,s:e.soldeFin}; });
+  try{ var SN0=[['Œuf −10 %',{oeuf:0.9}],['Œuf +10 %',{oeuf:1.1}],['Aliment +10 %',{alim:1.1}],['Aliment −10 %',{alim:0.9}],['Ponte −5 %',{ponte:0.95}],['Ponte +5 %',{ponte:1.05}],['Mortalité ×2',{mort:2}]];
+    var SN=(D&&D.sens)?D.sens.map(function(x){ return {l:x[0],v:(x[1].irr||0)*100,s:x[1].solde}; }):SN0.map(function(x){ var e=finRun(f,x[1]); return {l:x[0],v:(e.irrInvN||0)*100,s:e.soldeFin}; });
     var base=(E.irrInvN||0)*100, worst=SN.slice().sort(function(a,b){return a.v-b.v;})[0], unp=SN.filter(function(x){return x.s>1;});
-    add({id:'sens',type:'histogramme',title:'Sensibilité du TRI net des financeurs',svg:finSvgBars(SN.map(function(x){return x.l;}),[{n:'TRI net',v:SN.map(function(x){return x.v;})}],{horiz:true,fmt:function(v){return finN(v,1)+' %';},title:'Sensibilité du TRI net'}),labels:SN.map(function(x){return x.l;}),series:[{n:'TRI net (%)',v:SN.map(function(x){return Math.round(x.v*10)/10;})}],
-      text:'TRI net de référence : '+finN(base,1)+' %. Le choc le plus pénalisant est « '+worst.l+' » ('+finN(worst.v,1)+' %). '+(unp.length?'Dans '+unp.length+' cas sur '+SN.length+', un impayé apparaît ('+unp.map(function(x){return x.l;}).join(', ')+') : le dossier est fragile sur ces variables.':'Aucun de ces chocs ne provoque d\'impayé : le dossier est robuste à une variation isolée de ±10 %.')}); }catch(e){}
+    add({id:'sens',cat:'Variation',type:'histogramme',title:'Sensibilité du TRI net des financeurs',svg:finSvgBars(SN.map(function(x){return x.l;}),[{n:'TRI net',v:SN.map(function(x){return x.v;})}],{horiz:true,fmt:function(v){return finN(v,1)+' %';},title:'Sensibilité du TRI net'}),labels:SN.map(function(x){return x.l;}),series:[{n:'TRI net (%)',v:SN.map(function(x){return Math.round(x.v*10)/10;})}],
+      text:'TRI net de référence : '+finN(base,1)+' %. Le choc le plus pénalisant est « '+worst.l+' » ('+finN(worst.v,1)+' %). '+(unp.length?'Dans '+unp.length+' cas sur '+SN.length+', un impayé apparaît ('+unp.map(function(x){return x.l;}).join(', ')+') : le dossier est fragile sur ces variables.':'Aucun de ces chocs ne provoque d\'impayé : le dossier est robuste à une variation isolée de ±10 %.')}); }catch(e){ errs.push('Sensibilité du TRI net'); if(window.console) console.error('finGraphs : Sensibilité du TRI net',e); }
   // 10. Courbes : capital restant dû selon scénario
-  try{ var sc=[['base','Base','#2b5f45'],['opt','Optimiste','#3b82f6'],['pes','Pessimiste','#c1121f']].map(function(k){ var e=finRun(f,FIN_SCEN[k[0]].m); return {n:k[1],c:k[2],e:e,v:e.rows.map(function(r){return r.close||0;})}; });
-    if(R.length>1){ add({id:'scen',type:'courbes',title:'Capital restant dû selon le scénario',svg:finSvgLines(labsM,sc.map(function(s){return {n:s.n,v:s.v,c:s.c};}),{title:'Capital restant dû selon le scénario'}),labels:labsM,series:sc.map(function(s){return {n:s.n+' (M F)',v:s.v.map(function(v){return Math.round(v/1e4)/100;})};}),
-      text:sc.map(function(s){ return s.n+' : '+(s.e.soldeFin<=1?'remboursé'+(s.e.fullMonth?' au mois '+s.e.fullMonth:''):'impayé estimé de '+mo(s.e.soldeFin)); }).join(' · ')+'. L\'écart entre les courbes mesure le risque : si la courbe pessimiste ne rejoint pas zéro, le remboursement dépend d\'un scénario favorable.'}); } }catch(e){}
+  try{ var sc=[['base','Base','#2b5f45'],['opt','Optimiste','#3b82f6'],['pes','Pessimiste','#c1121f']].map(function(k){ var e=k[0]==='base'?E:finRun(f,FIN_SCEN[k[0]].m); return {n:k[1],c:k[2],e:e,v:e.rows.map(function(r){return r.close||0;})}; });
+    if(R.length>1){ add({id:'scen',cat:'Période',type:'courbes',title:'Capital restant dû selon le scénario',svg:finSvgLines(labsM,sc.map(function(s){return {n:s.n,v:s.v,c:s.c};}),{title:'Capital restant dû selon le scénario'}),labels:labsM,series:sc.map(function(s){return {n:s.n+' (M F)',v:s.v.map(function(v){return Math.round(v/1e4)/100;})};}),
+      text:sc.map(function(s){ return s.n+' : '+(s.e.soldeFin<=1?'remboursé'+(s.e.fullMonth?' au mois '+s.e.fullMonth:''):'impayé estimé de '+mo(s.e.soldeFin)); }).join(' · ')+'. L\'écart entre les courbes mesure le risque : si la courbe pessimiste ne rejoint pas zéro, le remboursement dépend d\'un scénario favorable.'}); } }catch(e){ errs.push('Capital dû selon le scénario'); if(window.console) console.error('finGraphs : Capital dû selon le scénario',e); }
   // 11. Histogramme : coût de revient vs prix (pondeuses)
   if(E.res&&E.res.cumOeufs>0&&E.prixMoyen>0){ var co=E.res.totalCout/E.res.cumOeufs, pm=E.prixMoyen;
-    add({id:'oeuf',type:'histogramme',title:'Coût de revient et prix de vente par œuf',svg:finSvgBars(['Coût de revient','Prix de vente moyen'],[{n:'F par œuf',v:[co,pm]}],{fmt:function(v){return finN(v,1)+' F';},title:'Coût de revient et prix de vente par œuf'}),labels:['Coût de revient','Prix de vente moyen'],series:[{n:'F par œuf',v:[Math.round(co*10)/10,Math.round(pm*10)/10]}],
+    add({id:'oeuf',cat:'Indicateur',type:'histogramme',title:'Coût de revient et prix de vente par œuf',svg:finSvgBars(['Coût de revient','Prix de vente moyen'],[{n:'F par œuf',v:[co,pm]}],{fmt:function(v){return finN(v,1)+' F';},title:'Coût de revient et prix de vente par œuf'}),labels:['Coût de revient','Prix de vente moyen'],series:[{n:'F par œuf',v:[Math.round(co*10)/10,Math.round(pm*10)/10]}],
       text:'Chaque œuf coûte '+finN(co,1)+' F à produire et se vend '+finN(pm,1)+' F en moyenne : '+(pm>=co?'la marge est de '+finN(pm-co,1)+' F par œuf ('+finP((pm-co)/pm,0)+' du prix). Une baisse du prix de vente supérieure à '+finP((pm-co)/pm,0)+' ferait passer la bande à perte.':'le prix de vente est inférieur au coût de revient (perte de '+finN(co-pm,1)+' F par œuf) : le modèle n\'est pas rentable en l\'état.')}); }
-  return G;
+  G.errs=errs; return G;
+}
+var _finGCache={k:null,v:null};
+function finGraphsCached(f,E){
+  var k=JSON.stringify(f,function(n,v){ return (n==='journal'||n==='docs')?undefined:v; });
+  if(_finGCache.k!==k){ _finGCache={k:k,v:finGraphs(f,E)}; }
+  return _finGCache.v;
 }
 function finTabGraph(f,E){
-  var G=finGraphs(f,E); if(!G.length) return '<div class="card"><div class="card-bd">Aucune donnée à représenter : renseignez le montage du dossier.</div></div>';
+  var G=finGraphsCached(f,E); if(!G.length) return '<div class="card"><div class="card-bd">Aucune donnée à représenter : renseignez le montage du dossier.</div></div>';
+  var warnG=(G.errs&&G.errs.length)?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;margin-bottom:12px">⚠️ Graphique(s) non affiché(s) suite à une erreur de calcul : <strong>'+G.errs.map(esc).join(', ')+'</strong>. Détail dans la console du navigateur.</div>':'';
   var tag={camembert:'🥧 Camembert',histogramme:'📊 Histogramme',courbes:'📈 Courbes'};
-  return '<p style="font-size:12px;color:var(--text3);margin:0 0 12px">Les graphiques se recalculent à chaque modification du dossier. Chaque graphique est suivi de son interprétation, rédigée automatiquement à partir des chiffres : relisez-la avant de la présenter à un financeur. Ils sont repris au chapitre 10.4 du business plan.</p>'
+  return warnG+'<p style="font-size:12px;color:var(--text3);margin:0 0 12px">Les graphiques se recalculent à chaque modification du dossier. Chaque graphique est suivi de son interprétation, rédigée automatiquement à partir des chiffres : relisez-la avant de la présenter à un financeur. Ils sont repris au chapitre 10.4 du business plan.</p>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:14px">'
     +G.map(function(g){ return '<div class="card"><div class="card-hd"><span>'+g.title+'</span><span style="font-size:11px;color:var(--text3)">'+tag[g.type]+'</span></div><div class="card-bd">'+g.svg+'<div style="margin-top:8px;background:#eff6ff;border-left:4px solid #3b82f6;border-radius:6px;padding:8px 12px;font-size:12px;line-height:1.5;color:#1e3a8a"><strong>💡 Interprétation.</strong> '+esc(g.text)+'</div></div></div>'; }).join('')+'</div>';
 }
@@ -26018,7 +26027,6 @@ function finAnalyse(f,E,tab,cfg,deep){
   var sumT=(f.investisseurs||[]).reduce(function(a,x){return a+(+x.montant||0);},0);
   var ca=(E.res&&E.res.cumRecette)||0, cout=(E.res&&E.res.totalCout)||0, mg=ca>0?(ca-cout)/ca:null;
   var cn=((f.com&&f.com.canaux)||[]).filter(function(x){ return (+x.part||0)>0; }), ct=cn.reduce(function(a,x){return a+(+x.part||0);},0);
-  var conf=finConformite(f,E);
   if(tab==='montage'&&!(E.montant>0)) X('ko','Aucun montant à financer : aucun objet de financement n\'est coché ou le besoin est nul.','Cocher au moins un objet financé (aliment, poussins, prophylaxie, investissements…) ou saisir un montant forcé : sans montant, tous les indicateurs de rendement sont sans objet.');
   if(tab==='present'){
     X(cfg2.nomExploitation?'ok':'warn','Identité de l\'exploitation : '+(cfg2.nomExploitation?'renseignée ('+cfg2.nomExploitation+').':'dénomination absente des paramètres.'),'Compléter dénomination, forme juridique, RCCM/NIF et adresse dans les paramètres de l\'exploitation : un financeur vérifie d\'abord l\'existence légale du porteur.');
@@ -26029,7 +26037,7 @@ function finAnalyse(f,E,tab,cfg,deep){
   else if(tab==='montage'){
     var cov=E.montant>0?sumT/E.montant:0;
     X(sumT>=E.montant-1?'ok':sumT>0?'warn':'ko','Tickets souscrits : '+mo(sumT)+' pour un besoin de '+mo(E.montant)+' ('+finP(cov,0)+').','Compléter la levée ('+mo(Math.max(0,E.montant-sumT))+' manquants) : ajouter des investisseurs, réduire le périmètre financé (objets ou horizon) ou combler par un apport de l\'exploitant.');
-    X(f.taux<=FIN_USURE_NON_BANCAIRE&&E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko','Taux nominal '+finN(f.taux,1)+' % ; TEG '+finP(E.teg)+' (plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' %).','Ramener le taux nominal ou les frais de dossier pour que le TEG reste sous '+FIN_USURE_NON_BANCAIRE+' % : au-delà, le prêt est usuraire et nul pour la part excédentaire.');
+    X(E.teg==null||E.teg<0?'warn':(f.taux<=FIN_USURE_NON_BANCAIRE&&E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko'),'Taux nominal '+finN(f.taux,1)+' % ; TEG '+finP(E.teg)+' (plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' %).','Ramener le taux nominal ou les frais de dossier pour que le TEG reste sous '+FIN_USURE_NON_BANCAIRE+' % : au-delà, le prêt est usuraire et nul pour la part excédentaire.');
     X((f.investisseurs||[]).length>0?'ok':'ko','Investisseurs identifiés : '+(f.investisseurs||[]).length+'.','Saisir au moins un investisseur (nom, contact, origine des fonds) : sans lui le dossier n\'a ni convention ni calendrier de remboursement.');
     X(f.contingence>=5?'ok':'warn','Marge d\'aléas : '+finN(f.contingence,1)+' % du besoin.','Porter les aléas à 5 % minimum : le coût de l\'aliment et des intrants varie rapidement et un besoin sous-estimé oblige à relancer les investisseurs en cours de bande.');
     X((f.immos||[]).length>0?'ok':'warn','Investissements matériels saisis : '+(f.immos||[]).length+'.','Charger les investissements types ou saisir les équipements (bâtiment, cages, abreuvoirs…) afin que l\'amortissement et le plan de financement soient complets.');
@@ -26068,7 +26076,7 @@ function finAnalyse(f,E,tab,cfg,deep){
   }
   else if(tab==='echeancier'){
     X(E.soldeFin<=1?'ok':'ko',E.soldeFin<=1?'Remboursement intégral au mois '+(E.fullMonth||'—')+'.':'Impayé estimé à l\'échéance : '+mo(E.soldeFin)+' (flux d\'exploitation insuffisants).','Allonger la durée de remboursement (actuelle '+f.dureeRemb+' mois), relever la part du cash-flow affectée (actuelle '+finN(f.sweepPct,0)+' %), réduire le montant de ≈'+mo(E.soldeFin)+' ou ajouter un apport/garantie.');
-    X(E.dscrMin==null||E.dscrMin>=1.2?'ok':E.dscrMin>=1?'warn':'ko','Couverture minimale du service de la dette (DSCR) : '+(E.dscrMin==null?'—':finN(E.dscrMin,2))+' (cible ≥ 1,2).','Allonger la carence (actuelle '+f.differeMois+' mois) pour caler le premier remboursement sur la ponte, lisser le profil de remboursement, ou baisser le taux : un DSCR < 1 signifie que le cash-flow ne couvre pas l\'échéance.');
+    X(E.dscrMin==null||E.dscrMin>=FIN_SEUIL_DSCR?'ok':E.dscrMin>=1?'warn':'ko','Couverture minimale du service de la dette (DSCR) : '+(E.dscrMin==null?'—':finN(E.dscrMin,2))+' (cible ≥ '+finN(FIN_SEUIL_DSCR,1)+').','Allonger la carence (actuelle '+f.differeMois+' mois) pour caler le premier remboursement sur la ponte, lisser le profil de remboursement, ou baisser le taux : un DSCR < 1 signifie que le cash-flow ne couvre pas l\'échéance.');
     X(E.capac==null||E.capac>=1.5?'ok':E.capac>=1?'warn':'ko','Capacité de remboursement (cash-flow du cycle / dette à la ponte) : '+(E.capac==null?'—':finN(E.capac,2)+' ×')+' (cible ≥ 1,5).','Réduire la dette à la ponte (financer moins, plus d\'apport) ou améliorer la marge d\'exploitation (prix, coûts, ponte).');
   }
   else if(tab==='cep'){
@@ -26080,22 +26088,23 @@ function finAnalyse(f,E,tab,cfg,deep){
   else if(tab==='evaluation'){
     X(E.irrInvN==null?'warn':E.irrInvN>=0.08?'ok':E.irrInvN>=0?'warn':'ko','TRI net des investisseurs : '+finPc(E.irrInvN)+' (MOIC '+(E.moic==null?'—':finN(E.moic,2)+' ×')+').','Rendre l\'opération rémunératrice : relever la rémunération dans la limite de l\'usure ('+FIN_USURE_NON_BANCAIRE+' %), améliorer le remboursement (carence plus courte, part de cash-flow plus élevée) ou réduire le risque d\'impayé qui détruit le TRI.');
     X(E.npv>=0?'ok':'warn','VAN du projet à '+finN(f.tauxActu,0)+' % : '+mo(E.npv)+'.','Une VAN négative indique que le projet ne rémunère pas le capital engagé : améliorer la marge, ou le dimensionner autrement (taille de bande, cycle).');
-    X(E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko','TEG : '+finP(E.teg)+' pour un plafond de '+FIN_USURE_NON_BANCAIRE+' %.','Réduire le taux ou les frais jusqu\'à passer sous le plafond d\'usure.');
+    X(E.teg==null||E.teg<0?'warn':(E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko'),'TEG : '+finP(E.teg)+' pour un plafond de '+FIN_USURE_NON_BANCAIRE+' %.','Réduire le taux ou les frais jusqu\'à passer sous le plafond d\'usure.');
   }
   else if(tab==='graphes'){
     var R=E.rows||[], fp=-1; R.forEach(function(r,i){ if(fp<0&&(r.rev-r.opex)>0) fp=i; });
     X(fp>=0?'ok':'ko',fp>=0?'Cash-flow d\'exploitation positif dès le mois '+(fp+1)+'.':'Le cash-flow d\'exploitation ne devient jamais positif sur l\'horizon.','Revoir les hypothèses de ponte, de prix et de coûts : sans cash-flow positif, aucun remboursement n\'est possible.');
     X(E.minCash>=-0.2*Math.max(1,E.montant)?'ok':'warn','Point bas de trésorerie : '+mo(E.minCash)+'.','Prévoir le financement de ce creux ou étaler les décaissements.');
-    X(E.ltv==null||E.ltv<=0.8?'ok':'warn','Dette rapportée à la valeur des poulettes (LTV) : '+finPc(E.ltv)+' (cible ≤ 80 %).','Réduire la dette ou renforcer la garantie (gage sur le cheptel, stocks, domiciliation des ventes).');
+    X(E.ltv==null||E.ltv<=FIN_SEUIL_LTV?'ok':'warn','Dette rapportée à la valeur des poulettes (LTV) : '+finPc(E.ltv)+' (cible ≤ '+finN(FIN_SEUIL_LTV*100,0)+' %).','Réduire la dette ou renforcer la garantie (gage sur le cheptel, stocks, domiciliation des ventes).');
   }
   else if(tab==='risques'){
     var pes=finRun(f,FIN_SCEN.pes.m), st=finRun(f,FIN_SCEN.stress.m);
     X(pes.soldeFin<=1?'ok':'ko','Scénario pessimiste : '+(pes.soldeFin<=1?'remboursé.':'impayé de '+mo(pes.soldeFin)+'.'),'Renforcer la robustesse : prévoir un stock tampon d\'aliment, une assurance mortalité, une carence plus longue, une garantie couvrant le scénario pessimiste ou un montant financé plus faible.');
     X(st.soldeFin<=1?'ok':'warn','Scénario de stress : '+(st.soldeFin<=1?'remboursé.':'impayé de '+mo(st.soldeFin)+'.'),'Prévoir un plan de repli (réduction du cheptel, vente anticipée des poules de réforme, report d\'échéance négocié) pour les chocs extrêmes.');
-    if(deep){ try{ var mc=finMC(f,100); X(mc.pDefaut<=0.1?'ok':mc.pDefaut<=0.25?'warn':'ko','Simulation Monte-Carlo : probabilité d\'impayé '+finP(mc.pDefaut,0)+', de perte en capital '+finP(mc.pPerte,0)+'.','Réduire la probabilité d\'impayé : plus d\'apport, carence plus longue, durée plus longue, couverture des risques (aliment, mortalité) et diversification des clients.'); }catch(e){} }
+    var mc=deep&&window._fb&&window._fb.mc; if(deep&&!mc) X('warn','Simulation Monte-Carlo non lancée : la probabilité d\'impayé n\'est pas évaluée.','Lancer la simulation (bouton « Monte-Carlo » de cet onglet) pour mesurer la probabilité d\'impayé et de perte en capital.');
+    if(mc){ try{ X(mc.pDefaut<=0.1?'ok':mc.pDefaut<=0.25?'warn':'ko','Simulation Monte-Carlo : probabilité d\'impayé '+finP(mc.pDefaut,0)+', de perte en capital '+finP(mc.pPerte,0)+'.','Réduire la probabilité d\'impayé : plus d\'apport, carence plus longue, durée plus longue, couverture des risques (aliment, mortalité) et diversification des clients.'); }catch(e){} }
   }
   else if(tab==='juridique'){
-    var bad=conf.filter(function(c){ return c.s!=='ok'; });
+    var conf=finConformite(f,E), bad=conf.filter(function(c){ return c.s!=='ok'; });
     X(bad.some(function(c){return c.s==='ko';})?'ko':bad.length?'warn':'ok','Points de conformité : '+(conf.length-bad.length)+' conformes sur '+conf.length+'.','Traiter les points ci-dessous avant d\'émettre le dossier.');
     bad.slice(0,8).forEach(function(c){ X(c.s,strip(c.t),'Corriger ce point (voir l\'onglet Juridique) ; faire valider les clauses par un conseil juridique avant signature.'); });
   }
@@ -26300,6 +26309,14 @@ async function finBpData(f){
 }
 
 // ── Contenu du business plan (source unique pour Word et PDF) ──
+// Word et PDF : le graphique est remplacé par son tableau de valeurs (toutes les séries, valeurs négatives comprises) et son interprétation
+function finChartFallback(bl){
+  var o=[]; bl.forEach(function(k){ if(k.t!=='chart'){ o.push(k); return; }
+    o.push({t:'p',x:k.title,o:{b:true}});
+    o.push({t:'t',head:[k.cat||'Période'].concat(k.series.map(function(x){return x.n;})),rows:k.labels.map(function(l,i){ return [l].concat(k.series.map(function(x){ return finN(x.v[i],2); })); }),o:{right:k.series.map(function(x,i){return i+1;}),sz:15}});
+    o.push({t:'p',x:'Interprétation : '+k.text,o:{i:true}}); });
+  return o;
+}
 function finBpBlocks(D){
   var b=[], f=D.f, E=D.E, S=D.S, SC=D.sc, B=SC.base, c=D.cfg, layer=D.layer;
   var H1=function(t){ b.push({t:'h1',x:t}); }, H2=function(t){ b.push({t:'h2',x:t}); }, P=function(x,o){ b.push({t:'p',x:x,o:o||{}}); }, BL=function(a){ b.push({t:'bl',a:a}); };
@@ -26421,7 +26438,7 @@ function finBpBlocks(D){
   T(['Indicateur','Valeur'],[['Chiffre d\'affaires du cycle',finF(rec)],['Coût total du cycle',finF(E.res.totalCout)],['Marge nette du cycle',finF(E.res.margeNette)],['Coût de revient par œuf',finN(coutOeuf,1)+' F'],['Prix moyen de vente par œuf',finN(B.pm,1)+' F'],['Point mort (œufs à vendre pour couvrir le coût)',layer?finN(pt):'—'],['DSCR minimal / moyen',(E.dscrMin==null?'—':finN(E.dscrMin,2))+' / '+(E.dscrAvg==null?'—':finN(E.dscrAvg,2))],['Dette / valeur des poulettes à la ponte',finP(E.ltv)],['Besoin en fonds de roulement (pic)',finF(D.bfr)]],{right:[1]});
   H2('10.4 Graphiques et interprétation');
   P('Les graphiques suivants sont calculés à partir des hypothèses du dossier ; chacun est suivi d\'une lecture rédigée à partir des chiffres.');
-  finGraphs(f,E).forEach(function(g){ b.push({t:'chart',title:g.title,svg:g.svg,text:g.text,labels:g.labels,series:g.series}); });
+  finGraphs(f,E,D).forEach(function(g){ b.push({t:'chart',title:g.title,cat:g.cat,svg:g.svg,text:g.text,labels:g.labels,series:g.series}); });
   // 11
   PB(); H1('11. Scénarios, sensibilités et risque de crédit');
   var K3=['prudent','base','optimiste'];
@@ -26467,7 +26484,7 @@ function finBpBlocks(D){
 
 // ── Word (rendu des blocs) ──
 async function finBpWord(D){
-  await finLib('docx'); var d=window.docx, ch=[], cv=[], f=D.f, E=D.E, S=D.S, B=D.sc.base, blocks=finBpBlocks(D);
+  await finLib('docx'); var d=window.docx, ch=[], cv=[], f=D.f, E=D.E, S=D.S, B=D.sc.base, blocks=finChartFallback(finBpBlocks(D));
   var G='14532D', AC='16A34A', LINE='E5E7EB', ZEB='F3F6F4', MUT='6B7280', INK='1F2937', NB={style:d.BorderStyle.NONE,size:0,color:'FFFFFF'}, HB={style:d.BorderStyle.SINGLE,size:4,color:LINE}, ALLNB={top:NB,bottom:NB,left:NB,right:NB,insideHorizontal:NB,insideVertical:NB};
   var run=function(t,o){ return new d.TextRun(Object.assign({text:String(t),font:'Calibri'},o||{})); };
   var runs=function(t,o){ var parts=String(t).split('\n'), out=[]; parts.forEach(function(p,i){ out.push(run(p,Object.assign({},o,i?{break:1}:{}))); }); return out; };
@@ -26500,7 +26517,6 @@ async function finBpWord(D){
     else if(k.t==='t') T(k.head,k.rows,k.o);
     else if(k.t==='k') KPIS(k.items);
     else if(k.t==='c') CALL(k.title,k.lines);
-    else if(k.t==='chart'){ ch.push(P(k.title,{b:true})); T(['Période'].concat(k.series.map(function(x){return x.n;})),k.labels.map(function(l,i){ return [l].concat(k.series.map(function(x){ return finN(x.v[i],2); })); }),{right:k.series.map(function(x,i){return i+1;}),sz:15}); ch.push(P('Interprétation : '+k.text,{i:true})); }
     else if(k.t==='bar'){ var mx=Math.max.apply(null,k.values.concat([0.0001])); ch.push(P(k.title,{b:true})); T(['Période','Valeur',''],k.labels.map(function(l,i){ return [l,finN(k.values[i],k.fmt||0),'█'.repeat(Math.max(0,Math.round(k.values[i]/mx*30)))]; }),{right:[1],sz:15}); }
   });
   var pg={page:{margin:{top:1100,bottom:1000,left:1100,right:1100}}};
@@ -26514,7 +26530,7 @@ async function finBpWord(D){
 function pdfSan(s){ return String(s==null?'':s).replace(/[\uD800-\uDFFF\u2600-\u27BF\uFE0F\u200D]/g,'').replace(/^\s+/,'').replace(/[−‒‑]/g,'-').replace(/≤/g,'<=').replace(/≥/g,'>=').replace(/≈/g,'~').replace(/→/g,'->').replace(/[‘’′]/g,"'").replace(/[■▌█]/g,'').replace(/[  ]/g,' ').replace(/[^ -~¡-ÿŒœ–—•…“”\n]/g,'?'); }
 async function finBpPdf(D){
   await finLib('jspdf'); await finLib('autotable');
-  var J=window.jspdf.jsPDF, doc=new J({unit:'mm',format:'a4',orientation:'p',compress:true}), blocks=finBpBlocks(D), f=D.f, E=D.E, S=D.S, B=D.sc.base;
+  var J=window.jspdf.jsPDF, doc=new J({unit:'mm',format:'a4',orientation:'p',compress:true}), blocks=finChartFallback(finBpBlocks(D)), f=D.f, E=D.E, S=D.S, B=D.sc.base;
   var W=210, H=297, M=18, CW=W-2*M, y=0, toc=[], tocPage=0, san=pdfSan;
   var GR=[20,83,45], AC=[22,163,74], INK=[31,41,55], MUT=[107,114,128], RED=[220,38,38], GOLD=[245,158,11];
   var setF=function(sz,st,col){ doc.setFont('helvetica',st||'normal'); doc.setFontSize(sz); doc.setTextColor.apply(doc,col||INK); };
@@ -26545,7 +26561,6 @@ async function finBpPdf(D){
       y=doc.lastAutoTable.finalY+5; }
     else if(k.t==='k'){ need(28); var n=k.items.length, gap=3, w=(CW-gap*(n-1))/n; k.items.forEach(function(it,i){ var x=M+i*(w+gap); doc.setFillColor(240,253,244); doc.roundedRect(x,y,w,23,1.5,1.5,'F'); doc.setFillColor.apply(doc,AC); doc.rect(x,y,w,1.2,'F'); setF(7.5,'normal',MUT); doc.text(san(it[0]),x+3,y+6.5); var col=it[2]==='DC2626'?RED:GR; setF(13,'bold',col); doc.text(san(it[1]),x+3,y+14); setF(7,'normal',MUT); doc.text(san(it[3]||''),x+3,y+19.5); }); y+=28; }
     else if(k.t==='c'){ setF(9.5,'normal'); var blocksTxt=k.lines.map(function(l){ var parts=Array.isArray(l)?l:[null,l]; return {lead:parts[0],lines:doc.splitTextToSize(san(parts[1]),CW-12)}; }); var h=12+blocksTxt.reduce(function(a,b){return a+(b.lead?lh(9.5):0)+b.lines.length*lh(9.5)+1.6;},0); need(h); doc.setFillColor(255,251,235); doc.rect(M,y,CW,h,'F'); doc.setFillColor.apply(doc,GOLD); doc.rect(M,y,1.8,h,'F'); setF(11,'bold',GR); doc.text(san(k.title),M+6,y+7); var yy=y+12; blocksTxt.forEach(function(b){ if(b.lead){ setF(9.5,'bold',GR); doc.text(san(b.lead.replace(/ : $/,'')),M+6,yy+3); yy+=lh(9.5); } b.lines.forEach(function(l){ setF(9.5,'normal',INK); doc.text(l,M+6,yy+3); yy+=lh(9.5); }); yy+=1.6; }); y+=h+5; }
-    else if(k.t==='chart'){ barOf({title:k.title+' ('+k.series[0].n+')',labels:k.labels,values:k.series[0].v.map(function(v){return Math.max(0,v);}),fmt:2}); para('Interprétation : '+k.text,{sz:8.5,col:MUT}); }
     else if(k.t==='bar') barOf(k);
   });
   // sommaire (page réservée)
