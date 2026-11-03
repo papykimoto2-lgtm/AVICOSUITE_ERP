@@ -24743,8 +24743,8 @@ function finObjets(f){
 }
 function finImmoClass(im){ return (im.cat==='batiment'||im.cat==='amenagement'||im.cat==='terrain')?'construction':'materiel'; }
 function finObjList(f){ var o=finObjets(f); return FIN_OBJETS.filter(function(x){return o[x[0]];}).map(function(x){return x[1].toLowerCase();}); }
-const FIN_TABS = [['synthese','Synthèse','fa-gauge-high'],['montage','Montage','fa-sliders'],['commercial','Commercial & charges','fa-bullhorn'],['plan','Plan de financement','fa-scale-balanced'],['cep','Compte d\'exploitation','fa-file-invoice'],['echeancier','Amortissement','fa-table'],
-  ['evaluation','Évaluation','fa-scale-balanced'],['risques','Risques & scénarios','fa-dice'],['juridique','Juridique','fa-gavel'],['suivi','Suivi & compta','fa-book'],['docs','Documents & historique','fa-folder-open']];
+const FIN_TABS = [['synthese','Synthèse','fa-gauge-high'],['present','1. Présentation','fa-id-card'],['montage','2. Projet & montage','fa-sliders'],['marche','3. Étude de marché','fa-chart-pie'],['commercial','4. Commercial & charges','fa-bullhorn'],['organisation','5. Organisation & stratégie','fa-sitemap'],
+  ['plan','6. Plan de financement','fa-scale-balanced'],['echeancier','7. Amortissement','fa-table'],['cep','8. Compte d\'exploitation','fa-file-invoice'],['evaluation','9. Évaluation','fa-scale-balanced'],['risques','10. Risques & scénarios','fa-dice'],['juridique','11. Juridique','fa-gavel'],['suivi','12. Suivi & compta','fa-book'],['docs','13. Documents & historique','fa-folder-open']];
 
 function finParams(f,inv,amt,share){
   var c=(inv&&inv.cond)||{}, t=(inv&&inv.fin)||'pret', pick=function(k,d){ return c[k]!=null&&c[k]!==''?+c[k]:d; };
@@ -25400,7 +25400,7 @@ function finChart(E){
 
 function finTabSynthese(f,E){
   var okAll=E.soldeFin<=1&&(E.dscrMin==null||E.dscrMin>=1), conf=finConformite(f,E), nbKo=conf.filter(function(c){return c.s==='ko';}).length;
-  return (E.warn||[]).map(function(w){return '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 12px;font-size:12px;color:#92400e;margin-bottom:8px">⚠️ '+esc(w)+'</div>';}).join('')
+  return finBpProgressHtml(f)+(E.warn||[]).map(function(w){return '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 12px;font-size:12px;color:#92400e;margin-bottom:8px">⚠️ '+esc(w)+'</div>';}).join('')
     +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">'
     +finKpi('Montant à financer',finM(E.montant),'aliment '+finPer(f)+' + '+f.contingence+' % aléas','kpi-b')
     +finKpi('TRI investisseur net',finPc(E.irrInvN),'brut '+finPc(E.irrInvB)+' · TEG '+finPc(E.teg),(E.irrInvN||0)>0?'kpi-g':'kpi-r')
@@ -25811,17 +25811,20 @@ async function renderFinBande(ca){
   var E, body='';
   try{ E=finRun(rec); }catch(e){ console.error(e); ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd">Erreur de calcul : '+esc(e.message)+'</div></div></div>'; return; }
   var t=B.tab||'synthese';
-  if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
+  if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
   ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
 const FIN_NOTES = {
+  present:'Étape 1 — Qui porte le projet ? Mission, vision, valeurs, contexte et équipe dirigeante. Ces textes alimentent le chapitre 2 du business plan ; laissez un champ vide pour conserver le texte type.',
+  marche:'Étape 3 — Pour qui produit-on ? Demande et saisonnalité, concurrence et positionnement. Chapitre 4 du business plan : citez des sources datées, aucune donnée de marché n\'est inventée par l\'outil.',
+  organisation:'Étape 5 — Comment le projet sera-t-il conduit ? Conduite d\'élevage, aliment, biosécurité, qualité-hygiène-sécurité, puis analyse SWOT et matrice des risques. Chapitres 6 et 7 du business plan ; champ vide = texte type.',
   synthese:'Vue d\'ensemble du dossier : besoin de financement, coût pour la ferme, rendement des investisseurs (TRI), indicateurs clés et points de contrôle. À consulter en premier ; tous les chiffres sont recalculés dès qu\'un onglet est modifié.',
-  montage:'Paramétrage du dossier : hypothèses de la bande (effectif, prix, mortalité, ponte), objets financés, conditions de financement et liste des investisseurs avec leur ticket et leur type de financement. C\'est l\'onglet où l\'on saisit les données de départ.',
-  commercial:'Plan commercial (débouchés, prix, volumes d\'œufs ou de viande) et charges externes de la bande. Ces éléments alimentent le compte d\'exploitation et la capacité de remboursement.',
-  plan:'Plan de financement : besoins (investissements, fonds de roulement) face aux ressources (capital, emprunts, investisseurs). Les options « Cheptel existant » et « Stocks existants » y valorisent, avec décote de prudence, les actifs déjà détenus par la ferme comme apport en nature (sans effet sur la trésorerie). Le bilan d\'ouverture en découle.',
+  montage:'Étape 2 — Paramétrage du dossier : hypothèses de la bande (effectif, prix, mortalité, ponte), objets financés, conditions de financement et liste des investisseurs avec leur ticket et leur type de financement. C\'est l\'onglet où l\'on saisit les données de départ.',
+  commercial:'Étape 4 — Plan commercial (débouchés, prix, volumes d\'œufs ou de viande) et charges externes de la bande. Ces éléments alimentent le compte d\'exploitation et la capacité de remboursement.',
+  plan:'Étape 6 — Plan de financement : besoins (investissements, fonds de roulement) face aux ressources (capital, emprunts, investisseurs). Les options « Cheptel existant » et « Stocks existants » y valorisent, avec décote de prudence, les actifs déjà détenus par la ferme comme apport en nature (sans effet sur la trésorerie). Le bilan d\'ouverture en découle.',
   cep:'Compte d\'exploitation prévisionnel (SYSCOHADA) : produits, charges, résultat, capacité d\'autofinancement et trésorerie mois par mois, intérêts du financement inclus.',
   echeancier:'Tableau d\'amortissement : calendrier des tirages et des remboursements (capital, intérêts, différé) pour chaque investisseur, selon le type de financement choisi.',
   evaluation:'Évaluation de l\'opération : rentabilité pour l\'investisseur (TRI brut et net, TEG), délai de retour et valeur créée pour la ferme. Sert à juger si les conditions proposées sont équilibrées.',
@@ -25830,6 +25833,65 @@ const FIN_NOTES = {
   suivi:'Suivi de la bande une fois financée (réel vs prévu) et écritures comptables générées : fonds reçus (compte 168), intérêts (671), remboursements.',
   docs:'Exports (Word, Excel, PowerPoint, PDF), pièces jointes et journal des modifications du dossier.'
 };
+
+// ══ Modules rédactionnels du business plan (textes saisis → repris dans le Word/PDF ; champ vide = texte type) ══
+var FIN_BP_SEED={
+  equipe:[['Dirigeant / gérant','',''],['Responsable d\'élevage','',''],['Responsable commercial','',''],['Comptabilité (prestataire)','',''],['Vétérinaire conseil (prestataire)','','']],
+  concurrents:[['Autres fermes de la zone','','','Régularité, traçabilité, service de livraison'],['Importations / grossistes','','','Fraîcheur, circuit court'],['Vente informelle','','','Qualité constante, facturation']],
+  risques:[['Baisse du taux de ponte','Moyenne','Élevé','Suivi quotidien ponte/aliment, prophylaxie, alertes de dérive'],['Hausse du prix de l\'aliment','Élevée','Élevé','Contrats d\'approvisionnement, stock tampon, achats groupés'],['Mortalité élevée / épizootie','Faible à moyenne','Élevé','Biosécurité, vaccination, assurance, seuil d\'alerte'],['Retards de paiement clients','Moyenne','Moyen','Délais par canal, relances, suspension des livraisons'],['Charges externes sous-estimées','Moyenne','Moyen','Devis et contrats signés avant décaissement']]
+};
+function finBp(f,k,d){ var v=f&&f.bp&&f.bp[k]; return v==null?d:v; }
+function finBpTa(f,k,label,rows,hint){
+  return '<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">'+label+'</label><textarea rows="'+rows+'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font:inherit;font-size:12px;box-sizing:border-box" placeholder="'+esc(hint||'')+'" onchange="finSetBp(\''+k+'\',this.value)">'+esc(finBp(f,k,''))+'</textarea></div>';
+}
+function finBpTbl(f,k,heads,w){
+  var rows=finBp(f,k,[])||[], n=heads.length;
+  return '<div class="tbl-wrap"><table class="tbl" style="font-size:11px"><thead><tr>'+heads.map(function(h){return '<th>'+h+'</th>';}).join('')+'<th></th></tr></thead><tbody>'
+    +rows.map(function(r,i){ return '<tr>'+heads.map(function(h,j){ return '<td><input style="width:100%;min-width:'+(w&&w[j]||90)+'px;box-sizing:border-box" value="'+esc(r[j]||'')+'" onchange="finSetBpCell(\''+k+'\','+i+','+j+',this.value)"></td>'; }).join('')+'<td><button class="btn btn-s btn-sm" title="Supprimer" onclick="finDelBpRow(\''+k+'\','+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
+    +(rows.length?'':'<tr><td colspan="'+(n+1)+'" style="text-align:center;color:var(--text3)">Aucune ligne : le business plan utilisera le tableau type.</td></tr>')
+    +'</tbody></table></div><div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-p btn-sm" onclick="finAddBpRow(\''+k+'\','+n+')"><i class="fas fa-plus"></i> Ajouter une ligne</button>'
+    +(FIN_BP_SEED[k]&&!rows.length?'<button class="btn btn-s btn-sm" onclick="finSeedBp(\''+k+'\')"><i class="fas fa-list-check"></i> Pré-remplir avec le modèle</button>':'')+'</div>';
+}
+function finBpCard(title,body,sub){ return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>'+title+'</span></div><div class="card-bd">'+(sub?'<p style="font-size:11px;color:var(--text3);margin:0 0 10px">'+sub+'</p>':'')+body+'</div></div>'; }
+window.finSetBp=async function(k,v){ var r=window._fb.rec; if(!r) return; r.bp=Object.assign({},r.bp); r.bp[k]=v; await finSave(r); if(r.verrou) finRefresh(); };
+window.finSetBpCell=async function(k,i,j,v){ var r=window._fb.rec; if(!r||!(r.bp&&r.bp[k]&&r.bp[k][i])) return; r.bp=Object.assign({},r.bp); r.bp[k]=r.bp[k].map(function(x,ix){ if(ix!==i) return x; var y=x.slice(); y[j]=v; return y; }); await finSave(r); if(r.verrou) finRefresh(); };
+window.finAddBpRow=async function(k,n){ var r=window._fb.rec; if(!r) return; r.bp=Object.assign({},r.bp); r.bp[k]=(r.bp[k]||[]).concat([new Array(n).fill('')]); await finSave(r); finRefresh(); };
+window.finDelBpRow=async function(k,i){ if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée','err'); return; } var r=window._fb.rec; if(!r||!(r.bp&&r.bp[k])) return; r.bp=Object.assign({},r.bp); r.bp[k]=r.bp[k].filter(function(x,ix){return ix!==i;}); await finSave(r); finRefresh(); };
+window.finSeedBp=async function(k){ var r=window._fb.rec; if(!r||!FIN_BP_SEED[k]) return; r.bp=Object.assign({},r.bp); r.bp[k]=FIN_BP_SEED[k].map(function(x){return x.slice();}); await finSave(r); finRefresh(); };
+
+function finTabPresent(f,E,cfg){
+  var idn=[['Dénomination',cfg.nomExploitation],['Forme juridique',cfg.formeJuridique],['RCCM / NIF',[cfg.rccm,cfg.nif].filter(Boolean).join(' / ')],['Adresse',[cfg.adresse,cfg.ville,cfg.pays].filter(Boolean).join(', ')],['Responsable',cfg.responsable],['Contact',[cfg.telephone,cfg.email].filter(Boolean).join(' · ')]];
+  return finBpCard('🪪 Identité de l\'exploitation','<table class="tbl" style="font-size:12px"><tbody>'+idn.map(function(x){return '<tr><td style="width:180px"><strong>'+x[0]+'</strong></td><td>'+(x[1]?esc(x[1]):'<span style="color:#b45309">[à compléter dans Paramètres → exploitation]</span>')+'</td></tr>';}).join('')+'</tbody></table>','Ces informations viennent des paramètres de l\'exploitation et sont reprises au chapitre 2.1.')
+    +finBpCard('🎯 Mission, vision et valeurs',finBpTa(f,'mission','Mission, vision, valeurs',5,'Ex. : produire des œufs de consommation réguliers, traçables et à coût maîtrisé ; devenir le fournisseur de référence de la zone ; rigueur sanitaire, transparence, respect des animaux.'))
+    +finBpCard('📌 Contexte et objectif du projet',finBpTa(f,'contexte','Contexte, motivations, résultats attendus (s\'ajoute au texte généré)',5,'Pourquoi ce projet maintenant ? Quel problème ou opportunité ? Quel objectif chiffré ?'),'Le texte technique (effectif, période financée) est généré automatiquement ; ce champ le complète.')
+    +finBpCard('👥 Équipe dirigeante et compétences',finBpTbl(f,'equipe',['Fonction','Nom','Expérience / compétences'],[150,130,260]),'Chapitre 2.3 : les financeurs jugent d\'abord les hommes. Indiquez l\'expérience avicole et la formation.');
+}
+function finTabMarche(f,E){
+  return finBpCard('🛒 Demande et saisonnalité',finBpTa(f,'demande','Taille du marché local, tendance, pics saisonniers, prix observés',6,'Citez des sources datées : statistiques officielles, relevés de prix de marché, enquête auprès de vos clients. Ne mentionnez que des chiffres vérifiés.'),'Les segments de clientèle et les prix se saisissent dans l\'onglet « 4. Commercial & charges ».')
+    +finBpCard('⚔️ Concurrence',finBpTbl(f,'concurrents',['Concurrent / type','Forces','Faiblesses','Notre réponse'],[150,160,160,200]),'Chapitre 4.3.')
+    +finBpCard('🧭 Positionnement',finBpTa(f,'positionnement','Avantages concurrentiels (une ligne = une puce)',5,'Régularité d\'approvisionnement\nTraçabilité de chaque lot\nSouplesse commerciale'));
+}
+function finTabOrga(f,E){
+  return finBpCard('🐔 Conduite de l\'élevage',finBpTa(f,'elevage','Itinéraire technique (une ligne = une puce)',5,'Préparation du bâtiment, réception des poussins, alimentation par phase, programme lumineux, ramassage et tri des œufs…'),'Chapitre 6.1. Vide = texte type.')
+    +finBpCard('🌾 Approvisionnement en aliment',finBpTa(f,'aliment','Fournisseurs, contrats, stockage, contrôle qualité',4,'Fournisseur principal et de secours, délais de paiement, stock tampon, contrôle à réception…'))
+    +finBpCard('🛡️ Biosécurité et prophylaxie',finBpTa(f,'biosec','Mesures de biosécurité (le calendrier de vaccination est généré automatiquement)',4,'Accès contrôlé, pédiluve, vide sanitaire, gestion des mortalités, lutte contre les nuisibles…'))
+    +finBpCard('📋 Qualité, hygiène, sécurité, environnement',finBpTa(f,'qhse','Une ligne = une puce',4,'Traçabilité par lot\nGestion des fientes\nSécurité du personnel\nBien-être animal'),'Les ressources humaines et prestataires chiffrés viennent de l\'onglet « 4. Commercial & charges ».')
+    +finBpCard('🔎 Analyse SWOT','<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">'+finBpTa(f,'sw_forces','💪 Forces (une par ligne)',5,'')+finBpTa(f,'sw_faiblesses','⚠️ Faiblesses',5,'')+finBpTa(f,'sw_opportunites','🌱 Opportunités',5,'')+finBpTa(f,'sw_menaces','⛈️ Menaces',5,'')+'</div>','Chapitre 7.1. Forces/faiblesses = interne ; opportunités/menaces = externe. Vide = SWOT type.')
+    +finBpCard('🎲 Matrice des risques',finBpTbl(f,'risques',['Risque','Probabilité','Impact','Mesure d\'atténuation'],[170,100,90,260]),'Chapitre 7.2. Les tests chiffrés (scénarios, Monte-Carlo) sont dans l\'onglet « 10. Risques & scénarios ».');
+}
+// Avancement de la rédaction du business plan (affiché dans la Synthèse)
+function finBpProgress(f){
+  var t=function(k){ return !!String(finBp(f,k,'')).trim(); }, r=function(k){ return (finBp(f,k,[])||[]).length>0; };
+  return [['Présentation : mission, contexte, équipe','present',t('mission')||t('contexte')||r('equipe')],['Projet : investissements saisis','montage',(f.immos||[]).length>0],['Projet : investisseurs identifiés','montage',(f.investisseurs||[]).length>0],
+    ['Étude de marché : demande, concurrence, positionnement','marche',t('demande')||r('concurrents')||t('positionnement')],['Organisation : élevage, aliment, biosécurité, QHSE','organisation',t('elevage')||t('aliment')||t('biosec')||t('qhse')],
+    ['Analyse SWOT','organisation',t('sw_forces')||t('sw_faiblesses')||t('sw_opportunites')||t('sw_menaces')],['Matrice des risques','organisation',r('risques')]];
+}
+function finBpProgressHtml(f){
+  var L=finBpProgress(f), n=L.filter(function(x){return x[2];}).length;
+  return '<details class="card" style="margin-bottom:14px"'+(n<L.length?' open':'')+'><summary class="card-hd" style="cursor:pointer"><span>📝 Avancement du business plan</span><span>'+n+' / '+L.length+' sections rédigées</span></summary><div class="card-bd" style="font-size:12px">'
+    +L.map(function(x){ return '<div style="padding:3px 0"><span>'+(x[2]?'✅':'⬜')+'</span> <a href="#" onclick="fbTab(\''+x[1]+'\');return false" style="color:inherit">'+x[0]+'</a></div>'; }).join('')
+    +'<p style="font-size:11px;color:var(--text3);margin:8px 0 0">Une section non rédigée est remplacée dans le document par un texte type ou par « [à compléter] ».</p></div></details>';
+}
 function finNote(t){
   var n=FIN_NOTES[t]; if(!n) return '';
   var open=true; try{ open=localStorage.getItem('finNote_'+t)!=='0'; }catch(e){}
@@ -26009,6 +26071,7 @@ function finBpBlocks(D){
   var BAR=function(title,labels,values,fmt){ b.push({t:'bar',title:title,labels:labels,values:values,fmt:fmt}); }, PB=function(){ b.push({t:'pb'}); };
   var d0=f.dateDebut?new Date(f.dateDebut+'T00:00:00'):new Date(), wkd=function(w){ return new Date(d0.getTime()+(w-1)*7*864e5).toLocaleDateString('fr-FR',{month:'long',year:'numeric'}); };
   var A=function(x){ return x||'[à compléter]'; };
+  var U=function(k){ var v=f.bp&&f.bp[k]; return typeof v==='string'?v.trim():''; }, LN=function(x){ return x.split(/\n+/).map(function(l){return l.trim();}).filter(Boolean); }, TB=function(k,n){ return ((f.bp&&f.bp[k])||[]).map(function(r){ var o=[]; for(var q=0;q<n;q++) o.push(A(r[q])); return o; }); };
   var ok=B.solde<=1, G='14532D', RD='DC2626';
   var coutOeuf=E.res.cumOeufs>0?E.res.totalCout/E.res.cumOeufs:0, obj=finObjList(f).join(', ');
   var unit=layer?'pondeuses':'poulets de chair';
@@ -26025,15 +26088,16 @@ function finBpBlocks(D){
   H2('2.1 Identité');
   T(['Rubrique','Information'],[['Dénomination',A(c.nomExploitation)],['Forme juridique',A(c.formeJuridique)],['RCCM / NIF',A([c.rccm,c.nif].filter(Boolean).join(' / '))],['Adresse',A([c.adresse,c.ville,c.pays].filter(Boolean).join(', '))],['Responsable / dirigeant',A(c.responsable)],['Contact',A([c.telephone,c.email].filter(Boolean).join(' · '))],['Banque',A(c.nomBanque)]]);
   H2('2.2 Vision, mission et valeurs');
-  P('Mission : produire '+(layer?'des œufs de consommation':'de la viande de volaille')+' de façon régulière, traçable et à un coût maîtrisé, pour des clients locaux. Vision : devenir un fournisseur de référence de sa zone par la constance de l\'approvisionnement et la qualité. Valeurs : rigueur sanitaire, transparence vis-à-vis des financeurs, respect des animaux et de l\'environnement.');
+  if(U('mission')) P(U('mission')); else P('Mission : produire '+(layer?'des œufs de consommation':'de la viande de volaille')+' de façon régulière, traçable et à un coût maîtrisé, pour des clients locaux. Vision : devenir un fournisseur de référence de sa zone par la constance de l\'approvisionnement et la qualité. Valeurs : rigueur sanitaire, transparence vis-à-vis des financeurs, respect des animaux et de l\'environnement.');
   H2('2.3 Équipe dirigeante et compétences');
-  T(['Fonction','Nom','Expérience / compétences'],[['Dirigeant / gérant',A(c.responsable),'[à compléter]'],['Responsable d\'élevage','[à compléter]','[à compléter]'],['Responsable commercial','[à compléter]','[à compléter]'],['Comptabilité (prestataire)','[à compléter]','[à compléter]'],['Vétérinaire conseil (prestataire)','[à compléter]','[à compléter]']],{});
+  if(TB('equipe',3).length) T(['Fonction','Nom','Expérience / compétences'],TB('equipe',3),{}); else T(['Fonction','Nom','Expérience / compétences'],[['Dirigeant / gérant',A(c.responsable),'[à compléter]'],['Responsable d\'élevage','[à compléter]','[à compléter]'],['Responsable commercial','[à compléter]','[à compléter]'],['Comptabilité (prestataire)','[à compléter]','[à compléter]'],['Vétérinaire conseil (prestataire)','[à compléter]','[à compléter]']],{});
   H2('2.4 Outil de pilotage');
   P('L\'exploitation pilote ses lots avec l\'ERP AviCoSuite : saisie quotidienne de l\'aliment, de la mortalité et de la ponte, suivi du programme prophylactique, gestion des stocks et comptabilité SYSCOHADA. Ces données alimentent le reporting remis aux financeurs (chapitre 15).');
   // 3
   PB(); H1('3. Le projet');
   H2('3.1 Contexte et objectif');
   P('Le projet consiste à constituer et conduire une bande de '+finN(S.nbBetes)+' '+unit+(layer?' de souche '+(S.souche||'Général'):'')+', '+(layer?'élevées jusqu\'à la ponte puis exploitées jusqu\'à la réforme à la semaine '+S.semReforme:'élevés jusqu\'à l\'abattage')+'. Le financement demandé couvre la période '+(f.portee==='production'?'des '+f.semPonte+' prochaines semaines':'S1 à S'+f.semPonte)+', durant laquelle la bande consomme de la trésorerie avant de générer des ventes.');
+  if(U('contexte')) P(U('contexte'));
   H2('3.2 Description technique de la bande');
   T(['Phase','Semaines','Ingéré g/j','Vivants fin','Coût phase','Recette phase','Œufs'],E.res.rows.map(function(r){ return [r.ph.label,r.ph.semDeb+'–'+r.ph.semFin,finN(r.feedGPDPhase),finN(r.vivantsFin),finF(r.totalCoutPhase),finF(r.recettePhase||0),finN(r.oeufsPhase||0)]; }),{right:[2,3,4,5,6]});
   P('Cycle complet : '+finN(E.res.cumOeufs)+' œufs, coût de revient '+finF(E.res.coutRevientTete)+' par sujet, mortalité cumulée '+finN(S.tauxMortalite,1)+' %.');
@@ -26048,11 +26112,11 @@ function finBpBlocks(D){
   P(layer?'Produit : œufs de consommation en cartons de 30 œufs ou plateaux, vendus en deux calibres. Prix retenu : '+finN(S.prixOeufUnit)+' F l\'œuf gros calibre (environ '+finN(S.prixOeufUnit*360)+' F le carton de 360), petit calibre à '+finN(S.ratioPetit||77)+' % du gros ; prix moyen après mix de calibres : '+finN(B.pm,1)+' F.':'Produit : poulets de chair vendus en carcasse à '+finN(S.prixCarcasseKg)+' F/kg.');
   if(D.canaux.length) T(['Segment de clientèle','Part du volume','Prix relatif','Délai de paiement'],D.canaux.map(function(x){ return [x.nom,finN(x.part)+' %',finN(x.prixPct)+' %',finN(x.delai)+' j']; }),{right:[1,2,3]}); else P('Segments de clientèle à renseigner (onglet Commercial & charges).',{i:true});
   H2('4.2 Demande et saisonnalité');
-  P('La demande en '+(layer?'œufs':'volaille')+' est régulière toute l\'année, avec des pics autour des fêtes et de la rentrée scolaire. Le niveau de demande, la taille du marché local et la saisonnalité des prix doivent être documentés avec des sources datées (statistiques officielles, relevés de prix, enquête auprès des clients) : aucune donnée de marché non vérifiée n\'est avancée ici.',{});
+  if(U('demande')) P(U('demande')); else P('La demande en '+(layer?'œufs':'volaille')+' est régulière toute l\'année, avec des pics autour des fêtes et de la rentrée scolaire. Le niveau de demande, la taille du marché local et la saisonnalité des prix doivent être documentés avec des sources datées (statistiques officielles, relevés de prix, enquête auprès des clients) : aucune donnée de marché non vérifiée n\'est avancée ici.',{});
   H2('4.3 Analyse de la concurrence');
-  T(['Concurrent / type','Forces','Faiblesses','Notre réponse'],[['Autres fermes de la zone','[à documenter]','[à documenter]','Régularité, traçabilité, service de livraison'],['Importations / grossistes','[à documenter]','[à documenter]','Fraîcheur, circuit court'],['Vente informelle','[à documenter]','[à documenter]','Qualité constante, facturation']],{});
+  if(TB('concurrents',4).length) T(['Concurrent / type','Forces','Faiblesses','Notre réponse'],TB('concurrents',4),{}); else T(['Concurrent / type','Forces','Faiblesses','Notre réponse'],[['Autres fermes de la zone','[à documenter]','[à documenter]','Régularité, traçabilité, service de livraison'],['Importations / grossistes','[à documenter]','[à documenter]','Fraîcheur, circuit court'],['Vente informelle','[à documenter]','[à documenter]','Qualité constante, facturation']],{});
   H2('4.4 Positionnement');
-  BL(['Régularité d\'approvisionnement tout au long de l\'année grâce à une bande conduite en cycle maîtrisé.','Traçabilité de chaque lot (alimentation, santé, ponte) grâce à l\'ERP.','Souplesse commerciale : plusieurs canaux, livraison, conditions de paiement adaptées.']);
+  if(LN(U('positionnement')).length) BL(LN(U('positionnement'))); else BL(['Régularité d\'approvisionnement tout au long de l\'année grâce à une bande conduite en cycle maîtrisé.','Traçabilité de chaque lot (alimentation, santé, ponte) grâce à l\'ERP.','Souplesse commerciale : plusieurs canaux, livraison, conditions de paiement adaptées.']);
   // 5
   PB(); H1('5. Stratégie commerciale et marketing');
   T(['Axe (4P)','Orientation'],[['Produit','Gamme de calibres, emballage propre et identifié, traçabilité, constance de la qualité'],['Prix','Alignement sur le prix du marché local, remises de volume maîtrisées, suivi hebdomadaire du prix du carton'],['Place (distribution)','Ventes en gros, détaillants, restaurants et institutions, ménages ; livraison avec véhicule dédié'],['Promotion','Prospection, échantillons, contrats de livraison, bouche-à-oreille, fidélisation']],{});
@@ -26063,24 +26127,24 @@ function finBpBlocks(D){
   // 6
   PB(); H1('6. Organisation et plan opérationnel');
   H2('6.1 Conduite de l\'élevage');
-  BL(['Réception des poussins en bâtiment préparé (nettoyage, désinfection, vide sanitaire, chauffage, eau et aliment disponibles).','Alimentation par phase (démarrage, poulette, pré-ponte, ponte) selon les tables de la souche ; contrôle quotidien de la consommation.','Contrôle du poids et de l\'homogénéité du lot ; programme lumineux adapté à l\'âge.','Ramassage des œufs, tri par calibre, stockage et livraison.']);
+  if(LN(U('elevage')).length) BL(LN(U('elevage'))); else BL(['Réception des poussins en bâtiment préparé (nettoyage, désinfection, vide sanitaire, chauffage, eau et aliment disponibles).','Alimentation par phase (démarrage, poulette, pré-ponte, ponte) selon les tables de la souche ; contrôle quotidien de la consommation.','Contrôle du poids et de l\'homogénéité du lot ; programme lumineux adapté à l\'âge.','Ramassage des œufs, tri par calibre, stockage et livraison.']);
   H2('6.2 Approvisionnement en aliment');
-  P('L\'aliment représente '+finP(E.res.totalCout>0?E.res.rows.reduce(function(a,r){return a+r.coutAlimentPhase;},0)/E.res.totalCout:0,0)+' du coût total : contrats d\'approvisionnement, comparaison de fournisseurs, stock tampon et contrôle de la qualité à réception sont des conditions de la rentabilité.');
+  if(U('aliment')) P(U('aliment')); else P('L\'aliment représente '+finP(E.res.totalCout>0?E.res.rows.reduce(function(a,r){return a+r.coutAlimentPhase;},0)/E.res.totalCout:0,0)+' du coût total : contrats d\'approvisionnement, comparaison de fournisseurs, stock tampon et contrôle de la qualité à réception sont des conditions de la rentabilité.');
   H2('6.3 Biosécurité et plan prophylactique');
   var proph=(typeof defaultProphy!=='undefined'?defaultProphy:[]).filter(function(x){return x.type===(layer?'layer':'broiler');});
-  P('Mesures : accès contrôlé, pédiluve, vide sanitaire, gestion des mortalités, lutte contre les nuisibles, eau de qualité. Programme de vaccination et de traitements (dates calculées à partir du jour d\'arrivée) :');
+  if(U('biosec')) P(U('biosec')+' Programme de vaccination et de traitements (dates calculées à partir du jour d\'arrivée) :'); else P('Mesures : accès contrôlé, pédiluve, vide sanitaire, gestion des mortalités, lutte contre les nuisibles, eau de qualité. Programme de vaccination et de traitements (dates calculées à partir du jour d\'arrivée) :');
   if(proph.length) T(['Âge (jours)','Date prévue','Action'],proph.slice(0,16).map(function(x){ return ['J'+x.ageDays,new Date(d0.getTime()+x.ageDays*864e5).toLocaleDateString('fr-FR'),x.action]; }),{});
   H2('6.4 Ressources humaines et prestataires');
   T(['Prestataire / poste','Rôle','Coût sur le cycle'],EXT_DEFS.filter(function(x){return x.g==='Prestataires'&&((E.extTot||{})[x.k]||0)>0;}).map(function(x){ return [x.lbl.replace(/ \(.*$/,''),x.cpt==='637'?'Surveillance du site':'Honoraires / prestations',finF(E.extTot[x.k])]; }).concat([['Main d\'œuvre salariée','Conduite quotidienne de l\'élevage',finF(E.res.rows.reduce(function(a,r){return a+r.coutMainPhase;},0))]]),{right:[2]});
   H2('6.5 Qualité, hygiène, sécurité et environnement');
-  BL(['Traçabilité par lot, enregistrement des traitements et des délais d\'attente.','Gestion des fientes (stockage, valorisation en fertilisant) et des eaux de lavage.','Sécurité du personnel, équipements de protection, formation.','Bien-être animal : densité, ventilation, accès à l\'eau et à l\'aliment.']);
+  if(LN(U('qhse')).length) BL(LN(U('qhse'))); else BL(['Traçabilité par lot, enregistrement des traitements et des délais d\'attente.','Gestion des fientes (stockage, valorisation en fertilisant) et des eaux de lavage.','Sécurité du personnel, équipements de protection, formation.','Bien-être animal : densité, ventilation, accès à l\'eau et à l\'aliment.']);
   // 7
   PB(); H1('7. Analyse stratégique et risques');
   H2('7.1 Forces, faiblesses, opportunités, menaces');
-  T(['Forces','Faiblesses'],[['Pilotage par ERP et traçabilité des lots\nMarché d\'un produit de consommation courante\nMontage sans entrée au capital, remboursement indexé sur les ventes','Taille de la bande : charges fixes lourdes\nMarge sensible au prix de l\'aliment\nDépendance à un nombre limité de clients et fournisseurs']],{});
-  T(['Opportunités','Menaces'],[['Demande régulière et croissante en protéines animales\nCanaux de vente complémentaires (institutions, restauration)\nValorisation des fientes et des poules de réforme','Hausse du prix des intrants\nMaladies aviaires, chaleur\nConcurrence et importations, retards de paiement']],{});
+  if(U('sw_forces')||U('sw_faiblesses')) T(['Forces','Faiblesses'],[[U('sw_forces')||'—',U('sw_faiblesses')||'—']],{}); else T(['Forces','Faiblesses'],[['Pilotage par ERP et traçabilité des lots\nMarché d\'un produit de consommation courante\nMontage sans entrée au capital, remboursement indexé sur les ventes','Taille de la bande : charges fixes lourdes\nMarge sensible au prix de l\'aliment\nDépendance à un nombre limité de clients et fournisseurs']],{});
+  if(U('sw_opportunites')||U('sw_menaces')) T(['Opportunités','Menaces'],[[U('sw_opportunites')||'—',U('sw_menaces')||'—']],{}); else T(['Opportunités','Menaces'],[['Demande régulière et croissante en protéines animales\nCanaux de vente complémentaires (institutions, restauration)\nValorisation des fientes et des poules de réforme','Hausse du prix des intrants\nMaladies aviaires, chaleur\nConcurrence et importations, retards de paiement']],{});
   H2('7.2 Matrice des risques');
-  T(['Risque','Probabilité','Impact','Mesure d\'atténuation'],[['Baisse du taux de ponte','Moyenne','Élevé','Suivi quotidien ponte/aliment, prophylaxie, alertes de dérive'],[D.seuil.riskAlim,'Élevée','Élevé','Contrats d\'approvisionnement, stock tampon, achats groupés'],[D.seuil.riskOeuf,'Moyenne','Élevé','Diversification des clients, contrats de livraison'],['Mortalité élevée','Faible à moyenne','Élevé','Biosécurité, vaccination, assurance mortalité'],['Retard d\'encaissement','Moyenne','Moyen','Délais par canal, compte dédié, suivi des impayés'],['Charges externes sous-estimées','Moyenne','Moyen','Devis et contrats signés avant décaissement'],['Risque juridique (usure, épargne publique)','Faible','Élevé','Taux et TEG sous plafond, investisseurs identifiés, aucune sollicitation publique']],{});
+  if(TB('risques',4).length) T(['Risque','Probabilité','Impact','Mesure d\'atténuation'],TB('risques',4),{}); else T(['Risque','Probabilité','Impact','Mesure d\'atténuation'],[['Baisse du taux de ponte','Moyenne','Élevé','Suivi quotidien ponte/aliment, prophylaxie, alertes de dérive'],[D.seuil.riskAlim,'Élevée','Élevé','Contrats d\'approvisionnement, stock tampon, achats groupés'],[D.seuil.riskOeuf,'Moyenne','Élevé','Diversification des clients, contrats de livraison'],['Mortalité élevée','Faible à moyenne','Élevé','Biosécurité, vaccination, assurance mortalité'],['Retard d\'encaissement','Moyenne','Moyen','Délais par canal, compte dédié, suivi des impayés'],['Charges externes sous-estimées','Moyenne','Moyen','Devis et contrats signés avant décaissement'],['Risque juridique (usure, épargne publique)','Faible','Élevé','Taux et TEG sous plafond, investisseurs identifiés, aucune sollicitation publique']],{});
   // 8
   PB(); H1('8. Plan d\'investissement et de financement');
   H2('8.1 Objets financés');
