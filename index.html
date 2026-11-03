@@ -24597,7 +24597,7 @@ const FIN_SEUIL_APE = 100;           // APE : > 100 personnes sans lien juridiqu
 
 const FIN_DEFAULTS = {
   nom:'Financement bande pondeuses', lotId:null, statut:'brouillon',
-  dateDebut:'', semPonte:18, inclPoussin:false, inclVacc:false, inclMed:false, inclEau:false,
+  portee:'nouvelle', typeLot:'layer', reel:null, dateDebut:'', semPonte:18, inclPoussin:false, inclVacc:false, inclMed:false, inclEau:false,
   contingence:5, fraisDossierPct:1, montantManuel:0,
   taux:18, mode:'ponte', sweepPct:70, differeMois:6, dureeRemb:8, interetDiffere:'capitalise', tirage:'progressif',
   tauxActu:12, delaiEncaiss:1, courbe:'lisse', prixPoulette:3500, retenuePct:18,
@@ -24678,20 +24678,35 @@ function finBesoin(p, f){
 function finRun(f, m){
   m=m||{};
   f=Object.assign({},FIN_DEFAULTS,f);
-  var p=Object.assign({},SIMU_DEFAULTS,f.simu||{},{typeLot:'layer'});
+  var typeLot=f.typeLot==='broiler'?'broiler':'layer';
+  var p0=Object.assign({},SIMU_DEFAULTS,f.simu||{},{typeLot:typeLot}), p=Object.assign({},p0);
   if(m.oeuf) p.prixOeufUnit*=m.oeuf;
   if(m.ponte) p.tauxPonteMoy=Math.min(98,p.tauxPonteMoy*m.ponte);
   if(m.alim){ p.coutAlimentD*=m.alim; p.coutAlimentC*=m.alim; p.coutAlimentP*=m.alim; }
   if(m.mort) p.tauxMortalite=Math.min(60,p.tauxMortalite*m.mort);
-  var wk=finWeekly(p,f.courbe), W=wk.W, lag=Math.max(0,f.delaiEncaiss|0), diff=Math.max(0,f.differeMois|0), N=Math.max(1,f.dureeRemb|0);
+  var wk=finWeekly(p,f.courbe), W=wk.W, lag=Math.max(0,f.delaiEncaiss|0), diff=Math.max(0,f.differeMois|0), N=Math.max(1,f.dureeRemb|0), warn=[];
+  if(f.portee==='production' && f.reel){
+    // Bande en production : on repart des semaines restantes, calées sur le lot réel (effectif vivant, ponte et consommation constatées).
+    // Calibrage mesuré sur les paramètres de base (sans stress) puis appliqué à la projection éventuellement stressée.
+    var R=f.reel, base0=finWeekly(p0,f.courbe).W, maxAge=W.length-1, age=Math.max(1,Math.min(maxAge,Math.round(R.age||1)));
+    if((R.age||0)>maxAge) warn.push('Lot au-delà du cycle modélisé (S'+W.length+') : projection limitée à la fin de cycle.');
+    var w0=base0[age-1], vSim=w0.vivants||1, r=R.vivants>0?R.vivants/vSim:1;
+    var mr=w0.vivants>0?w0.oeufs/(w0.vivants*7):0, kP=(typeLot==='layer'&&R.tauxPonte>0&&mr>0)?finClamp(R.tauxPonte/100/mr,0.5,1.3):1;
+    var ph0=simuGetPhases(typeLot).filter(function(x){return x.id===w0.ph;})[0], kA=(R.gPouleJour>0&&ph0&&ph0.feedGPD>0)?finClamp(R.gPouleJour/ph0.feedGPD,0.7,1.5):1;
+    if(R.tauxBrut>100) warn.push('Taux de ponte saisi > 100 % sur le lot (erreur de saisie probable) : plafonné.');
+    if(!(R.vivants>0)) warn.push('Effectif vivant du lot nul : actualisez les données du lot.');
+    W=W.slice(age).map(function(x){ return Object.assign({},x,{wr:x.w-age,vivants:x.vivants*r,alim:x.alim*r*kA,poussin:0,vacc:x.vacc*r,med:x.med*r,eau:x.eau*r,lit:0,oeufs:x.oeufs*r*kP,recOeufs:x.recOeufs*r*kP,recRef:x.recRef*r}); });
+    if(!W.length) W=[Object.assign({},base0[maxAge],{wr:1})];
+  } else W=W.map(function(x){ return Object.assign({},x,{wr:x.w}); });
   var T=Math.max(finMonth(W.length)+lag, diff+N)+1, t, i;
   var rev=[],opex=[],fin=[],tir=[];
   for(i=0;i<=T+1;i++){ rev[i]=0; opex[i]=0; fin[i]=0; tir[i]=0; }
-  var oeufsTot=0;
+  var oeufsTot=0, det={alim:0,poussin:0,vacc:0,med:0,eau:0,indir:0}, coutFut=0;
   W.forEach(function(x){
-    var mi=finMonth(x.w);
+    var mi=finMonth(x.wr); coutFut+=x.alim+x.poussin+x.vacc+x.med+x.eau+x.lit+x.indir;
     opex[mi]+=x.alim+x.poussin+x.vacc+x.med+x.eau+x.lit+x.indir;
-    if(x.w<=f.semPonte) fin[mi]+=x.alim+(f.inclPoussin?x.poussin:0)+(f.inclVacc?x.vacc:0)+(f.inclMed?x.med:0)+(f.inclEau?x.eau+x.lit:0);
+    if(x.wr<=f.semPonte){ det.alim+=x.alim; det.poussin+=x.poussin; det.vacc+=x.vacc; det.med+=x.med; det.eau+=x.eau+x.lit; det.indir+=x.indir; }
+    if(x.wr<=f.semPonte) fin[mi]+=x.alim+(f.inclPoussin?x.poussin:0)+(f.inclVacc?x.vacc:0)+(f.inclMed?x.med:0)+(f.inclEau?x.eau+x.lit:0);
     rev[mi+lag]+=x.recOeufs+x.recRef; oeufsTot+=x.oeufs;
   });
   var base=fin.reduce(function(a,b){return a+b;},0);
@@ -24751,14 +24766,14 @@ function finRun(f, m){
   var fullMonth=null; rows.forEach(function(r){ if(!r.diff&&r.close===0&&r.open+r.tir>0&&fullMonth===null) fullMonth=r.t; });
   var mP=finMonth(f.semPonte), debtAtPonte=rows[Math.min(mP,rows.length)-1].close;
   var wP=W[Math.min(f.semPonte,W.length)-1], valPoulettes=wP.vivants*f.prixPoulette;
-  var coutPre=0; W.forEach(function(x){ if(x.w<=f.semPonte) coutPre+=x.alim+x.poussin+x.vacc+x.med+x.eau+x.lit+x.indir; });
+  var coutPre=0; W.forEach(function(x){ if(x.wr<=f.semPonte) coutPre+=x.alim+x.poussin+x.vacc+x.med+x.eau+x.lit+x.indir; });
   return {p:p, W:W, res:wk.res, rows:rows, T:T, base:base, montant:montant, frais:frais, tirTotal:out, intTot:intTot,
     npv:npv, irrProj:finAnn(irrP), payback:payback, pi:pvOut>0?pvIn/pvOut:null, peakInvest:-minCu,
     irrInvB:finAnn(irrB), irrInvN:finAnn(irrN), moic:out>0?inN/out:null, moicB:out>0?inB/out:null, teg:finAnn(tegM),
     dscrMin:dscrMin, dscrAvg:dscrAvg, cov:cov, capac:capac, dStart:dStart, fullMonth:fullMonth, soldeFin:soldeFin, minCash:minCash, cashFin:cum,
     ltv:valPoulettes>0?debtAtPonte/valPoulettes:null, debtAtPonte:debtAtPonte, valPoulettes:valPoulettes,
-    coutPoulette:wP.vivants>0?coutPre/wP.vivants:0, oeufsTot:oeufsTot, coutOeuf:oeufsTot>0?wk.res.totalCout/oeufsTot:0,
-    margeOeuf:oeufsTot>0?wk.res.margeNette/oeufsTot:0, ivN:ivN, ivB:ivB};
+    coutPoulette:wP.vivants>0?coutPre/wP.vivants:0, oeufsTot:oeufsTot, coutOeuf:oeufsTot>0?(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0,
+    margeOeuf:oeufsTot>0?p.prixOeufUnit*(1-(p.tauxCasse||0)/100)-(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0, det:det, warn:warn, typeLot:typeLot, ivN:ivN, ivB:ivB};
 }
 
 const FIN_SCEN = {
@@ -24818,7 +24833,7 @@ function finContrat(f, E, cfg){
     degressif:'par échéances mensuelles à capital constant',annuite:'par annuités mensuelles constantes',infine:'in fine, intérêts payés mensuellement'}[f.mode];
   return [
     ['Parties','Entre '+ex+' ('+fj+', RCCM '+rc+'), ci-après « l\'Exploitant », et '+inv+', ci-après « le(s) Prêteur(s) », il est convenu ce qui suit.'],
-    ['Objet','Financement partiel de la bande « '+(f.nom||'')+' » : prise en charge de l\'alimentation des volailles du placement jusqu\'à la semaine S'+f.semPonte+' (démarrage de la ponte). Aucune entrée au capital ; aucun droit de vote ni de partage de résultat hors rémunération prévue.'],
+    ['Objet',finObjet(f,E)+' Aucune entrée au capital ; aucun droit de vote ni de partage de résultat hors rémunération prévue.'],
     ['Montant & mise à disposition','Montant maximal : '+finM(E.montant)+', mis à disposition '+(f.tirage==='unique'?'en une fois à la signature':'par tirages mensuels correspondant aux besoins en aliment')+'. Frais de dossier : '+f.fraisDossierPct+' %.'],
     ['Affectation des fonds','Exclusivement à l\'achat d\'aliments pour la bande financée. Justificatifs (factures, bons de réception) communiqués sur demande ; le suivi est consultable dans l\'ERP.'],
     ['Durée','Différé de '+f.differeMois+' mois (intérêts '+(f.interetDiffere==='paye'?'payés':'capitalisés')+'), puis remboursement sur '+f.dureeRemb+' mois maximum.'],
@@ -24840,7 +24855,7 @@ async function finLoad(){
   var list=await getAll(S.FINBANDE); list.sort(function(a,b){return (b.id||0)-(a.id||0);});
   var B=window._fb||(window._fb={id:null,tab:'synthese'});
   var rec=list.find(function(x){return x.id===B.id;})||list[0]||null;
-  B.id=rec?rec.id:null; B.rec=rec; B.list=list;
+  B.id=rec?rec.id:null; B.rec=rec; B.list=list; B.lots=await getAll(S.FLOCKS);
   return rec;
 }
 async function finSave(rec){ await updRec(S.FINBANDE,rec.id,rec); }
@@ -24851,13 +24866,52 @@ window.finSetG=async function(k,v){ var r=window._fb.rec; r.garanties=r.garantie
 window.finSetSimu=async function(k,v){ var r=window._fb.rec; r.simu=r.simu||{}; r.simu[k]=parseFloat(v)||0; await finSave(r); finRefresh(); };
 window.fbTab=function(t){ window._fb.tab=t; finRefresh(); };
 window.finPick=function(id){ window._fb.id=parseInt(id)||null; window._fb.mc=null; finRefresh(); };
-window.finNew=async function(){
+// Valeurs usuelles selon portée + type (semPonte = dernière semaine financée, relative au départ du dossier)
+function finDefauts(portee,type){
+  if(portee==='production') return {semPonte:8,differeMois:0,dureeRemb:8,mode:'ponte',delaiEncaiss:1};
+  return type==='broiler'?{semPonte:6,differeMois:2,dureeRemb:2,mode:'infine',delaiEncaiss:1,prixPoulette:3000}:{semPonte:18,differeMois:6,dureeRemb:8,mode:'ponte',delaiEncaiss:1,prixPoulette:3500};
+}
+window.finNew=async function(portee){
+  portee=portee==='production'?'production':'nouvelle';
   var sp={}; try{ sp=JSON.parse(localStorage.getItem('avico_simu_params')||'{}'); }catch(e){}
-  var simu=Object.assign({},SIMU_DEFAULTS,sp,{typeLot:'layer'});
-  var rec=Object.assign({},JSON.parse(JSON.stringify(FIN_DEFAULTS)),{dateDebut:new Date().toISOString().slice(0,10),simu:simu,ts:Date.now()});
+  var type=sp.typeLot==='broiler'?'broiler':'layer';
+  var simu=Object.assign({},SIMU_DEFAULTS,sp,{typeLot:type});
+  var d=new Date().toISOString().slice(0,10), n=((window._fb&&window._fb.list)||[]).length+1;
+  var rec=Object.assign({},JSON.parse(JSON.stringify(FIN_DEFAULTS)),finDefauts(portee,type),{portee:portee,typeLot:type,dateDebut:d,simu:simu,ts:Date.now(),
+    nom:(portee==='production'?'Bande en production':'Nouvelle bande')+' n°'+n+' — '+d});
   var nom=prompt('Nom du dossier de financement :',rec.nom); if(nom===null) return; rec.nom=nom||rec.nom;
-  rec.id=await addRec(S.FINBANDE,rec); window._fb={id:rec.id,tab:'montage'}; finRefresh(); toast('✅ Dossier créé depuis la simulation');
+  rec.id=await addRec(S.FINBANDE,rec); window._fb={id:rec.id,tab:'montage'}; finRefresh(); toast('✅ Dossier créé'+(portee==='production'?' — choisissez le lot réel':' depuis la simulation'));
 };
+window.finSetPortee=async function(v){ var r=window._fb.rec; r.portee=v; Object.assign(r,finDefauts(v,r.typeLot)); if(v==='nouvelle') r.reel=null; await finSave(r); finRefresh(); };
+window.finSetType=async function(v){ var r=window._fb.rec; r.typeLot=v; r.simu=Object.assign({},r.simu,{typeLot:v}); r.lotId=null; r.reel=null; Object.assign(r,finDefauts(r.portee,v)); await finSave(r); finRefresh(); };
+
+// Lecture du lot réel : âge, effectif vivant, taux de ponte et consommation sur 30 jours
+async function finLireLot(lotId){
+  var lots=await getAll(S.FLOCKS), lot=lots.find(function(l){return l.id===lotId;}); if(!lot) return null;
+  var all=await Promise.all([getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.EGG_PROD),getAll(S.FEEDING)]);
+  var mine=function(a){return a.filter(function(x){return x.flockId===lotId;});}, sum=function(a,k){return a.reduce(function(t,x){return t+(x[k]||0);},0);};
+  var morts=sum(mine(all[0]),'nbMorts'), sorties=sum(mine(all[1]),'nbTetes')+sum(mine(all[2]),'nbTetes')+sum(mine(all[3]).filter(function(x){return !x.viaReforme;}),'nbAnimaux');
+  var vivants=Math.max(0,(lot.initialStock||0)-morts-sorties);
+  var age=lot.startDate?Math.max(1,Math.floor((Date.now()-new Date(lot.startDate).getTime())/604800000)+1):1;
+  var since=new Date(Date.now()-30*864e5).toISOString().slice(0,10);
+  var e30=mine(all[4]).filter(function(e){return (e.date||'')>=since;}), jE={}; e30.forEach(function(e){jE[e.date]=1;});
+  var jours=Object.keys(jE).length, tp=(jours&&vivants)?sum(e30,'eggCount')/jours/vivants*100:0;
+  var f30=mine(all[5]).filter(function(x){return (x.date||'')>=since;}), jF={}; f30.forEach(function(x){jF[x.date]=1;});
+  var jf=Object.keys(jF).length, g=(jf&&vivants)?sum(f30,'quantityKg')*1000/jf/vivants:0;
+  return {lotNom:lot.nom,age:age,vivants:vivants,initial:lot.initialStock||0,morts:morts,tauxBrut:Math.round(tp*10)/10,tauxPonte:Math.min(98,Math.round(tp*10)/10),gPouleJour:Math.round(g),ts:Date.now()};
+}
+window.finSetLot=async function(id){
+  var r=window._fb.rec; r.lotId=id?parseInt(id):null; r.reel=(r.lotId&&r.portee==='production')?await finLireLot(r.lotId):null;
+  await finSave(r); finRefresh();
+};
+window.finActualiserLot=async function(){ var r=window._fb.rec; if(!r.lotId) return; r.reel=await finLireLot(r.lotId); await finSave(r); finRefresh(); toast('Données du lot actualisées'); };
+function finPer(f){ return f.portee==='production'?'prochaines '+f.semPonte+' sem.':'S1→S'+f.semPonte; }
+function finObjet(f,E){
+  var q=f.typeLot==='broiler'?'poulets de chair':'pondeuses';
+  return f.portee==='production'
+    ?'Financement partiel de la bande « '+(f.nom||'')+' » en production ('+ff(E.p.nbBetes)+' '+q+' à l\'origine) : prise en charge de l\'alimentation sur les '+f.semPonte+' prochaines semaines.'
+    :'Financement partiel de la bande « '+(f.nom||'')+' » ('+q+') : prise en charge de l\'alimentation du placement jusqu\'à la semaine S'+f.semPonte+(f.typeLot==='broiler'?' (abattage).':' (démarrage de la ponte).');
+}
 window.finFromSimu=async function(){
   if(!window._fb) window._fb={id:null,tab:'synthese'};
   await finNew();
@@ -24943,41 +24997,60 @@ function finChart(E){
 
 function finTabSynthese(f,E){
   var okAll=E.soldeFin<=1&&(E.dscrMin==null||E.dscrMin>=1), conf=finConformite(f,E), nbKo=conf.filter(function(c){return c.s==='ko';}).length;
-  var b=finBesoin(E.p,f);
-  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">'
-    +finKpi('Montant à financer',finM(E.montant),'aliment S1→S'+f.semPonte+' + '+f.contingence+' % aléas','kpi-b')
+  var b={detail:E.det};
+  return (E.warn||[]).map(function(w){return '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 12px;font-size:12px;color:#92400e;margin-bottom:8px">⚠️ '+esc(w)+'</div>';}).join('')
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">'
+    +finKpi('Montant à financer',finM(E.montant),'aliment '+finPer(f)+' + '+f.contingence+' % aléas','kpi-b')
     +finKpi('TRI investisseur net',finPc(E.irrInvN),'brut '+finPc(E.irrInvB)+' · TEG '+finPc(E.teg),(E.irrInvN||0)>0?'kpi-g':'kpi-r')
     +finKpi('Multiple (MOIC)',E.moic==null?'—':E.moic.toFixed(2)+' ×','intérêts totaux '+finM(E.intTot),'kpi-g')
     +finKpi('Remboursé intégralement',E.fullMonth?'Mois '+E.fullMonth:'Non',E.soldeFin>1?'solde impayé '+finM(E.soldeFin):'date : '+finAddMonths(f.dateDebut,E.fullMonth||0),okAll?'kpi-g':'kpi-r')
     +finKpi('Capacité de remboursement',E.capac==null?'—':E.capac.toFixed(1)+' ×','cash-flow du cycle / dette à la ponte · DSCR min '+(E.dscrMin==null?'—':E.dscrMin.toFixed(2)),(E.capac==null||E.capac>=1.5)?'kpi-g':'kpi-a')
     +finKpi('VAN projet',finM(E.npv),'à '+f.tauxActu+' % · TRI '+finPc(E.irrProj),E.npv>=0?'kpi-g':'kpi-r')
-    +finKpi('Dette / poulettes (LTV)',finPc(E.ltv),'à S'+f.semPonte+' · garantie '+finM(E.valPoulettes),(E.ltv||0)<=0.8?'kpi-g':'kpi-a')
+    +finKpi('Dette / poulettes (LTV)',finPc(E.ltv),'fin de période · garantie '+finM(E.valPoulettes),(E.ltv||0)<=0.8?'kpi-g':'kpi-a')
     +finKpi('Fonds propres pic',finM(-E.minCash),'trésorerie propre à prévoir','kpi-a')
     +'</div>'
     +'<div class="card" style="margin-bottom:14px"><div class="card-hd">📈 Trésorerie exploitant & dette</div><div class="card-bd">'+finChart(E)+'</div></div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div class="card"><div class="card-hd">🧮 Besoin jusqu\'à la ponte (S1→S'+f.semPonte+')</div><div class="card-bd" style="font-size:12px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div class="card"><div class="card-hd">🧮 Besoin de financement ('+finPer(f)+')</div><div class="card-bd" style="font-size:12px">'
     +[['Aliment',b.detail.alim],['Poussins/poulettes',b.detail.poussin],['Vaccins',b.detail.vacc],['Médicaments',b.detail.med],['Eau + litière',b.detail.eau],['Charges indirectes',b.detail.indir]].map(function(x){return '<div class="simu-detail-line"><span>'+x[0]+'</span><span>'+finM(x[1])+'</span></div>';}).join('')
-    +'<div class="simu-detail-line"><span>Financé par investisseurs</span><span>'+finM(E.base)+'</span></div><div class="simu-detail-line"><span>Coût de revient poulette (S'+f.semPonte+')</span><span>'+finM(E.coutPoulette)+' / tête</span></div></div></div>'
+    +'<div class="simu-detail-line"><span>Financé par investisseurs</span><span>'+finM(E.base)+'</span></div><div class="simu-detail-line"><span>Coût de revient / tête ('+finPer(f)+')</span><span>'+finM(E.coutPoulette)+' / tête</span></div></div></div>'
     +'<div class="card"><div class="card-hd">⚖️ Conformité '+(nbKo?'<span class="badge b-r">'+nbKo+' bloquant(s)</span>':'<span class="badge b-g">OK</span>')+'</div><div class="card-bd" style="font-size:11px">'
     +conf.map(function(c){return '<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">'+finBadge(c.s)+'<span>'+c.t+'</span></div>';}).join('')+'</div></div></div>';
 }
 
+function finBlocLot(f){
+  if(f.portee!=='production') return '';
+  var lots=((window._fb&&window._fb.lots)||[]).filter(function(l){return (l.type==='layer')===(f.typeLot==='layer');}), R=f.reel;
+  return '<div class="card" style="margin-bottom:14px;border:2px solid var(--g3)"><div class="card-hd"><span>🔗 Lot réel financé</span>'+(f.lotId?'<button class="btn btn-s btn-sm" onclick="finActualiserLot()"><i class="fas fa-rotate"></i> Actualiser depuis le lot</button>':'')+'</div><div class="card-bd">'
+    +'<select onchange="finSetLot(this.value)"><option value="">— Choisir le lot —</option>'+lots.map(function(l){return '<option value="'+l.id+'"'+(l.id===f.lotId?' selected':'')+'>'+esc(l.nom)+'</option>';}).join('')+'</select>'
+    +(R?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:10px">'
+      +finKpi('Âge','S'+R.age,'lot « '+esc(R.lotNom)+' »')+finKpi('Effectif vivant',ff(R.vivants),'sur '+ff(R.initial)+' · morts '+ff(R.morts))
+      +(f.typeLot==='layer'?finKpi('Ponte réelle (30 j)',R.tauxBrut+' %',R.tauxBrut>100?'⚠️ erreur de saisie':'taux utilisé : '+R.tauxPonte+' %',R.tauxBrut>100?'kpi-r':'kpi-g'):'')
+      +finKpi('Aliment réel',R.gPouleJour+' g/j','par sujet (30 j)')+'</div><div style="font-size:11px;color:var(--text3);margin-top:6px">La projection repart de ces valeurs réelles (effectif, ponte, consommation). Actualisé le '+new Date(R.ts).toLocaleString('fr-FR')+'.</div>'
+      :'<p style="font-size:12px;color:var(--text3);margin-top:8px">Sélectionnez le lot : le dossier est alors calé sur ses données réelles. Sans lot, la projection repart du début de cycle.</p>')
+    +'</div></div>';
+}
 function finTabMontage(f,E){
   var s=f.simu||{}, inv=f.investisseurs||[], tot=inv.reduce(function(a,i){return a+(+i.montant||0);},0);
   return '<div class="card" style="margin-bottom:14px"><div class="card-hd">🏷️ Dossier</div><div class="simu-params-body">'
+    +finSel('Portée','portee',f.portee,[['nouvelle','Nouvelle bande'],['production','Bande déjà en production']]).replace("finSet('portee',this.value,0)","finSetPortee(this.value)")
+    +finSel('Type','typeLot',f.typeLot,[['layer','Pondeuses'],['broiler','Poulet de chair']]).replace("finSet('typeLot',this.value,0)","finSetType(this.value)")
     +'<div class="fg"><div class="sbl">Nom</div><input value="'+esc(f.nom)+'" onchange="finSet(\'nom\',this.value,0)"></div>'
     +'<div class="fg"><div class="sbl">Date de placement</div><input type="date" value="'+f.dateDebut+'" onchange="finSet(\'dateDebut\',this.value,0)"></div>'
     +finSel('Statut','statut',f.statut,[['brouillon','Brouillon'],['collecte','Collecte en cours'],['en_cours','En cours'],['solde','Soldé']])
     +'</div></div>'
+    +finBlocLot(f)
     +'<div class="card" style="margin-bottom:14px"><div class="card-hd">🐔 Hypothèses d\'exploitation (issues de la Simulation) <button class="btn btn-s btn-sm" onclick="finResync()"><i class="fas fa-rotate"></i> Resynchroniser</button></div><div class="simu-params-body">'
-    +finSimIn('Effectif logé','nbBetes',s.nbBetes)+finSimIn('Taux ponte pic (%)','tauxPonteMoy',s.tauxPonteMoy,0.5)+finSimIn('Mortalité cycle (%)','tauxMortalite',s.tauxMortalite,0.1)
-    +finSimIn('Prix œuf (F)','prixOeufUnit',s.prixOeufUnit)+finSimIn('Casse (%)','tauxCasse',s.tauxCasse==null?1.5:s.tauxCasse,0.1)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
-    +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)+finSimIn('Aliment ponte (F/kg)','coutAlimentP',s.coutAlimentP)
-    +finSel('Courbe de ponte','courbe',f.courbe,[['lisse','Réaliste (lissée)'],['simu','Identique Simulation (paliers)']])
-    +finIn('Délai encaissement (mois)','delaiEncaiss',f.delaiEncaiss,1)+finIn('Valeur poulette prête à pondre (F)','prixPoulette',f.prixPoulette)
+    +finSimIn('Effectif logé','nbBetes',s.nbBetes)+finSimIn('Mortalité cycle (%)','tauxMortalite',s.tauxMortalite,0.1)
+    +(f.typeLot==='broiler'
+      ?finSimIn('Poussin chair (F)','coutPoussin',s.coutPoussin)+finSimIn('Poids vif abattage (kg)','poidsMoyenVif',s.poidsMoyenVif,0.05)+finSimIn('Rendement carcasse (%)','rendCarcasse',s.rendCarcasse,0.5)+finSimIn('Prix carcasse (F/kg)','prixCarcasseKg',s.prixCarcasseKg)
+        +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)
+      :finSimIn('Taux ponte pic (%)','tauxPonteMoy',s.tauxPonteMoy,0.5)+finSimIn('Prix œuf (F)','prixOeufUnit',s.prixOeufUnit)+finSimIn('Casse (%)','tauxCasse',s.tauxCasse==null?1.5:s.tauxCasse,0.1)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
+        +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)+finSimIn('Aliment ponte (F/kg)','coutAlimentP',s.coutAlimentP)
+        +finSel('Courbe de ponte','courbe',f.courbe,[['lisse','Réaliste (lissée)'],['simu','Identique Simulation (paliers)']]))
+    +finIn('Délai encaissement (mois)','delaiEncaiss',f.delaiEncaiss,1)+finIn('Valeur de marché du cheptel (F/tête)','prixPoulette',f.prixPoulette)
     +'</div></div>'
     +'<div class="card" style="margin-bottom:14px"><div class="card-hd">💰 Périmètre financé</div><div class="simu-params-body">'
-    +finIn('Financé jusqu\'à la semaine (S)','semPonte',f.semPonte,1)+finIn('Aléas / contingence (%)','contingence',f.contingence,0.5)+finIn('Frais de dossier (%)','fraisDossierPct',f.fraisDossierPct,0.1)
+    +finIn(f.portee==='production'?'Horizon financé (semaines à venir)':(f.typeLot==='broiler'?'Financé jusqu\'à la semaine (abattage)':'Financé jusqu\'à la semaine (début ponte)'),'semPonte',f.semPonte,1)+finIn('Aléas / contingence (%)','contingence',f.contingence,0.5)+finIn('Frais de dossier (%)','fraisDossierPct',f.fraisDossierPct,0.1)
     +finIn('Montant forcé (F, 0 = auto)','montantManuel',f.montantManuel)
     +'<div style="grid-column:1/-1;display:flex;gap:14px;flex-wrap:wrap">'+'<span style="font-size:11px;color:var(--text3)">Aliment toujours inclus. Optionnel :</span>'
     +finChk('Poulettes J0','inclPoussin',f.inclPoussin,'finSetBool')+finChk('Vaccins','inclVacc',f.inclVacc,'finSetBool')+finChk('Médicaments','inclMed',f.inclMed,'finSetBool')+finChk('Eau + litière','inclEau',f.inclEau,'finSetBool')+'</div>'
@@ -25025,8 +25098,8 @@ function finTabEvaluation(f,E){
     +row('Fonds propres / trésorerie pic',finM(-E.minCash))+row('Trésorerie finale après dette',finM(E.cashFin))
     +row('Capacité de remboursement',E.capac==null?'—':E.capac.toFixed(2)+' ×','CF du cycle / dette au démarrage')+row('DSCR minimum',E.dscrMin==null?'—':E.dscrMin.toFixed(2))+row('DSCR moyen',E.dscrAvg==null?'—':E.dscrAvg.toFixed(2))+row('Couverture globale service',E.cov==null?'—':E.cov.toFixed(2)+' ×')+'</tbody></table></div></div>'
     +'<div class="card"><div class="card-hd">🛡️ Garantie</div><div class="card-bd"><table class="tbl"><tbody>'
-    +row('Poulettes à S'+f.semPonte,ff(E.p.nbBetes)+' → '+ff(E.W[Math.min(f.semPonte,E.W.length)-1].vivants)+' sujets')+row('Coût de revient poulette',finM(E.coutPoulette))
-    +row('Valeur marché retenue',finM(f.prixPoulette)+' / tête')+row('Valeur du cheptel',finM(E.valPoulettes))+row('Dette à S'+f.semPonte,finM(E.debtAtPonte))+row('LTV',finPc(E.ltv),'cible ≤ 80 %')+'</tbody></table></div></div></div>';
+    +row('Effectif en fin de période',ff(E.p.nbBetes)+' → '+ff(E.W[Math.min(f.semPonte,E.W.length)-1].vivants)+' sujets')+row('Coût de revient / tête',finM(E.coutPoulette))
+    +row('Valeur de marché retenue',finM(f.prixPoulette)+' / tête')+row('Valeur du cheptel',finM(E.valPoulettes))+row('Dette en fin de période',finM(E.debtAtPonte))+row('LTV',finPc(E.ltv),'cible ≤ 80 %')+'</tbody></table></div></div></div>';
 }
 
 function finTabRisques(f,E){
@@ -25092,8 +25165,8 @@ async function finTabSuivi(f,E){
       +finKpi('Enveloppe financée',finM(bud),'consommée '+finPc(bud>0?c/bud:0))+'</div></div>';
   }
   var today=new Date().toISOString().slice(0,10), act=E.rows.filter(function(r){return r.tir>0||r.service>0||r.intCap>0||(r.frais>0);});
-  return '<div class="card" style="margin-bottom:14px"><div class="card-hd">🔗 Lot lié</div><div class="card-bd"><select onchange="finSet(\'lotId\',this.value?parseInt(this.value):null,0)"><option value="">— Aucun —</option>'
-    +lots.filter(function(l){return l.type==='layer';}).map(function(l){return '<option value="'+l.id+'"'+(l.id===f.lotId?' selected':'')+'>'+esc(l.nom)+'</option>';}).join('')+'</select></div></div>'+real
+  return '<div class="card" style="margin-bottom:14px"><div class="card-hd">🔗 Lot lié</div><div class="card-bd"><select onchange="finSetLot(this.value)"><option value="">— Aucun —</option>'
+    +lots.filter(function(l){return (l.type==='layer')===(f.typeLot!=='broiler');}).map(function(l){return '<option value="'+l.id+'"'+(l.id===f.lotId?' selected':'')+'>'+esc(l.nom)+'</option>';}).join('')+'</select></div></div>'+real
     +'<div class="card"><div class="card-hd">📒 Écritures SYSCOHADA par échéance</div><div class="card-bd tbl-wrap"><table class="tbl" style="font-size:11px"><thead><tr><th>Mois</th><th>Date</th><th>Fonds reçus</th><th>Intérêts</th><th>Capital</th><th>Retenue</th><th>Statut</th><th></th></tr></thead><tbody>'
     +act.map(function(r){ var s=(f.suivi||{})['m'+r.t], fut=r.date>today;
       return '<tr><td>'+r.t+'</td><td>'+r.date+'</td><td>'+(r.tir?ff(r.tir):'—')+'</td><td>'+ff(r.intPaid+r.intCap)+'</td><td>'+(r.cap?ff(r.cap):'—')+'</td><td>'+(r.intPaid?ff(r.intPaid*f.retenuePct/100):'—')+'</td><td>'+(s?'<span class="badge b-g">'+esc(s.piece)+'</span>':fut?'<span class="badge b-gr">à venir</span>':'<span class="badge b-a">à comptabiliser</span>')+'</td><td>'
@@ -25110,7 +25183,7 @@ window.finImprimer=async function(){
     +'<h1>'+esc(cfg.nomExploitation||'Exploitation')+' — Note d\'information investisseur</h1><div>'+esc(f.nom)+' · '+today+' · NIF '+esc(cfg.nif||'—')+' · RCCM '+esc(cfg.rccm||'—')+'</div>'
     +'<p style="background:#faf3e6;padding:6px 10px;border-radius:6px">Document indicatif. Les projections reposent sur des hypothèses et ne garantissent aucun rendement. Tout investissement comporte un risque de perte en capital.</p>'
     +'<h2>1. Synthèse</h2><div class="k">'+kp.map(function(x){return '<div>'+x[0]+'<b>'+x[1]+'</b></div>';}).join('')+'</div>'
-    +'<h2>2. Objet & usage des fonds</h2><p>Financement de l\'alimentation de '+ff(E.p.nbBetes)+' pondeuses du placement à la semaine S'+f.semPonte+' (démarrage de la ponte). Remboursement à partir des ventes d\'œufs ('+ff(E.p.prixOeufUnit)+' F/œuf, ponte pic '+E.p.tauxPonteMoy+' %, mortalité '+E.p.tauxMortalite+' %).</p>'
+    +'<h2>2. Objet & usage des fonds</h2><p>'+esc(finObjet(f,E))+' Remboursement à partir des ventes ('+(f.typeLot==='broiler'?'carcasses : '+ff(E.p.prixCarcasseKg)+' F/kg':'œufs : '+ff(E.p.prixOeufUnit)+' F/œuf, ponte pic '+E.p.tauxPonteMoy+' %')+', mortalité '+E.p.tauxMortalite+' %).</p>'
     +'<h2>3. Tableau d\'amortissement</h2><table><thead><tr><th>Mois</th><th>Échéance</th><th>Solde début</th><th>Tirage</th><th>Intérêts</th><th>Int. payés</th><th>Capital</th><th>Service</th><th>Solde fin</th></tr></thead><tbody>'+rowsH+'</tbody></table>'
     +'<h2>4. Conditions contractuelles (modèle)</h2>'+cl.map(function(c,i){return '<p><b>Art. '+(i+1)+' — '+c[0]+'.</b> '+esc(c[1])+'</p>';}).join('')
     +'<h2>5. Signatures</h2><p>Fait à ____________, le ____________ en __ exemplaires.</p><table><tr><td style="height:70px;text-align:left">L\'Exploitant</td><td style="text-align:left">Le(s) Prêteur(s) (« lu et approuvé »)</td></tr></table>'
@@ -25123,10 +25196,10 @@ async function renderFinBande(ca){
   var rec=await finLoad(), B=window._fb, cfg=await getExploitationSettings();
   var style='<style>.fb-wrap{flex:1;overflow-y:auto;padding:16px 20px}.fb-hero{background:linear-gradient(135deg,#152e22,#2b5f45,#4a8b68);color:#fff;border-radius:16px;padding:18px 24px;margin-bottom:14px}.fb-hero h2{font-size:18px;font-weight:800;margin:0 0 3px}.fb-hero p{font-size:12px;opacity:.75;margin:0}.fb-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.fb-tabs button{padding:7px 14px;border-radius:8px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);font-family:inherit}.fb-tabs button.active{background:var(--g2);color:#fff;border-color:var(--g2)}.fb-wrap .sbl{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}.fb-wrap .simu-params-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:14px 18px}.fb-wrap .simu-params-body input,.fb-wrap .simu-params-body select,.fb-wrap td input,.fb-wrap td select{border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:13px;font-family:inherit;width:100%;box-sizing:border-box}.fb-wrap .simu-detail-line{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #f0f0f0}@media(max-width:700px){.fb-wrap{padding:10px}}</style>';
   var head='<div class="fb-hero"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"><div><div style="font-size:8px;font-weight:700;letter-spacing:2px;opacity:.7">SANIX AVINEST PRO</div><h2>🤝 Financement de bande — Investisseurs</h2><p>Financer l\'alimentation jusqu\'à la ponte · remboursement adossé aux ventes d\'œufs · sans entrée au capital</p></div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew()"><i class="fas fa-plus"></i> Nouveau dossier</button>'+(rec?'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDup()"><i class="fas fa-copy"></i></button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finImprimer()"><i class="fas fa-print"></i> Dossier PDF</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDel()"><i class="fas fa-trash"></i></button>':'')+'</div></div>'
-    +(rec?'<div style="margin-top:12px"><select style="border-radius:6px;padding:5px 8px;font-size:12px;min-width:240px" onchange="finPick(this.value)">'+B.list.map(function(x){return '<option value="'+x.id+'"'+(x.id===rec.id?' selected':'')+'>'+esc(x.nom)+' — '+esc(x.statut||'brouillon')+'</option>';}).join('')+'</select></div>':'')+'</div>';
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande</button><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production</button>'+(rec?'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDup()"><i class="fas fa-copy"></i></button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finImprimer()"><i class="fas fa-print"></i> Dossier PDF</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDel()"><i class="fas fa-trash"></i></button>':'')+'</div></div>'
+    +(rec?'<div style="margin-top:12px"><select style="border-radius:6px;padding:5px 8px;font-size:12px;min-width:240px" onchange="finPick(this.value)">'+B.list.map(function(x){return '<option value="'+x.id+'"'+(x.id===rec.id?' selected':'')+'>'+esc(x.nom)+' — '+(x.portee==='production'?'en production':'nouvelle')+' · '+esc(x.statut||'brouillon')+'</option>';}).join('')+'</select></div>':'')+'</div>';
   if(!rec){
-    ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd" style="text-align:center;padding:36px;color:var(--text3)"><i class="fas fa-handshake" style="font-size:42px;opacity:.3"></i><p style="margin:12px 0">Aucun dossier. Le premier est créé à partir de la Simulation de Déploiement de Bande (pondeuses).</p><button class="btn btn-p" onclick="finNew()"><i class="fas fa-plus"></i> Créer depuis la simulation</button></div></div></div>';
+    ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd" style="text-align:center;padding:36px;color:var(--text3)"><i class="fas fa-handshake" style="font-size:42px;opacity:.3"></i><p style="margin:12px 0">Aucun dossier. Le premier est créé à partir de la Simulation de Déploiement de Bande (pondeuses).</p><button class="btn btn-p" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande (depuis la simulation)</button> <button class="btn btn-p" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production (lot réel)</button></div></div></div>';
     return;
   }
   if(!rec.dateDebut) rec.dateDebut=new Date().toISOString().slice(0,10);
