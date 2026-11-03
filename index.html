@@ -23042,6 +23042,8 @@ const SIMU_DEFAULTS = {
   tauxPonteMoy: 85,         // % moyen
   tauxCasse: 1.5,           // % œufs cassés/déclassés (réel ≈ 1,3 %)
   dureeExploitation: 14,    // semaines de ponte exploitées en simu
+  mixCalibres: true,        // pondeuse : calibre des œufs selon l'âge de ponte (petits œufs en début de ponte, moins chers)
+  ratioPetit: 77,           // prix du petit calibre en % du gros (réel : 20 400 / 26 400 F le carton)
   semReforme: 72            // pondeuses : âge de réforme (semaines) — pratique courante 72-80 ; 60 = ancien cycle court
 };
 
@@ -23064,6 +23066,21 @@ const PHASES_LAYER = [
   {id:'reforme',    label:'Réforme',           semDeb:57, semFin:60, icon:'🔄', color:'#fee2e2', border:'#dc2626', feedGPD:108, mortalitePhasePct:0.5,  ponteFactor:0.00}
 ];
 
+// Calibre des œufs : part de petits œufs selon l'âge de la poule (semaine de vie), interpolation linéaire.
+var CAL_PETIT=[[19,0.80],[24,0.60],[28,0.35],[31,0.19],[35,0.04],[39,0.007],[45,0.005]];
+function simuPartPetit(w,p){
+  if(!p||p.mixCalibres===false||p.typeLot!=='layer') return 0;
+  var c=CAL_PETIT; if(w<=c[0][0]) return c[0][1]; if(w>=c[c.length-1][0]) return c[c.length-1][1];
+  for(var i=1;i<c.length;i++){ if(w<=c[i][0]){ var a=c[i-1], b=c[i]; return a[1]+(b[1]-a[1])*(w-a[0])/(b[0]-a[0]); } }
+  return 0;
+}
+// Prix moyen de l'œuf à une semaine donnée (prixOeufUnit = prix du gros calibre)
+function simuPrixOeufSem(p,w){ return p.prixOeufUnit*(1-simuPartPetit(w,p)*(1-(p.ratioPetit||77)/100)); }
+// Prix moyen sur une phase, pondéré par la ponte de chaque semaine
+function simuPrixOeufPhase(p,ph){
+  var sw=0, sp=0; for(var w=ph.semDeb;w<=ph.semFin;w++){ var f=finFactor(w,ph,'lisse')||0; if(f<=0) continue; sw+=f; sp+=f*simuPrixOeufSem(p,w); }
+  return sw>0?sp/sw:p.prixOeufUnit;
+}
 // Cycle pondeuse à durée variable : la phase « ponte soutenue » s'allonge, la réforme occupe les 4 dernières semaines.
 var _phasesLayerCache={};
 function simuPhasesLayer(sr){
@@ -23087,6 +23104,7 @@ function simuCalcBande(p){
   const rows = [];
   let cumCoutDirect = 0, cumCoutIndirect = 0, cumRecette = 0;
   let cumOeufs = 0; // total œufs sur le cycle (pondeuse uniquement)
+  let cumRecOeufs = 0, cumOeufsVendus = 0;
 
   // Coût poussin/poulette différencié par type
   const coutUnitInitial = p.typeLot === 'layer' ? (p.coutPoussineLayer || p.coutPoussin) : p.coutPoussin;
@@ -23175,7 +23193,9 @@ function simuCalcBande(p){
       // Effectif moyen sur la phase pour le calcul d'œufs
       const effectifMoyPonte = (vivantsDebut + vivantsFin) / 2;
       oeufsPhase = Math.round(effectifMoyPonte * nbJours * tauxEffectifPhase);
-      recettePhase = oeufsPhase * (1 - (p.tauxCasse||0)/100) * p.prixOeufUnit; // œufs vendables
+      const prixPh = simuPrixOeufPhase(p, ph);
+      recettePhase = oeufsPhase * (1 - (p.tauxCasse||0)/100) * prixPh; // œufs vendables, prix selon le mix de calibres
+      cumRecOeufs += recettePhase; cumOeufsVendus += oeufsPhase * (1 - (p.tauxCasse||0)/100);
       cumOeufs += oeufsPhase;
     }
 
@@ -23229,7 +23249,7 @@ function simuCalcBande(p){
 
   return {rows, cumCoutDirect, cumCoutIndirect, totalCout, cumRecette, cumOeufs,
     margeBrute, margeNette, tauxMgBrute, tauxMgNette, coutRevientTete, seuilRenta, coutPinit,
-    coutUnitInitial, oeufsParPL, oeufsParPS};
+    coutUnitInitial, oeufsParPL, oeufsParPS, prixMoyenOeuf: cumOeufsVendus>0 ? cumRecOeufs/cumOeufsVendus : p.prixOeufUnit};
 }
 
 // ─── Formatage ───
@@ -23454,7 +23474,9 @@ async function renderSimuBande(ca){
       <div style="grid-column:1/-1;font-size:11px;font-weight:700;color:var(--g1);padding:8px 0 2px;border-bottom:1px solid var(--border);margin-bottom:4px">🏷️ Prix de vente (FCFA)</div>
       <div class="fg"><div class="sbl">Prix vif (F/kg)</div><input type="number" id="sp_prixVifKg" value="${p.prixVifKg}" oninput="simuRecalc()"></div>
       <div class="fg"><div class="sbl">Prix carcasse chair (F/kg)</div><input type="number" id="sp_prixCarcasseKg" value="${p.prixCarcasseKg}" oninput="simuRecalc()"></div>
-      <div class="fg"><div class="sbl">Prix œuf (F/unité)</div><input type="number" id="sp_prixOeufUnit" value="${p.prixOeufUnit}" oninput="simuRecalc()"></div>
+      <div class="fg"><div class="sbl">Prix œuf calibre gros (F/unité)</div><input type="number" id="sp_prixOeufUnit" value="${p.prixOeufUnit}" oninput="simuRecalc()"></div>
+      <div class="fg"><div class="sbl">Mix de calibres par âge</div><select id="sp_mixCalibres" onchange="simuRecalc()"><option value="1" ${p.mixCalibres!==false?'selected':''}>Oui (petits œufs en début de ponte)</option><option value="0" ${p.mixCalibres===false?'selected':''}>Non (prix unique)</option></select></div>
+      <div class="fg"><div class="sbl">Prix petit calibre (% du gros)</div><input type="number" id="sp_ratioPetit" value="${p.ratioPetit||77}" min="30" max="100" oninput="simuRecalc()"><div style="font-size:9px;color:var(--text3);margin-top:2px">Réel : petit 56,7 F, gros 73,3 F</div></div>
       <div class="fg"><div class="sbl">Casse / déclassés (%)</div><input type="number" id="sp_tauxCasse" value="${p.tauxCasse??1.5}" min="0" max="20" step="0.1" oninput="simuRecalc()"></div>
 
       <div style="grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
@@ -23525,6 +23547,7 @@ async function renderSimuBande(ca){
         <div class="kpi kpi-b"><div class="kpi-lbl">Œufs totaux cycle</div><div class="kpi-val" style="color:#7c3aed">${ff(result.cumOeufs)}</div><div class="kpi-sub">sur ${result.rows[result.rows.length-1].ph.semFin} semaines</div></div>
         <div class="kpi kpi-g"><div class="kpi-lbl">Œufs / PL logée</div><div class="kpi-val">${ff(result.oeufsParPL)}</div><div class="kpi-sub">référence : 280–320 / ISA</div></div>
         <div class="kpi kpi-a"><div class="kpi-lbl">Coût / œuf produit</div><div class="kpi-val">${fp(result.totalCout/Math.max(1,result.cumOeufs))} F</div><div class="kpi-sub">toutes charges</div></div>
+        <div class="kpi kpi-b"><div class="kpi-lbl">Prix moyen de l'œuf</div><div class="kpi-val">${fp(result.prixMoyenOeuf)} F</div><div class="kpi-sub">${p.mixCalibres!==false?'mix de calibres · gros '+ff(p.prixOeufUnit)+' F':'prix unique'}</div></div>
         <div class="kpi ${result.margeNette/Math.max(1,result.cumOeufs)>=0?'kpi-g':'kpi-r'}"><div class="kpi-lbl">Marge / œuf</div><div class="kpi-val">${fp(result.margeNette/Math.max(1,result.cumOeufs))} F</div><div class="kpi-sub">prix vente ${ff(p.prixOeufUnit)} F/u</div></div>
         <div class="kpi kpi-b"><div class="kpi-lbl">Réforme</div><div class="kpi-val">${ff(result.rows.find(r=>r.ph.id==='reforme')?.vivantsFin||0)}</div><div class="kpi-sub">poules · ${p.poidsReformeKg||1.9}kg · ${ff(p.prixReformeKg||1200)}F/kg</div></div>
         <div class="kpi kpi-a"><div class="kpi-lbl">Mortalité totale</div><div class="kpi-val" style="color:var(--red)">${ff(p.nbBetes-(result.rows[result.rows.length-1]?.vivantsFin||0))}</div><div class="kpi-sub">${fp((p.nbBetes-(result.rows[result.rows.length-1]?.vivantsFin||0))/p.nbBetes*100)}% du lot</div></div>
@@ -24410,6 +24433,8 @@ function simuGetCurrentParams(){
     prixVifKg:         read('sp_prixVifKg'),
     prixCarcasseKg:    read('sp_prixCarcasseKg'),
     prixOeufUnit:      read('sp_prixOeufUnit'),
+    mixCalibres:       document.getElementById('sp_mixCalibres') ? document.getElementById('sp_mixCalibres').value!=='0' : true,
+    ratioPetit:        read('sp_ratioPetit'),
     tauxCasse:         read('sp_tauxCasse')
   };
 }
@@ -24693,7 +24718,7 @@ function finWeekly(p, courbe){
         lit:first?r.coutLitierePhase:0, indir:r.coutIndirectPhase/n,
         mo:r.coutMainPhase/n, en:r.coutEnergiePhase/n, am:r.coutAmortPhase/n, tr:r.coutTransportPhase/n, dv:r.coutDiversPhase/n,
         elev:(p.typeLot==='layer'&&w<FIN_SEM_PONTE_DEBUT),
-        oeufs:oeufs, recOeufs:oeufs*(1-(p.tauxCasse||0)/100)*p.prixOeufUnit,
+        oeufs:oeufs, recOeufs:oeufs*(1-(p.tauxCasse||0)/100)*simuPrixOeufSem(p,w),
         recRef:((ph.id==='reforme'||ph.id==='abattage')&&i===n-1)?r.recettePhase:0});
     }
   });
@@ -24777,7 +24802,7 @@ function finRun(f, m){
   f.semPonte=Math.max(1,Math.round(+f.semPonte||1)); // borne : évite rows[-1]
   var typeLot=f.typeLot==='broiler'?'broiler':'layer';
   var p0=Object.assign({},SIMU_DEFAULTS,f.simu||{},{typeLot:typeLot}), p=Object.assign({},p0);
-  if(m.oeuf) p.prixOeufUnit*=m.oeuf;
+  if(m.oeuf) p.prixOeufUnit*=m.oeuf; // le petit calibre suit (ratio du prix du gros)
   if(m.ponte) p.tauxPonteMoy=Math.min(98,p.tauxPonteMoy*m.ponte);
   if(m.alim){ p.coutAlimentD*=m.alim; p.coutAlimentC*=m.alim; p.coutAlimentP*=m.alim; }
   if(m.mort) p.tauxMortalite=Math.min(60,p.tauxMortalite*m.mort);
@@ -24808,7 +24833,7 @@ function finRun(f, m){
   var tEnd=Math.min(T,finMonth(W[W.length-1].wr)+lag), imm=finImmos(f,T,tEnd);
   var OB=finObjets(f), cobj={aliment:0,prophylaxie:0,poussin:0,eau:0,construction:0,materiel:0,autres:0}, fobj={aliment:0,prophylaxie:0,poussin:0,eau:0,construction:0,materiel:0,autres:0}, autresM=[];
   for(i=0;i<=T+1;i++) autresM[i]=0;
-  var oeufsTot=0, det={alim:0,poussin:0,vacc:0,med:0,eau:0,indir:0}, coutFut=0;
+  var recOtot=0, oeufsTot=0, det={alim:0,poussin:0,vacc:0,med:0,eau:0,indir:0}, coutFut=0;
   W.forEach(function(x){
     var mi=finMonth(x.wr); coutFut+=x.alim+x.poussin+x.vacc+x.med+x.eau+x.lit+x.indir;
     opex[mi]+=x.alim+x.poussin+x.vacc+x.med+x.eau+x.lit+x.indir-(x.am||0); // amortissement = charge non décaissée
@@ -24818,7 +24843,7 @@ function finRun(f, m){
       var fa={aliment:x.alim,prophylaxie:x.vacc+x.med,poussin:x.poussin,eau:x.eau+x.lit};
       Object.keys(fa).forEach(function(k){ if(OB[k]){ fin[mi]+=fa[k]; fobj[k]+=fa[k]; } });
     }
-    rev[mi+lag]+=x.recOeufs+x.recRef; oeufsTot+=x.oeufs;
+    rev[mi+lag]+=x.recOeufs+x.recRef; oeufsTot+=x.oeufs; recOtot+=x.recOeufs;
   });
   // Investissements « à acquérir » et frais libres : financés au mois de leur décaissement
   imm.det.forEach(function(d){ if(!d.neuf) return; cobj[d.cls]+=d.val; if(OB[d.cls]){ fin[d.mc]+=d.val; fobj[d.cls]+=d.val; } });
@@ -24903,7 +24928,8 @@ function finRun(f, m){
     dscrMin:dscrMin, dscrAvg:dscrAvg, cov:cov, capac:capac, dStart:dStart, fullMonth:fullMonth, soldeFin:soldeFin, soldeContrat:soldeContrat, minCash:minCash, cashFin:cum,
     ltv:valPoulettes>0?debtAtPonte/valPoulettes:null, debtAtPonte:debtAtPonte, valPoulettes:valPoulettes,
     coutPoulette:wP.vivants>0?coutPre/wP.vivants:0, oeufsTot:oeufsTot, coutOeuf:oeufsTot>0?(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0,
-    margeOeuf:oeufsTot>0?p.prixOeufUnit*(1-(p.tauxCasse||0)/100)-(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0, det:det, warn:warn, typeLot:typeLot, bfrPic:-minB, autresM:autresM, objets:FIN_OBJETS.map(function(x){ return {k:x[0],lbl:x[1],on:!!OB[x[0]],cout:cobj[x[0]],montant:fobj[x[0]]}; }), groups:groups, heter:heter, imm:imm, dotPoule:dotPoule, immoP:immoP, vncRes:vncRes, capCost:immoP?capCost:0, ivN:ivN, ivB:ivB};
+    prixMoyen:oeufsTot>0?recOtot/(oeufsTot*(1-(p.tauxCasse||0)/100)):p.prixOeufUnit,
+    margeOeuf:oeufsTot>0?recOtot/oeufsTot-(f.portee==='production'?coutFut:wk.res.totalCout)/oeufsTot:0, det:det, warn:warn, typeLot:typeLot, bfrPic:-minB, autresM:autresM, objets:FIN_OBJETS.map(function(x){ return {k:x[0],lbl:x[1],on:!!OB[x[0]],cout:cobj[x[0]],montant:fobj[x[0]]}; }), groups:groups, heter:heter, imm:imm, dotPoule:dotPoule, immoP:immoP, vncRes:vncRes, capCost:immoP?capCost:0, ivN:ivN, ivB:ivB};
 }
 
 // ── Compte d'exploitation prévisionnel (présentation SYSCOHADA : soldes intermédiaires de gestion), en comptabilité d'engagement ──
@@ -25100,6 +25126,7 @@ async function finRefresh(){ var ca=document.getElementById('contentArea'); if(c
 window.finSet=async function(k,v,num){ var r=window._fb.rec; if(!r) return; r[k]=num?(parseFloat(v)||0):v; await finSave(r); finRefresh(); };
 window.finSetBool=async function(k,v){ var r=window._fb.rec; r[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetG=async function(k,v){ var r=window._fb.rec; r.garanties=r.garanties||{}; r.garanties[k]=!!v; await finSave(r); finRefresh(); };
+window.finSetSimuBool=async function(k,v){ var r=window._fb.rec; r.simu=Object.assign({},r.simu); r.simu[k]=!!v; await finSave(r); finRefresh(); };
 window.finSetSimu=async function(k,v){ var r=window._fb.rec; r.simu=r.simu||{}; r.simu[k]=parseFloat(v)||0; await finSave(r); finRefresh(); };
 window.fbTab=function(t){ window._fb.tab=t; finRefresh(); };
 window.finPick=function(id){ window._fb.id=parseInt(id)||null; window._fb.mc=null; finRefresh(); };
@@ -25343,7 +25370,7 @@ function finTabMontage(f,E){
     +(f.typeLot==='broiler'
       ?finSimIn('Poussin chair (F)','coutPoussin',s.coutPoussin)+finSimIn('Poids vif abattage (kg)','poidsMoyenVif',s.poidsMoyenVif,0.05)+finSimIn('Rendement carcasse (%)','rendCarcasse',s.rendCarcasse,0.5)+finSimIn('Prix carcasse (F/kg)','prixCarcasseKg',s.prixCarcasseKg)
         +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)
-      :finSimIn('Taux ponte pic (%)','tauxPonteMoy',s.tauxPonteMoy,0.5)+finSimIn('Prix œuf (F)','prixOeufUnit',s.prixOeufUnit)+finSimIn('Casse (%)','tauxCasse',s.tauxCasse==null?1.5:s.tauxCasse,0.1)+finSimIn('Âge de réforme (sem.)','semReforme',s.semReforme||72,1)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
+      :finSimIn('Taux ponte pic (%)','tauxPonteMoy',s.tauxPonteMoy,0.5)+finSimIn('Prix œuf calibre gros (F)','prixOeufUnit',s.prixOeufUnit)+finChk('Mix de calibres par âge de ponte','mixCalibres',s.mixCalibres!==false,'finSetSimuBool')+finSimIn('Petit calibre (% du prix du gros)','ratioPetit',s.ratioPetit||77,1)+finSimIn('Casse (%)','tauxCasse',s.tauxCasse==null?1.5:s.tauxCasse,0.1)+finSimIn('Âge de réforme (sem.)','semReforme',s.semReforme||72,1)+finSimIn('Poulette J0 (F)','coutPoussineLayer',s.coutPoussineLayer)
         +finSimIn('Aliment démarrage (F/kg)','coutAlimentD',s.coutAlimentD)+finSimIn('Aliment croissance (F/kg)','coutAlimentC',s.coutAlimentC)+finSimIn('Aliment ponte (F/kg)','coutAlimentP',s.coutAlimentP)
         +finSel('Courbe de ponte','courbe',f.courbe,[['lisse','Réaliste (lissée)'],['simu','Identique Simulation (paliers)']]))
     +finIn('Délai encaissement (mois)','delaiEncaiss',f.delaiEncaiss,1)+finIn('Valeur de marché du cheptel (F/tête)','prixPoulette',f.prixPoulette)
@@ -25444,7 +25471,7 @@ function finTabEvaluation(f,E){
     +'<div class="card"><div class="card-hd">🏭 Projet (bande, avant financement)</div><div class="card-bd"><table class="tbl"><tbody>'
     +row('VAN @ '+f.tauxActu+' %',finM(E.npv),'flux mensuels sur le cycle')+row('TRI projet (annualisé)',finPc(E.irrProj))
     +row('Indice de profitabilité',E.pi==null?'—':E.pi.toFixed(2),'VA entrées / VA sorties')+row('Investissement pic (cumul)',finM(E.peakInvest))
-    +row('Délai de récupération',E.payback?'Mois '+E.payback:'—')+row('Coût de revient / œuf',E.coutOeuf.toFixed(1)+' F','prix vente '+ff(E.p.prixOeufUnit)+' F')
+    +row('Délai de récupération',E.payback?'Mois '+E.payback:'—')+row('Coût de revient / œuf',E.coutOeuf.toFixed(1)+' F','prix moyen de vente '+E.prixMoyen.toFixed(1)+' F (gros : '+ff(E.p.prixOeufUnit)+' F)')
     +row('Marge nette / œuf',E.margeOeuf.toFixed(1)+' F')+row('Œufs sur le cycle',ff(E.oeufsTot))+'</tbody></table></div></div>'
     +'<div class="card"><div class="card-hd">🤝 Investisseurs</div><div class="card-bd"><table class="tbl"><tbody>'
     +row('Capital engagé',finM(E.tirTotal))+row('Intérêts totaux (courus)',finM(E.intTot))+row('Frais de dossier perçus',finM(E.frais))
