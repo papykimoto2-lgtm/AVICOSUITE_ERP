@@ -24708,6 +24708,30 @@ const FIN_MODES = {
   forfait:'Intérêt forfaitaire étalé (carence, capital in fine)', ponte:'Indexé ponte (% du cash-flow net)', degressif:'Capital constant', annuite:'Annuités constantes', infine:'In fine (capital au terme)'
 };
 const FIN_SEM_PONTE_DEBUT = 19;      // 1re semaine de ponte : coûts d'élevage avant S19 = actif biologique immobilisé
+// Investissements types (valeurs INDICATIVES à confirmer par devis ; par sujet logé sauf montant fixe) et durées d'amortissement linéaire usuelles
+const FIN_IMMO_TYPES = {
+  layer:[['batiment','Bâtiment d\'élevage pondeuses',6000,0,20,10],['cages','Cages / batteries de ponte',3500,0,10,0],['mangeoires','Mangeoires, abreuvoirs',600,0,5,0],['ventilation','Ventilation et installation électrique',800,0,7,0],['groupe','Groupe électrogène',0,2500000,5,0],['transport','Véhicule utilitaire de livraison',0,6000000,5,10],['amenagement','Aménagements, clôture, point d\'eau',500,0,10,0],['mobilier','Informatique et mobilier de bureau',0,400000,3,0]],
+  broiler:[['batiment','Bâtiment d\'élevage chair',4000,0,20,10],['mangeoires','Mangeoires, abreuvoirs',500,0,5,0],['ventilation','Ventilation et installation électrique',600,0,7,0],['groupe','Groupe électrogène',0,2500000,5,0],['transport','Véhicule utilitaire de livraison',0,6000000,5,10],['amenagement','Aménagements, clôture, point d\'eau',400,0,10,0],['mobilier','Informatique et mobilier de bureau',0,400000,3,0]]
+};
+// Plan d'amortissement linéaire : fiche par investissement + dotation annuelle (années comptées depuis le démarrage du dossier)
+function finAmortTable(f){
+  var dd=f.dateDebut||new Date().toISOString().slice(0,10), items=[], maxM=12;
+  (f.immos||[]).forEach(function(im){
+    var q=(im.quote==null?100:im.quote)/100, val=(+im.valeur||0)*q, res=(+im.residuel||0)*q, n=Math.max(1,Math.round((+im.dureeAns||5)*12)), m0=finMonthsBetween(dd,im.date||dd)+1, am=im.cat!=='terrain', mens=am?Math.max(0,val-res)/n:0;
+    items.push({lib:im.libelle||'—',cat:im.cat,val:val,res:res,duree:(+im.dureeAns||5),am:am,mens:mens,annuel:mens*12,taux:am&&(+im.dureeAns)>0?100/(+im.dureeAns):0,m0:m0,n:n,neuf:!!im.neuf});
+    if(am) maxM=Math.max(maxM,m0-1+n);
+  });
+  var Y=Math.min(25,Math.ceil(maxM/12)), years=[], cum=0, totVal=items.reduce(function(a,x){return a+x.val;},0);
+  for(var y=1;y<=Y;y++){ var lo=(y-1)*12+1, hi=y*12, dot=0; items.forEach(function(x){ if(!x.am) return; var a=Math.max(lo,x.m0), b=Math.min(hi,x.m0+x.n-1); if(b>=a) dot+=x.mens*(b-a+1); }); cum+=dot; years.push({y:y,dot:dot,cum:cum,vnc:totVal-cum}); }
+  items.forEach(function(x){ x.fin=x.am?finAddMonths(dd,x.m0-1+x.n).slice(0,7):'—'; });
+  return {items:items,years:years,totVal:totVal,totDot:cum};
+}
+window.finInitImmos=async function(){
+  var r=window._fb.rec, lst=FIN_IMMO_TYPES[r.typeLot==='broiler'?'broiler':'layer'], nb=((r.simu&&r.simu.nbBetes)||SIMU_DEFAULTS.nbBetes)||0, dd=r.dateDebut||new Date().toISOString().slice(0,10);
+  if((r.immos||[]).length&&!confirm('Remplacer les investissements existants par les investissements types ?')) return;
+  r.immos=lst.map(function(x){ var v=Math.round(x[2]*nb+x[3]); return {libelle:x[1],cat:x[0],valeur:v,dureeAns:x[4],quote:100,residuel:Math.round(v*x[5]/100),date:dd,neuf:false}; });
+  await finSave(r); finRefresh(); toast('Investissements types chargés — valeurs indicatives à confirmer');
+};
 const FIN_IMMO_CAT = [['terrain','Terrain (non amortissable)',0],['batiment','Bâtiment d\'élevage',20],['cages','Cages / batteries de ponte',10],['mangeoires','Mangeoires, abreuvoirs',5],['ventilation','Ventilation / installation électrique',7],['groupe','Groupe électrogène',5],['transport','Matériel de transport',5],['amenagement','Aménagements / clôtures',10],['mobilier','Mobilier / informatique',3],['autre','Autre matériel',5]];
 // Types de financement par investisseur : même plan, remboursement et comptabilité différents
 const FIN_TYPES = {pret:'Prêt à intérêt', nature:'Financement en nature (aliment fourni)', avance:'Avance sur ventes d\'œufs', partage:'Partage de production'};
@@ -25414,6 +25438,14 @@ function finBlocObjets(f,E){
     +'<tr><td><input id="fa_lib" placeholder="Libellé (ex. frais de montage, assurance…)"></td><td><input id="fa_mt" type="number" placeholder="Montant F"></td><td><input id="fa_mois" type="number" value="1" min="1"></td><td><button class="btn btn-p btn-sm" onclick="finAddAutre()"><i class="fas fa-plus"></i></button></td></tr>'
     +'</tbody></table></div></div>';
 }
+function finAmortHtml(f){
+  var A=finAmortTable(f); if(!A.items.length) return '';
+  return '<div style="padding:0 18px 12px"><div style="font-weight:700;font-size:12px;margin:6px 0">📉 Plan d\'amortissement linéaire</div><div class="tbl-wrap"><table class="tbl" style="font-size:11px"><thead><tr><th>Investissement</th><th>Valeur retenue</th><th>Durée</th><th>Taux</th><th>Amort. annuel</th><th>Fin d\'amortissement</th></tr></thead><tbody>'
+    +A.items.map(function(x){ return '<tr><td>'+esc(x.lib)+'</td><td style="text-align:right">'+ff(x.val)+'</td><td style="text-align:right">'+(x.am?x.duree+' ans':'—')+'</td><td style="text-align:right">'+(x.am?x.taux.toFixed(1)+' %':'non amortissable')+'</td><td style="text-align:right">'+ff(x.annuel)+'</td><td>'+x.fin+'</td></tr>'; }).join('')+'</tbody></table></div>'
+    +'<div class="tbl-wrap" style="margin-top:8px"><table class="tbl" style="font-size:11px"><thead><tr><th>Année</th><th>Dotation</th><th>Cumul amorti</th><th>Valeur nette comptable</th></tr></thead><tbody>'
+    +A.years.map(function(y){ return '<tr><td>An '+y.y+'</td><td style="text-align:right">'+ff(y.dot)+'</td><td style="text-align:right">'+ff(y.cum)+'</td><td style="text-align:right">'+ff(y.vnc)+'</td></tr>'; }).join('')
+    +'<tr style="font-weight:700"><td>Total</td><td style="text-align:right">'+ff(A.totDot)+'</td><td></td><td></td></tr></tbody></table></div></div>';
+}
 function finBlocImmos(f,E){
   var im=f.immos||[], det=E.imm.det, today=f.dateDebut||new Date().toISOString().slice(0,10);
   return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🏗️ Investissements matériels & amortissement</span><span style="font-size:11px;color:var(--text3)">Dotation mensuelle imputée : '+finM(E.imm.mensTot)+' · acquisitions : '+finM(E.imm.capexTot)+'</span></div><div class="card-bd tbl-wrap">'
@@ -25422,7 +25454,9 @@ function finBlocImmos(f,E){
     +'<tr><td><input id="fm_lib" placeholder="Libellé (optionnel)"><select id="fm_cat" onchange="finImmoCat(this)">'+FIN_IMMO_CAT.map(function(c){return '<option value="'+c[0]+'">'+c[1]+'</option>';}).join('')+'</select></td>'
     +'<td><input id="fm_val" type="number" placeholder="Valeur F"><input id="fm_res" type="number" placeholder="Résiduel F"></td><td><input id="fm_dur" type="number" value="'+FIN_IMMO_CAT[0][2]+'"></td><td><input id="fm_q" type="number" value="100"></td><td><input id="fm_date" type="date" value="'+esc(today)+'"></td>'
     +'<td><label style="font-size:11px"><input id="fm_neuf" type="checkbox"> à acquérir</label></td><td colspan="3"><button class="btn btn-p btn-sm" onclick="finAddImmo()"><i class="fas fa-plus"></i> Ajouter</button></td></tr>'
-    +'</tbody></table></div>'
+    +'</tbody></table>'
+    +'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finInitImmos()"><i class="fas fa-list-check"></i> Charger les investissements types ('+(f.typeLot==='broiler'?'chair':'pondeuses')+')</button> <span style="font-size:11px;color:var(--text3)">Valeurs indicatives par sujet logé, à confirmer par devis ; durées d\'amortissement usuelles.</span></div></div>'
+    +finAmortHtml(f)
     +'<div class="simu-params-body">'+finChk('Cheptel pondeuses : élevage immobilisé puis amorti sur la ponte','pouletteImmo',f.pouletteImmo!==false,'finSetBool')
     +finIn('Valeur de reprise du matériel en fin de période (% VNC)','reprisePct',f.reprisePct==null?50:f.reprisePct,5)+finIn('Impôt sur le résultat (%) — 0 si exonéré','tauxIS',f.tauxIS||0,1)+'</div>'
     +'<div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Amortissement linéaire, durées indicatives (bâtiment 20 ans, cages 10, mangeoires 5…) à valider par l\'expert-comptable. <strong>Quote bande</strong> : part du matériel imputée à cette bande si plusieurs bandes l\'utilisent. <strong>À acquérir</strong> : décaissé au mois de mise en service (fonds propres) ; sinon seul l\'amortissement est comptabilisé. Sans matériel saisi, le forfait « amortissement » de la Simulation est utilisé. L\'amortissement n\'est pas une sortie de trésorerie.</div></div>';
@@ -25863,6 +25897,10 @@ function finBpBlocks(D){
   P(D.plan.ecart>=0?'Ressources supérieures aux besoins de '+finF(D.plan.ecart)+' : l\'excédent couvre le service de la dette (pic de trésorerie remboursements inclus : '+finF(D.peak)+').':'Besoin non couvert : '+finF(-D.plan.ecart)+' à financer (apport, banque). Pic de trésorerie remboursements inclus : '+finF(D.peak)+'.',{b:D.plan.ecart<0});
   H2('8.3 Calendrier des tirages');
   T(['Mois','Date','Tirage','Cumul tiré'],E.rows.filter(function(r){return r.tir>0;}).map(function(r,i,a){ return ['M'+r.t,r.date,finF(r.tir),finF(a.slice(0,i+1).reduce(function(s,x){return s+x.tir;},0))]; }),{right:[2,3]});
+  var AM=finAmortTable(f);
+  if(AM.items.length){ H2('8.4 Investissements et plan d\'amortissement'); T(['Investissement','Valeur','Durée','Taux','Amort. annuel','Fin'],AM.items.map(function(x){ return [x.lib,finF(x.val),x.am?x.duree+' ans':'—',x.am?finN(x.taux,1)+' %':'non amortissable',finF(x.annuel),x.fin]; }).concat([['Total',finF(AM.totVal),'','',finF(AM.items.reduce(function(a,x){return a+x.annuel;},0)),'']]),{right:[1,2,3,4],totalLast:true,sz:16});
+    T(['Année','Dotation','Cumul amorti','Valeur nette comptable'],AM.years.map(function(y){ return ['An '+y.y,finF(y.dot),finF(y.cum),finF(y.vnc)]; }),{right:[1,2,3]});
+    P('Amortissement linéaire sur la durée d\'usage usuelle de chaque bien ; durées à valider par l\'expert-comptable. Le terrain n\'est pas amorti.',{i:true}); }
   // 9
   PB(); H1('9. Hypothèses financières');
   T(['Hypothèse','Valeur'],[['Effectif logé',finN(S.nbBetes)+' sujets'],['Souche',S.souche||'Général'],['Taux de ponte au pic',finN(S.tauxPonteMoy,1)+' %'],['Prix de l\'œuf (gros calibre)',finN(S.prixOeufUnit)+' F'],['Casse / déclassement',finN(S.tauxCasse,1)+' %'],['Mortalité du cycle',finN(S.tauxMortalite,1)+' %'],['Poussin / poulette J0',finF(layer?S.coutPoussineLayer:S.coutPoussin)],['Aliment démarrage / croissance / pré-ponte / ponte (F/kg)',[S.coutAlimentD,S.coutAlimentC,S.coutAlimentPP,S.coutAlimentP].map(function(x){return finN(x);}).join(' / ')],['Réforme à la semaine',finN(S.semReforme)],['Taux d\'actualisation',finN(f.tauxActu)+' %'],['Frais de dossier / aléas',finN(f.fraisDossierPct,1)+' % / '+finN(f.contingence)+' %'],['Charges externes incluses',S.extOn===false?'non':'oui (part imputée '+finN(S.extPart==null?100:S.extPart)+' %)']]);
@@ -26066,6 +26104,13 @@ async function finBpExcel(D){
   r++; ws.getCell(r,1).value='Monte-Carlo ('+D.mc.n+' tirages)'; ws.getCell(r,1).font={bold:true}; r++;
   [['Probabilité de solde impayé',D.mc.pDefaut],['Probabilité de perte en capital',D.mc.pPerte],['TRI net P10',D.mc.irr[0]],['TRI net médian',D.mc.irr[1]],['TRI net P90',D.mc.irr[2]]].forEach(function(x){ ws.getCell(r,1).value=x[0]; ws.getCell(r,2).value=x[1]; ws.getCell(r,2).numFmt=PCT; r++; });
   wid(ws,[46,18,18,18]);
+  // amortissements
+  (function(){ var AM=finAmortTable(f); if(!AM.items.length) return; var w=wb.addWorksheet('Amortissements'); head(w,1,['Investissement','Valeur retenue (F)','Résiduel (F)','Durée (ans)','Taux','Amort. annuel (F)','Fin']);
+    AM.items.forEach(function(x,i){ var k=i+2; w.getCell(k,1).value=x.lib; w.getCell(k,2).value=x.val; w.getCell(k,3).value=x.res; w.getCell(k,4).value=x.am?x.duree:0; w.getCell(k,5).value=x.am?{formula:'IF(D'+k+'>0,1/D'+k+',0)'}:0; w.getCell(k,6).value=x.am?{formula:'IF(D'+k+'>0,(B'+k+'-C'+k+')/D'+k+',0)'}:0; w.getCell(k,7).value=x.fin; w.getCell(k,2).numFmt=NUM; w.getCell(k,3).numFmt=NUM; w.getCell(k,5).numFmt=PCT; w.getCell(k,6).numFmt=NUM; });
+    var n=AM.items.length+1, t=n+1; w.getCell(t,1).value='Total'; [2,3,6].forEach(function(c){ var L=String.fromCharCode(64+c); w.getCell(t,c).value={formula:'SUM('+L+'2:'+L+n+')'}; w.getCell(t,c).numFmt=NUM; w.getCell(t,c).font={bold:true}; });
+    var r0=t+3; head(w,r0,['Année','Dotation (F)','Cumul amorti (F)','Valeur nette comptable (F)']);
+    AM.years.forEach(function(y,i){ var k=r0+1+i; w.getCell(k,1).value='An '+y.y; w.getCell(k,2).value=y.dot; w.getCell(k,3).value=i?{formula:'C'+(k-1)+'+B'+k}:{formula:'B'+k}; w.getCell(k,4).value={formula:'$B$'+t+'-C'+k}; [2,3,4].forEach(function(c){ w.getCell(k,c).numFmt=NUM; }); });
+    wid(w,[44,18,16,12,10,18,12]); })();
   // phases
   ws=wb.addWorksheet('Phases élevage'); head(ws,1,['Phase','Semaines','Ingéré g/sujet/j','Vivants fin','Coût phase (F)','Recette phase (F)','Œufs']);
   E.res.rows.forEach(function(p,i){ var k=i+2; [p.ph.label,p.ph.semDeb+'–'+p.ph.semFin,p.feedGPDPhase,Math.round(p.vivantsFin),p.totalCoutPhase,p.recettePhase||0,p.oeufsPhase||0].forEach(function(v,j){ ws.getCell(k,j+1).value=v; if(j>1) ws.getCell(k,j+1).numFmt=NUM; }); });
