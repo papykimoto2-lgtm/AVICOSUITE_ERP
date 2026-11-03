@@ -12828,6 +12828,13 @@ async function computeFinanceGlobale(){
       reformesAll=await getAll(S.REFORME),ventesAll=await getAll(S.VENTE_VIVANT),
       slaughtersAll=await getAll(S.SLAUGHTER),eggsAll=await getAll(S.EGG_PROD);
   var finLots=[];
+  // Répartition PERSISTÉE des ventes sans lot (champ `repartition` : [{flockId, montant}]) — voir repartirVentesParLot().
+  var lotSet={}; lots.forEach(function(l){lotSet[l.id]=true;});
+  var partsByLot={}, repartPersistTotal=0;
+  sales.forEach(function(s){
+    if(!venteComptabilisee(s) || !s.repartition || !s.repartition.length || (s.flockId && lotSet[s.flockId])) return;
+    s.repartition.forEach(function(r){ if(lotSet[r.flockId]){ partsByLot[r.flockId]=(partsByLot[r.flockId]||0)+(r.montant||0); repartPersistTotal+=(r.montant||0); } });
+  });
   for(var i=0;i<lots.length;i++){
     var lot=lots[i];
     var ls=sales.filter(function(s){return s.flockId===lot.id;});
@@ -12840,6 +12847,7 @@ async function computeFinanceGlobale(){
     // Recettes du lot : commandes/ventes non annulées + réforme (abattage) + vente d'animaux vivants
     // (ces deux dernières n'étaient jamais comptées dans Finance & Rentabilité).
     var recettes=ls.filter(venteComptabilisee).reduce(function(a,s){return a+(s.totalHT||s.total||0);},0)
+      +(partsByLot[lot.id]||0)
       +lr.reduce(function(a,r){return a+(r.recetteTotale||0);},0)
       +lv.reduce(function(a,v){return a+(v.recetteTotale||0);},0);
     var cAlBase=lf.reduce(function(a,f){return a+(f.quantityKg||0);},0)*FINANCE_PARAMS.prixAlimentDefaut;
@@ -12862,7 +12870,7 @@ async function computeFinanceGlobale(){
     var lb=budgets.filter(function(b){return b.flockId===lot.id;});
     var bTot=lb.find(function(b){return b.categorie==='total';})||null;
     var bRec=lb.find(function(b){return b.categorie==='recette';})||null;
-    finLots.push({lot:lot,chargesEstimees:chEst,recettes:recettes,cAliment:cA,cPoussins:cP,chargesByCat:byCat,totalCharges:totalCh,marge:marge,vivants:vivants,mortCum:mortCum,
+    finLots.push({lot:lot,chargesEstimees:chEst,recettes:recettes,recettesRepartie:partsByLot[lot.id]||0,cAliment:cA,cPoussins:cP,chargesByCat:byCat,totalCharges:totalCh,marge:marge,vivants:vivants,mortCum:mortCum,
       budgetTotal:bTot?bTot.montantBudget:0,budgetRecette:bRec?bRec.montantBudget:0,
       ecartCharges:bTot?totalCh-bTot.montantBudget:null,
       margePct:totalCh>0?marge/totalCh*100:0,coutParSujet:vivants>0?totalCh/vivants:0});
@@ -12871,23 +12879,23 @@ async function computeFinanceGlobale(){
   // d'une réservation) : ignorées jusqu'ici car finLots n'agrège que par lot ⇒ recettes à 0 F
   // alors que des ventes existaient. Comptées désormais dans les recettes globales.
   var lotIds={}; lots.forEach(function(l){lotIds[l.id]=true;});
-  var ventesNonAffectees=sales.filter(function(s){return venteComptabilisee(s) && (!s.flockId || !lotIds[s.flockId]);});
+  var ventesNonAffectees=sales.filter(function(s){return venteComptabilisee(s) && (!s.flockId || !lotIds[s.flockId]) && !(s.repartition && s.repartition.length);});
   var ventesAttente=sales.filter(function(s){return s.statut!=='cancelled' && !venteComptabilisee(s);});
   var montantAttente=ventesAttente.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   var recettesNonAffectees=ventesNonAffectees.reduce(function(a,s){return a+(s.totalHT||s.total||0);},0);
   // Détail des ventes par statut (transparence : qu'est-ce qui est compté, qu'est-ce qui ne l'est pas)
   var detailVentes={};
-  sales.forEach(function(s){ var k=s.statut||'pending', m=s.totalHT||s.total||0; var d=detailVentes[k]=detailVentes[k]||{n:0,montant:0,sansLot:0}; d.n++; d.montant+=m; if(!s.flockId||!lotIds[s.flockId]) d.sansLot+=m; });
+  sales.forEach(function(s){ var k=s.statut||'pending', m=s.totalHT||s.total||0; var d=detailVentes[k]=detailVentes[k]||{n:0,montant:0,sansLot:0}; d.n++; d.montant+=m; if((!s.flockId||!lotIds[s.flockId]) && !(s.repartition&&s.repartition.length)) d.sansLot+=m; });
   // Répartition ESTIMÉE (option) des ventes sans lot entre les lots pondeuses, au prorata des œufs produits (à défaut : des sujets vivants).
-  var recettesBrutesNA=recettesNonAffectees, recettesRepartiesTotal=0;
+  var recettesBrutesNA=recettesNonAffectees, recettesRepartiesTotal=repartPersistTotal;
   if(window.FIN_REPARTIR && recettesNonAffectees>0){
     var layers=finLots.filter(function(f){return f.lot.type==='layer';});
     var wts=layers.map(function(f){return eggsAll.filter(function(e){return e.flockId===f.lot.id;}).reduce(function(a,e){return a+(e.eggCount||0);},0);});
     var wSum=wts.reduce(function(a,w){return a+w;},0);
     if(wSum<=0){ wts=layers.map(function(f){return f.vivants||0;}); wSum=wts.reduce(function(a,w){return a+w;},0); }
     if(layers.length && wSum>0){
-      layers.forEach(function(f,i){ var part=recettesNonAffectees*wts[i]/wSum; f.recettesRepartie=part; f.recettes+=part; f.marge=f.recettes-f.totalCharges; f.margePct=f.totalCharges>0?f.marge/f.totalCharges*100:0; });
-      recettesRepartiesTotal=recettesNonAffectees; recettesNonAffectees=0;
+      layers.forEach(function(f,i){ var part=recettesNonAffectees*wts[i]/wSum; f.recettesRepartie=(f.recettesRepartie||0)+part; f.recettes+=part; f.marge=f.recettes-f.totalCharges; f.margePct=f.totalCharges>0?f.marge/f.totalCharges*100:0; });
+      recettesRepartiesTotal+=recettesNonAffectees; recettesNonAffectees=0;
     }
   }
   var totalRec=finLots.reduce(function(a,f){return a+f.recettes;},0)+recettesNonAffectees;
@@ -13313,12 +13321,12 @@ function renderFinSynthese(el,fin){
   var ligneV=function(k,compte){ var d=dv[k]; if(!d) return ''; return '<tr'+(compte?'':' style="color:var(--text3)"')+'><td>'+(compte?'✅':'⏸')+' '+lblV[k]+'</td><td style="text-align:right">'+d.n+'</td><td style="text-align:right;font-weight:600">'+fcfa(d.montant)+'</td><td style="text-align:right">'+(compte&&d.sansLot?fcfa(d.sansLot)+' sans lot':'')+'</td></tr>'; };
   var nbVentes=Object.keys(dv).reduce(function(a,k){return a+dv[k].n;},0);
   var cardOrigine=nbVentes?'<div class="card" style="margin-bottom:14px"><div class="card-hd" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span>💰 Origine des recettes</span>'
-    +(fin.recettesBrutesNonAffectees>0?'<button class="btn btn-sm '+(window.FIN_REPARTIR?'btn-p':'btn-gh')+'" onclick="toggleRepartVentes()" title="Répartit les ventes sans lot entre les lots pondeuses, au prorata des œufs produits (estimation)"><i class="fas fa-share-nodes"></i> '+(window.FIN_REPARTIR?'Répartition estimée active — désactiver':'Répartir les ventes sans lot (estimation)')+'</button>':'')
+    +'<span style="display:flex;gap:6px;flex-wrap:wrap">'+(fin.recettesNonAffectees>0?'<button class="btn btn-sm btn-p" onclick="repartirVentesParLot()" title="Répartit chaque vente sans lot entre les lots pondeuses, au prorata des œufs produits dans les 10 jours précédant la livraison, et l\'enregistre"><i class="fas fa-share-nodes"></i> Répartir les ventes par lot</button>':'')+(fin.recettesReparties>0?'<button class="btn btn-sm btn-gh" onclick="annulerRepartitionVentes()"><i class="fas fa-rotate-left"></i> Annuler la répartition</button>':'')+'</span>'
     +'</div><div class="card-bd"><table class="tbl" style="font-size:12px"><thead><tr><th>Statut des ventes</th><th style="text-align:right">Nb</th><th style="text-align:right">Montant HT</th><th style="text-align:right">Rattachement</th></tr></thead><tbody>'
     +ligneV('delivered',1)+ligneV('invoiced',1)+ligneV('paid',1)+ligneV('confirmed',0)+ligneV('pending',0)+ligneV('cancelled',0)
     +'</tbody></table>'
     +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Seules les ventes <strong>livrées, facturées ou soldées</strong> sont comptées en recettes. Une commande « En attente » ou « Confirmée » doit être livrée (Commandes clients → Livrer) pour apparaître ici. '
-    +(fin.recettesReparties>0?'<br>≈ '+fcfa(fin.recettesReparties)+' de ventes sans lot sont <strong>réparties par estimation</strong> entre les lots pondeuses (au prorata des œufs produits) : renseignez le champ « Lot » des ventes pour des chiffres exacts.'
+    +(fin.recettesReparties>0?'<br>≈ '+fcfa(fin.recettesReparties)+' de ventes sans lot sont <strong>réparties par estimation</strong> entre les lots pondeuses (au prorata des œufs produits dans les 10 jours avant chaque livraison) : renseignez le champ « Lot » des ventes pour des chiffres exacts.'
       :(fin.recettesNonAffectees>0?'<br>'+fcfa(fin.recettesNonAffectees)+' de recettes n\'ont pas de lot : elles figurent sur la ligne « Hors lot ».':''))
     +'</div></div></div>':'';
   el.innerHTML=bannerAlertes+cardOrigine+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
@@ -13456,6 +13464,51 @@ async function renderFinCharges(el,fin){
     +'<div class="card" style="margin-top:14px"><div class="card-hd">📊 Synthese</div><div class="card-bd"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+synth+'</div></div></div>';
 }
 var finChgLot='', finChgCat='', finChgVal='', finChgSel={};
+// ── Répartition persistée des ventes sans lot (œufs) entre les lots pondeuses ──
+// Poids d'un lot pour une vente = œufs produits dans les REPART_FENETRE_JOURS précédant la livraison
+// (repli : tous les œufs produits avant la vente, puis effectif initial des lots déjà installés).
+// Estimation : le champ « Lot » saisi sur la vente reste prioritaire.
+var REPART_FENETRE_JOURS=10;
+function repartCalcVente(s, layers, eggsByLot){
+  var total=Math.round(s.totalHT||s.total||0);
+  var t=new Date(s.dateLiv||s.date).getTime(); if(isNaN(t)) t=Date.now();
+  var fin=t+864e5, deb=t-REPART_FENETRE_JOURS*864e5;
+  var somme=function(l,fn){ return (eggsByLot[l.id]||[]).filter(fn).reduce(function(a,e){return a+(e.eggCount||0);},0); };
+  var w=layers.map(function(l){ return somme(l,function(e){var d=new Date(e.date).getTime(); return d<=fin&&d>deb;}); });
+  var ws=w.reduce(function(a,b){return a+b;},0);
+  if(ws<=0){ w=layers.map(function(l){ return somme(l,function(e){return new Date(e.date).getTime()<=fin;}); }); ws=w.reduce(function(a,b){return a+b;},0); }
+  if(ws<=0){ w=layers.map(function(l){ return (!l.startDate||new Date(l.startDate).getTime()<=fin)?(l.initialStock||0):0; }); ws=w.reduce(function(a,b){return a+b;},0); }
+  if(ws<=0||total<=0) return [];
+  var parts=layers.map(function(l,i){return {flockId:l.id,montant:Math.round(total*w[i]/ws)};}).filter(function(p,i){return w[i]>0;});
+  var diff=total-parts.reduce(function(a,p){return a+p.montant;},0);
+  if(diff&&parts.length){ var big=parts.reduce(function(m,p){return p.montant>m.montant?p:m;},parts[0]); big.montant+=diff; }
+  return parts;
+}
+window.repartirVentesParLot=async function(){
+  var lots=await getAll(S.FLOCKS), sales=await getAll(S.SALES), eggs=await getAll(S.EGG_PROD);
+  var lotIds={}; lots.forEach(function(l){lotIds[l.id]=true;});
+  var layers=lots.filter(function(l){return l.type==='layer';});
+  if(!layers.length){ toast('Aucun lot pondeuse','err'); return; }
+  var eggsByLot={}; eggs.forEach(function(e){ (eggsByLot[e.flockId]=eggsByLot[e.flockId]||[]).push(e); });
+  var cibles=sales.filter(function(s){return venteComptabilisee(s)&&(!s.flockId||!lotIds[s.flockId])&&!(s.repartition&&s.repartition.length);});
+  if(!cibles.length){ toast('Aucune vente sans lot à répartir'); return; }
+  var calc=cibles.map(function(s){return {s:s,parts:repartCalcVente(s,layers,eggsByLot)};}).filter(function(c){return c.parts.length;});
+  if(!calc.length){ toast('Pas de production d\'œufs ni d\'effectif pour répartir','err'); return; }
+  var parLot={}, tot=0; calc.forEach(function(c){ c.parts.forEach(function(p){ parLot[p.flockId]=(parLot[p.flockId]||0)+p.montant; tot+=p.montant; }); });
+  var lignes=Object.keys(parLot).map(function(id){ var l=lots.find(function(x){return x.id==id;}); return '• '+(l?l.nom:id)+' : '+Math.round(parLot[id]).toLocaleString('fr-FR')+' F'; }).join('\n');
+  if(!confirm('Répartir '+calc.length+' vente(s) sans lot ('+Math.round(tot).toLocaleString('fr-FR')+' F) entre les lots pondeuses ?\n\nAu prorata des œufs produits dans les '+REPART_FENETRE_JOURS+' jours avant chaque livraison :\n'+lignes+'\n\nEstimation enregistrée sur chaque vente (annulable). Le champ « Lot » saisi reste prioritaire.')) return;
+  for(var i=0;i<calc.length;i++){ await updRec(S.SALES,calc[i].s.id,Object.assign({},calc[i].s,{repartition:calc[i].parts,repartitionTs:Date.now()})); }
+  toast('✅ '+calc.length+' vente(s) réparties entre '+Object.keys(parLot).length+' lot(s)');
+  if(typeof renderFinance==='function') await renderFinance(document.getElementById('contentArea'));
+};
+window.annulerRepartitionVentes=async function(){
+  var sales=(await getAll(S.SALES)).filter(function(s){return s.repartition&&s.repartition.length;});
+  if(!sales.length) return;
+  if(!confirm('Annuler la répartition de '+sales.length+' vente(s) ? Les ventes redeviennent « sans lot ».')) return;
+  for(var i=0;i<sales.length;i++){ var c=Object.assign({},sales[i]); delete c.repartition; delete c.repartitionTs; await updRec(S.SALES,c.id,c); }
+  toast('Répartition annulée');
+  if(typeof renderFinance==='function') await renderFinance(document.getElementById('contentArea'));
+};
 try{ window.FIN_REPARTIR = localStorage.getItem('fin_repartir')==='1'; }catch(e){ window.FIN_REPARTIR=false; }
 window.toggleRepartVentes=function(){
   window.FIN_REPARTIR=!window.FIN_REPARTIR;
