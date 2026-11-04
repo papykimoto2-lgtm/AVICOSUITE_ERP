@@ -2767,8 +2767,8 @@ function delRec(st,id){return new Promise(async res=>{
 });}
 
 // Lecture seule : aucune écriture du financement investisseurs ne passe, quel que soit l'appelant (filet de sécurité en plus de la garde de finSave)
-['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(st){
-  if(st===S.FINBANDE && isReadOnly('finbande')){
+['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(st,id_){
+  if(st===S.FINBANDE && (isReadOnly('finbande') || (n!=='addRec' && typeof finAcces==='function' && window._fb && (window._fb.all||[]).some(function(x){ return x.id===id_ && finAcces(x)==='read'; })))){
     if(!window._roToast||Date.now()-window._roToast>5000){ window._roToast=Date.now(); toast('👁️ Lecture seule : modification refusée','err'); }
     return Promise.resolve(n==='addRec'?null:undefined);
   }
@@ -25521,7 +25521,7 @@ function finContrat(f, E, cfg, inv, gr){
 
 // ═════════ PERSISTANCE / ÉTAT ═════════
 async function finLoad(){
-  var all=await getAll(S.FINBANDE); all.sort(function(a,b){return (b.id||0)-(a.id||0);});
+  var all=(await getAll(S.FINBANDE)).filter(function(x){ return finAcces(x)!=='none'; }); all.sort(function(a,b){return (b.id||0)-(a.id||0);});
   var B=window._fb||(window._fb={id:null,tab:'synthese'}), list=all.filter(function(x){return !x.archive;});
   var rec=all.find(function(x){return x.id===B.id;})||list[0]||null;
   B.id=rec?rec.id:null; B.rec=rec; B.list=list; B.all=all; B.lots=await getAll(S.FLOCKS);
@@ -25561,7 +25561,7 @@ window.finNew=async function(portee){
   var type=sp.typeLot==='broiler'?'broiler':'layer';
   var simu=Object.assign({},SIMU_DEFAULTS,sp,{typeLot:type});
   var d=new Date().toISOString().slice(0,10), n=((window._fb&&window._fb.list)||[]).length+1;
-  var rec=Object.assign({},JSON.parse(JSON.stringify(FIN_DEFAULTS)),finDefauts(portee,type),{portee:portee,typeLot:type,dateDebut:d,simu:simu,ts:Date.now(),
+  var rec=Object.assign({},JSON.parse(JSON.stringify(FIN_DEFAULTS)),finDefauts(portee,type),{proprio:finUid()||null,proprioNom:finUserName(),portee:portee,typeLot:type,dateDebut:d,simu:simu,ts:Date.now(),
     nom:(portee==='production'?'Bande en production':'Nouvelle bande')+' n°'+n+' — '+d});
   var nom=prompt('Nom du dossier de financement :',rec.nom); if(nom===null) return; rec.nom=nom||rec.nom;
   rec.id=await addRec(S.FINBANDE,rec); window._fb={id:rec.id,tab:'montage'}; finRefresh(); toast('✅ Dossier créé'+(portee==='production'?' — choisissez le lot réel':' depuis la simulation'));
@@ -25603,7 +25603,7 @@ window.finFromSimu=async function(){
   await finNew();
 };
 window.finDup=async function(){
-  var r=window._fb.rec; if(!r) return; var c=JSON.parse(JSON.stringify(r)); delete c.id; c.nom=r.nom+' (copie)'; c.statut='brouillon'; c.suivi={}; c.ts=Date.now(); c.journal=[]; c.docs=[]; c.ver=0; c.verrou=null; c.archive=null;
+  var r=window._fb.rec; if(!r) return; var c=JSON.parse(JSON.stringify(r)); delete c.id; c.proprio=finUid()||null; c.proprioNom=finUserName(); c.nom=r.nom+' (copie)'; c.statut='brouillon'; c.suivi={}; c.ts=Date.now(); c.journal=[]; c.docs=[]; c.ver=0; c.verrou=null; c.archive=null;
   var id=await addRec(S.FINBANDE,c); window._fb.id=id; finRefresh();
 };
 window.finResync=async function(){
@@ -25794,6 +25794,64 @@ window.finLexique=function(q){
 };
 window.finLexRech=function(v){ finLexique(v); };
 window.finLexClose=function(){ var d=document.getElementById('finLexModal'); if(d) d.remove(); };
+
+// ── Phase D : accès par dossier (facultatif) et présence en direct ───────────────────────
+function finUid(){ try{ return (currentUser&&(currentUser.id!=null?String(currentUser.id):currentUser.email))||''; }catch(e){ return ''; } }
+// Gestionnaire du dossier : administrateur, responsable ou propriétaire (créateur)
+function finEstGestionnaire(f){ var u=null; try{ u=currentUser; }catch(e){} if(!u) return false; if(u.role==='admin'||u.role==='manager') return true; return !!(f&&f.proprio!=null&&String(f.proprio)===finUid()); }
+// 'edit' | 'read' | 'none' — sans restriction déclarée, seuls les droits du rôle s'appliquent
+function finAcces(f){
+  if(!f||!f.acl||!f.acl.restreint) return 'edit';
+  if(finEstGestionnaire(f)) return 'edit';
+  var id=finUid(), has=function(a){ return (a||[]).map(String).indexOf(id)>=0; };
+  if(has(f.acl.editeurs)) return 'edit';
+  if(has(f.acl.lecteurs)) return 'read';
+  return 'none';
+}
+function finLectureSeule(f){ return isReadOnly('finbande')||finAcces(f)==='read'; }
+function finAclHtml(f){
+  var a=f.acl||{}, on=!!a.restreint, g=finEstGestionnaire(f);
+  var badge=on?'<span class="badge b-a">🔐 Accès restreint</span>':'<span class="badge b-g">Ouvert aux rôles autorisés</span>';
+  var h='<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🔐 Accès au dossier</span><span>'+badge+'</span></div><div class="card-bd" style="font-size:12px">'
+    +'<div style="color:var(--text3);margin-bottom:6px">Propriétaire : <strong>'+esc(f.proprioNom||'non renseigné')+'</strong>. Par défaut, tous les utilisateurs dont le rôle donne accès au module voient ce dossier. En mode restreint, seuls le propriétaire, les administrateurs et responsables, et les personnes ci-dessous y accèdent.</div>';
+  if(!g) return h+(on?'<div>Votre accès : <strong>'+(finAcces(f)==='edit'?'modification':'lecture seule')+'</strong>. Seul un gestionnaire du dossier peut modifier ces accès.</div>':'')+'</div></div>';
+  h+='<button class="btn '+(on?'btn-s':'btn-p')+' btn-sm" onclick="finAclMode('+(on?'false':'true')+')">'+(on?'Lever la restriction (rouvrir à tous)':'Restreindre l\'accès à des personnes choisies')+'</button>';
+  if(on){
+    var users=(window._finUsers||[]).filter(function(u){ return u.actif!==false&&u.role!=='admin'&&u.role!=='manager'&&String(u.id)!==String(f.proprio); });
+    var cur=function(id){ return (a.editeurs||[]).map(String).indexOf(String(id))>=0?'edit':(a.lecteurs||[]).map(String).indexOf(String(id))>=0?'read':'none'; };
+    h+='<table class="tbl" style="width:100%;margin-top:8px"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Accès</th></tr></thead><tbody>'
+      +(users.map(function(u){ var c=cur(u.id); return '<tr><td>'+esc(u.nom||u.email||u.id)+'</td><td>'+esc(u.role||'')+'</td><td><select onchange="finAclSet(\''+u.id+'\',this.value)"><option value="none"'+(c==='none'?' selected':'')+'>Aucun accès</option><option value="read"'+(c==='read'?' selected':'')+'>Lecture seule</option><option value="edit"'+(c==='edit'?' selected':'')+'>Modification</option></select></td></tr>'; }).join('')||'<tr><td colspan="3" style="color:var(--text3)">Aucun autre utilisateur.</td></tr>')+'</tbody></table>'
+      +'<div style="color:var(--text3);margin-top:6px">Un rôle en lecture seule reste en lecture seule même avec « Modification ».</div>';
+  }
+  return h+'</div></div>';
+}
+window.finAclMode=async function(on){ var r=window._fb.rec; if(!r||!finEstGestionnaire(r)) return; r.acl=Object.assign({lecteurs:[],editeurs:[]},r.acl,{restreint:!!on}); if(on&&r.proprio==null){ r.proprio=finUid(); r.proprioNom=finUserName(); } await finSave(r); finRefresh(); };
+window.finAclSet=async function(id,v){ var r=window._fb.rec; if(!r||!finEstGestionnaire(r)) return; id=String(id); var a=Object.assign({lecteurs:[],editeurs:[],restreint:true},r.acl), nf=function(l){ return (l||[]).map(String).filter(function(x){return x!==id;}); };
+  a.lecteurs=nf(a.lecteurs); a.editeurs=nf(a.editeurs); if(v==='read') a.lecteurs.push(id); else if(v==='edit') a.editeurs.push(id); r.acl=a; await finSave(r); finRefresh(); };
+// Présence : qui consulte le même dossier en ce moment (canal temps réel, sans enregistrement)
+var _finPresCh=null, _finPresOn=false, _finPresTimer=null;
+function finPresenceInit(){
+  if(_finPresCh||typeof supa==='undefined'||!supa||typeof supa.channel!=='function') return;
+  try{
+    _finPresCh=supa.channel('avico_fin_presence',{config:{presence:{key:finUid()||('u'+Math.random())}}});
+    _finPresCh.on('presence',{event:'sync'},function(){ finPresenceShow(); }).subscribe(function(st){ if(st==='SUBSCRIBED') finPresenceTrack(); });
+    _finPresTimer=setInterval(function(){ if(curPage==='finbande') finPresenceTrack(); else if(_finPresOn&&_finPresCh){ _finPresOn=false; try{ _finPresCh.untrack(); }catch(e){} } },30000);
+  }catch(e){ _finPresCh=null; }
+}
+function finPresenceTrack(){ if(!_finPresCh||typeof _finPresCh.track!=='function') return; _finPresOn=true; try{ _finPresCh.track({u:finUserName(),d:(window._fb&&window._fb.id)||null,t:Date.now(),ro:!!(window._fb&&finLectureSeule(window._fb.rec))}); }catch(e){} }
+function finPresenceOthers(){
+  var st={}; try{ st=_finPresCh.presenceState()||{}; }catch(e){}
+  var me=finUid(), id=window._fb&&window._fb.id, out=[], seen={};
+  Object.keys(st).forEach(function(k){ if(k===me) return; (st[k]||[]).forEach(function(m){ if(m&&m.d===id&&id!=null&&Date.now()-(m.t||0)<90000&&!seen[k]){ seen[k]=1; out.push(m); } }); });
+  return out;
+}
+function finPresenceShow(){
+  var old=document.getElementById('finPresence'); if(old) old.remove();
+  if(!_finPresCh) return; var o=finPresenceOthers(), hero=document.querySelector('.fb-wrap .fb-hero'); if(!o.length||!hero) return;
+  var d=document.createElement('div'); d.id='finPresence'; d.style.cssText='background:#eff6ff;border:1px solid #93c5fd;border-left:4px solid #3b82f6;border-radius:8px;padding:6px 12px;font-size:12px;color:#1e3a8a;margin:-6px 0 12px';
+  d.innerHTML='👥 <strong>'+o.map(function(m){ return esc(m.u||'Un utilisateur'); }).join(', ')+'</strong> '+(o.length>1?'consultent':'consulte')+' aussi ce dossier'+(o.some(function(m){return !m.ro;})?' — vos modifications seront fusionnées à l\'enregistrement.':'.');
+  hero.insertAdjacentElement('afterend',d);
+}
 function finKpi(l,v,sub,cls){ return '<div class="kpi '+(cls||'kpi-b')+'"><div class="kpi-lbl">'+l+'</div><div class="kpi-val" style="font-size:18px">'+v+'</div>'+(sub?'<div class="kpi-sub">'+sub+'</div>':'')+'</div>'; }
 function finIn(l,k,v,step){ return '<div class="fg"><div class="sbl">'+l+'</div><input type="number" step="'+(step||'any')+'" value="'+esc(v==null?'':v)+'" onchange="finSet(\''+k+'\',this.value,1)"></div>'; }
 function finSimIn(l,k,v,step){ return '<div class="fg"><div class="sbl">'+l+'</div><input type="number" step="'+(step||'any')+'" value="'+esc(v==null?'':v)+'" onchange="finSetSimu(\''+k+'\',this.value)"></div>'; }
@@ -26253,11 +26311,12 @@ async function renderFinBande(ca){
   if(!rec.dateDebut) rec.dateDebut=new Date().toISOString().slice(0,10);
   var E, body='';
   try{ E=finRun(rec); }catch(e){ console.error(e); ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd">Erreur de calcul : '+esc(e.message)+'</div></div></div>'; return; }
-  var t=B.tab||'synthese';
+  var t=B.tab||'synthese'; if(t==='docs'){ try{ window._finUsers=await getAll(S.USERS); }catch(e){ window._finUsers=[]; } }
   if(t==='portefeuille') body=finTabPortefeuille(rec); else if(t==='calibrage') body=finTabCalibrage(rec,E); else if(t==='projection') body=finTabProjection(rec,E); else if(t==='bilan') body=finTabBilan(rec,E); else if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
   ca.innerHTML=style+'<div class="fb-wrap">'+head+finTabsHtml(t)+finNote(t)+finPrixBanner(rec,t)+finCoutsBanner(rec,t)+finAnalyseHtml(rec,E,t,cfg)+body+finNavHtml(t)+'</div>';
-  if(isReadOnly('finbande')) finApplyReadOnly(ca);
+  if(finLectureSeule(rec)) finApplyReadOnly(ca,isReadOnly('finbande')?'role':'dossier');
+  finPresenceInit(); finPresenceTrack(); finPresenceShow();
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
@@ -26795,10 +26854,10 @@ async function finRemote(id,withData){
 // Enregistrement : lecture seule, verrou, journal, puis fusion avec les modifications faites entre-temps par un autre utilisateur
 async function finSave(rec){
   var prevS=_finPrev[rec.id], diffs=[], prev=prevS?JSON.parse(prevS):null, restore=function(src){ Object.keys(rec).forEach(function(k){ delete rec[k]; }); Object.assign(rec,src); };
-  if(isReadOnly('finbande')){ if(prev) restore(prev); toast('👁️ Lecture seule : votre rôle permet de consulter ce dossier, pas de le modifier','err'); return; }
+  if(finLectureSeule(rec)){ if(prev) restore(prev); toast(isReadOnly('finbande')?'👁️ Lecture seule : votre rôle permet de consulter ce dossier, pas de le modifier':'👁️ Lecture seule : votre accès à ce dossier est limité à la consultation','err'); return; }
   if(prev){
     diffs=finDiff(prev,rec);
-    if(diffs.length&&rec.verrou&&diffs.some(function(d){return !/^(suivi|statut)/.test(d.c);})){
+    if(diffs.length&&rec.verrou&&diffs.some(function(d){return !/^(suivi|statut|acl|proprio)/.test(d.c);})){
       restore(prev);
       toast('🔒 Dossier verrouillé (version v'+((prev.verrou&&prev.verrou.ver)||'?')+') : déverrouillez-le pour le modifier','err'); return;
     }
@@ -26811,7 +26870,7 @@ async function finSave(rec){
       var full=await finRemote(rec.id,true);
       if(full&&full.data){
         var cur=Object.assign({id:rec.id},full.data), M=finMerge3(prev,rec,cur);
-        if(cur.verrou&&!prev.verrou&&diffs.some(function(d){return !/^(suivi|statut)/.test(d.c);})){
+        if(cur.verrou&&!prev.verrou&&diffs.some(function(d){return !/^(suivi|statut|acl|proprio)/.test(d.c);})){
           restore(cur); _recVersions[key]=full.version; _finPrev[rec.id]=JSON.stringify(rec);
           toast('🔒 Dossier verrouillé entre-temps par un autre utilisateur : votre modification n\'a pas été enregistrée','err'); return;
         }
@@ -26837,10 +26896,10 @@ window.finOnRemote=async function(){
   await finRefresh(); toast('🔄 Dossier mis à jour par '+who);
 };
 // Lecture seule : champs et boutons de modification désactivés, consultation, impression et exports conservés
-function finApplyReadOnly(root){
+function finApplyReadOnly(root,why){
   var SAFE=/^(fbTab|fbGroup|finBilanVue|finCEPvue|finImprimer|finExporter|finCSV|finCEPcsv|finPick|finKpi|finOuvrir|finLex)/;
   root.querySelectorAll('.fb-wrap input,.fb-wrap select,.fb-wrap textarea,.fb-wrap button').forEach(function(el){ var h=el.getAttribute('onclick')||el.getAttribute('onchange')||''; if(SAFE.test(h)) return; el.disabled=true; });
-  var w=root.querySelector('.fb-wrap'); if(w) w.insertAdjacentHTML('afterbegin','<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-left:4px solid #64748b;border-radius:8px;padding:8px 12px;font-size:12px;color:#334155;margin-bottom:10px">👁️ <strong>Lecture seule</strong> : votre rôle permet de consulter ce dossier, de l\'imprimer et de l\'exporter, pas de le modifier.</div>');
+  var w=root.querySelector('.fb-wrap'); if(w) w.insertAdjacentHTML('afterbegin','<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-left:4px solid #64748b;border-radius:8px;padding:8px 12px;font-size:12px;color:#334155;margin-bottom:10px">👁️ <strong>Lecture seule</strong> : '+(why==='dossier'?'votre accès à ce dossier est limité à la consultation':'votre rôle permet de consulter ce dossier')+', vous pouvez l\'imprimer et l\'exporter, pas le modifier.</div>');
 }
 async function finMeta(rec,j){ if(j) rec.journal=(rec.journal||[]).concat([{ts:Date.now(),u:finUserName(),c:j[0],a:j[1]||'',n:j[2]||''}]).slice(-400); await updRec(S.FINBANDE,rec.id,rec); _finPrev[rec.id]=JSON.stringify(rec); }
 async function finRegistrer(f,type,fmt){
@@ -26933,7 +26992,7 @@ function finTabDocs(f,E){
   var fd=function(ts){ return new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); };
   var docs=(f.docs||[]).slice().reverse(), jr=(f.journal||[]).slice().reverse().slice(0,100), arch=((window._fb&&window._fb.all)||[]).filter(function(x){return x.archive;});
   var st=f.verrou?'<span class="badge b-r">🔒 Version v'+f.verrou.ver+' émise — verrouillé</span> <span style="font-size:11px;color:var(--text3)">le '+fd(f.verrou.ts)+' par '+esc(f.verrou.u)+'</span>':'<span class="badge b-a">✏️ Brouillon — modifiable (prochaine version : v'+((f.ver||0)+1)+')</span>';
-  var h='<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>📁 État du dossier</span><span>'+st+'</span></div><div class="card-bd" style="display:flex;gap:8px;flex-wrap:wrap">'
+  var h=finAclHtml(f)+'<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>📁 État du dossier</span><span>'+st+'</span></div><div class="card-bd" style="display:flex;gap:8px;flex-wrap:wrap">'
     +(f.verrou?'<button class="btn btn-s btn-sm" onclick="finDeverrouiller()"><i class="fas fa-lock-open"></i> Déverrouiller (motif requis)</button>':'<button class="btn btn-p btn-sm" onclick="finEmettre()"><i class="fas fa-lock"></i> Émettre la version v'+((f.ver||0)+1)+' (verrouiller)</button>')
     +'<button class="btn btn-s btn-sm" onclick="finDup()"><i class="fas fa-copy"></i> Dupliquer</button><button class="btn btn-s btn-sm" onclick="finArchiver()"><i class="fas fa-box-archive"></i> Archiver</button></div>'
     +'<div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Émettre une version fige le dossier : toute modification est alors refusée tant qu\'il n\'est pas déverrouillé avec un motif (tracé au journal). Les écritures de suivi comptable restent possibles.</div></div>';
