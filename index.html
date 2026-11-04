@@ -24759,6 +24759,8 @@ function finMultText(m){
 // Prix et coûts par défaut de l'ERP issus d'un relevé de ferme : à confirmer pour chaque dossier
 const FIN_PROFIL_PRIX = {nom:'relevé ferme-jolan, nov. 2026', cles:['coutPoussineLayer','coutAlimentD','coutAlimentC','coutAlimentPP','coutAlimentP','prixOeufUnit','ratioPetit']};
 // Coûts types de l'ERP (investissements par sujet, charges externes, coûts par tête) : indicatifs, exprimés en FCFA, à confirmer par dossier
+// Conditionnement usuel des œufs utilisé dans les textes du business plan (à adapter)
+const FIN_OEUFS_PLATEAU = 30, FIN_OEUFS_CARTON = 360;
 const FIN_PROFIL_COUTS = {nom:'valeurs indicatives de l\'ERP, en FCFA', simu:['coutVacc','coutMed','coutLitiere','coutEau','coutMain','coutEnergie','coutAmort','coutTransport','coutDivers']};
 function finCoutsParDefaut(f){
   if(!f||f.coutsVerifies) return null;
@@ -25627,7 +25629,7 @@ function finTabMontage(f,E){
     +finIn('% cash-flow net affecté (mode ponte)','sweepPct',f.sweepPct,5)+finIn('Différé (mois)','differeMois',f.differeMois,1)+finIn('Durée de remboursement (mois)','dureeRemb',f.dureeRemb,1)
     +finSel('Intérêts pendant différé','interetDiffere',f.interetDiffere,[['capitalise','Capitalisés'],['paye','Payés']])+finSel('Mise à disposition','tirage',f.tirage,[['progressif','Tirages mensuels (réduit les intérêts)'],['unique','Versement unique']])
     +finIn('Retenue à la source sur intérêts (%)','retenuePct',f.retenuePct,0.5)+finIn('Taux d\'actualisation (%)','tauxActu',f.tauxActu,0.5)
-    +'</div><div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">'+finJ().t.usureNote+' Tendance marché : plateau 30 œufs bord-ferme 2 400 F (≈ 80 F/œuf, fév. 2026) ; TVA 9 % sur aliment volaille.</div></div>'
+    +'</div><div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">'+finJ().t.usureNote+'</div><div style="padding:0 18px 12px;font-size:12px">Source et date du prix de vente retenu <input type="text" style="width:min(100%,420px);padding:3px 6px" placeholder="ex. relevé de marché du 03/11/2026, contrats clients" value="'+esc(f.sourcePrix||'')+'" onchange="finSetSourcePrix(this.value)"> <span style="font-size:11px;color:var(--text3)">repris dans le business plan (chapitre 4.1)</span></div></div>'
     +'<div class="card"><div class="card-hd">👥 Investisseurs — '+inv.length+' · souscrit '+finM(tot)+' / besoin '+finM(E.montant)+' ('+finPc(E.montant>0?tot/E.montant:0)+')</div><div class="card-bd tbl-wrap">'
     +'<table class="tbl" style="font-size:11px"><thead><tr><th>Nom</th><th>Personne</th><th>Contact / origine des fonds</th><th>Ticket (F)</th><th>Type de financement</th><th>Conditions</th><th>Retour net attendu</th><th></th></tr></thead><tbody>'
     +inv.map(function(i,ix){
@@ -25807,7 +25809,7 @@ function finTabJuridique(f,E,cfg){
     +box('4. Points de contrôle (état du dossier)', conf.map(function(c){return '<div style="display:flex;gap:8px;padding:3px 0">'+finBadge(c.s)+'<span>'+c.t+'</span></div>';}).join(''))
     +box('5. Risques & parades',
       '<table class="tbl" style="font-size:11px"><thead><tr><th>Risque</th><th>Parade</th></tr></thead><tbody>'
-      +[['Mortalité / épizootie (Newcastle, grippe aviaire)','Plan prophylaxie suivi dans l\'ERP, biosécurité, assurance, seuil d\'alerte mortalité'],['Baisse du prix de l\'œuf','Clause de plafonnement, contrats clients, scénarios + seuil de rentabilité'],['Hausse aliment (TVA 9 % depuis 2026)','Fabrication interne d\'aliment, achats groupés, marge d\'aléas'],['Retard de ponte / sous-performance','Lignée performante, contrôle poids/uniformité, différé suffisant'],['Détournement des fonds','Tirages au réel sur factures, compte dédié, accès lecture investisseurs'],['Concentration clients / impayés','Cession de créances, délai encaissement paramétré']]
+      +[['Mortalité / épizootie (Newcastle, grippe aviaire)','Plan prophylaxie suivi dans l\'ERP, biosécurité, assurance, seuil d\'alerte mortalité'],['Baisse du prix de l\'œuf','Clause de plafonnement, contrats clients, scénarios + seuil de rentabilité'],['Hausse du prix de l\'aliment (intrants, fiscalité)','Fabrication interne d\'aliment, achats groupés, marge d\'aléas'],['Retard de ponte / sous-performance','Lignée performante, contrôle poids/uniformité, différé suffisant'],['Détournement des fonds','Tirages au réel sur factures, compte dédié, accès lecture investisseurs'],['Concentration clients / impayés','Cession de créances, délai encaissement paramétré']]
         .map(function(x){return '<tr><td>'+x[0]+'</td><td>'+x[1]+'</td></tr>';}).join('')+'</tbody></table>')
     +box('6. Convention de financement — clauses (modèle indicatif) <span style="display:inline-flex;gap:6px;flex-wrap:wrap"><select id="fcv_inv" style="font-size:11px"><option value="-1">Tous les financiers</option>'+(f.investisseurs||[]).map(function(i,ix){return '<option value="'+ix+'">'+esc(i.nom)+'</option>';}).join('')+'</select><button class="btn btn-p btn-sm" onclick="finConvention()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-s btn-sm" onclick="finConvention(\'doc\')"><i class="fas fa-file-word"></i> Word</button></span>',
       cl.map(function(c,i){return '<p><strong>'+(i?'Article '+i+' — ':'')+c[0]+'.</strong> '+esc(c[1])+'</p>';}).join(''));
@@ -25941,6 +25943,7 @@ function finBpTbl(f,k,heads,w){
 }
 function finBpCard(title,body,sub){ return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>'+title+'</span></div><div class="card-bd">'+(sub?'<p style="font-size:11px;color:var(--text3);margin:0 0 10px">'+sub+'</p>':'')+body+'</div></div>'; }
 window.finConfirmCouts=async function(){ var r=window._fb.rec; if(!r) return; r.coutsVerifies=true; await finSave(r); finRefresh(); };
+window.finSetSourcePrix=async function(v){ var r=window._fb.rec; if(!r) return; r.sourcePrix=String(v||'').slice(0,200); await finSave(r); if(r.verrou) finRefresh(); };
 window.finConfirmPrix=async function(){ var r=window._fb.rec; if(!r) return; r.prixVerifies=true; await finSave(r); finRefresh(); };
 window.finSetBp=async function(k,v){ var r=window._fb.rec; if(!r) return; r.bp=Object.assign({},r.bp); r.bp[k]=v; await finSave(r); if(r.verrou) finRefresh(); };
 window.finSetBpCell=async function(k,i,j,v){ var r=window._fb.rec; if(!r||!(r.bp&&r.bp[k]&&r.bp[k][i])) return; r.bp=Object.assign({},r.bp); r.bp[k]=r.bp[k].map(function(x,ix){ if(ix!==i) return x; var y=x.slice(); y[j]=v; return y; }); await finSave(r); if(r.verrou) finRefresh(); };
@@ -25956,7 +25959,8 @@ function finTabPresent(f,E,cfg){
     +finBpCard('👥 Équipe dirigeante et compétences',finBpTbl(f,'equipe',['Fonction','Nom','Expérience / compétences'],[150,130,260]),'Chapitre 2.3 : les financeurs jugent d\'abord les hommes. Indiquez l\'expérience avicole et la formation.');
 }
 function finTabMarche(f,E){
-  return finBpCard('🛒 Demande et saisonnalité',finBpTa(f,'demande','Taille du marché local, tendance, pics saisonniers, prix observés',6,'Citez des sources datées : statistiques officielles, relevés de prix de marché, enquête auprès de vos clients. Ne mentionnez que des chiffres vérifiés.'),'Les segments de clientèle et les prix se saisissent dans l\'onglet '+finTabRef('commercial')+'.')
+  return finBpCard('📦 Produit et clientèle',finBpTa(f,'produit','Description du produit, calibres, conditionnement, prix retenu',4,'Vide : texte type généré à partir de la Simulation (prix de l\'œuf, calibres, mix). Précisez conditionnement et source du prix.'),'Chapitre 4.1. La source du prix de vente se saisit dans '+finTabRef('montage')+'.')
+    +finBpCard('🛒 Demande et saisonnalité',finBpTa(f,'demande','Taille du marché local, tendance, pics saisonniers, prix observés',6,'Citez des sources datées : statistiques officielles, relevés de prix de marché, enquête auprès de vos clients. Ne mentionnez que des chiffres vérifiés.'),'Les segments de clientèle et les prix se saisissent dans l\'onglet '+finTabRef('commercial')+'.')
     +finBpCard('⚔️ Concurrence',finBpTbl(f,'concurrents',['Concurrent / type','Forces','Faiblesses','Notre réponse'],[150,160,160,200]),'Chapitre 4.3.')
     +finBpCard('🧭 Positionnement',finBpTa(f,'positionnement','Avantages concurrentiels (une ligne = une puce)',5,'Régularité d\'approvisionnement\nTraçabilité de chaque lot\nSouplesse commerciale'));
 }
@@ -26135,6 +26139,7 @@ function finAnalyse(f,E,tab,cfg,deep){
     X((f.immos||[]).length>0?'ok':'warn','Investissements matériels saisis : '+(f.immos||[]).length+'.','Charger les investissements types ou saisir les équipements (bâtiment, cages, abreuvoirs…) afin que l\'amortissement et le plan de financement soient complets.');
   }
   else if(tab==='marche'){
+    X((f.sourcePrix||'').trim()?'ok':'warn','Source du prix de vente : '+((f.sourcePrix||'').trim()?'renseignée.':'non indiquée.'),'Indiquer la source et la date du prix retenu (relevé de marché, contrats clients) dans '+finTabRef('montage')+' : un prix sans source est le premier point contesté par un financeur.');
     X(txt('demande')?'ok':'warn','Étude de la demande : '+(txt('demande')?'rédigée.':'non documentée.'),'Documenter la taille du marché local, les prix observés et la saisonnalité avec des sources datées (statistiques, relevés de prix, enquête auprès de 10 à 20 clients) ; un marché non chiffré affaiblit tout le dossier.');
     X(rows('concurrents')?'ok':'warn','Concurrence : '+((bp.concurrents||[]).length)+' ligne(s) analysée(s).','Lister 3 à 5 concurrents réels (fermes voisines, importateurs, vente informelle) avec leurs prix et vos réponses.');
     if(E.coutOeuf>0&&E.prixMoyen>0){ var mo2=(E.prixMoyen-E.coutOeuf)/E.prixMoyen;
@@ -26467,10 +26472,11 @@ function finBpBlocks(D){
   // 4
   PB(); H1('4. Étude de marché');
   H2('4.1 Produit et clientèle');
-  P(layer?'Produit : œufs de consommation en cartons de 30 œufs ou plateaux, vendus en deux calibres. Prix retenu : '+finN(S.prixOeufUnit)+' F l\'œuf gros calibre (environ '+finN(S.prixOeufUnit*360)+' F le carton de 360), petit calibre à '+finN(S.ratioPetit||77)+' % du gros ; prix moyen après mix de calibres : '+finN(B.pm,1)+' F.':'Produit : poulets de chair vendus en carcasse à '+finN(S.prixCarcasseKg)+' F/kg.');
+  if(U('produit')) P(U('produit')); else P(layer?'Produit : œufs de consommation en cartons de '+FIN_OEUFS_PLATEAU+' œufs ou plateaux, vendus en deux calibres. Prix retenu : '+finN(S.prixOeufUnit)+' F l\'œuf gros calibre (environ '+finN(S.prixOeufUnit*FIN_OEUFS_CARTON)+' F le carton de '+FIN_OEUFS_CARTON+'), petit calibre à '+finN(S.ratioPetit||77)+' % du gros ; prix moyen après mix de calibres : '+finN(B.pm,1)+' F.':'Produit : poulets de chair vendus en carcasse à '+finN(S.prixCarcasseKg)+' F/kg.');
+  P((f.sourcePrix||'').trim()?'Source du prix de vente : '+(f.sourcePrix||'').trim()+'.':'[Source et date du prix de vente à préciser.]',{i:true});
   if(D.canaux.length) T(['Segment de clientèle','Part du volume','Prix relatif','Délai de paiement'],D.canaux.map(function(x){ return [x.nom,finN(x.part)+' %',finN(x.prixPct)+' %',finN(x.delai)+' j']; }),{right:[1,2,3]}); else P('Segments de clientèle à renseigner (onglet '+finTabRef('commercial')+').',{i:true});
   H2('4.2 Demande et saisonnalité');
-  if(U('demande')) P(U('demande')); else P('La demande en '+(layer?'œufs':'volaille')+' est régulière toute l\'année, avec des pics autour des fêtes et de la rentrée scolaire. Le niveau de demande, la taille du marché local et la saisonnalité des prix doivent être documentés avec des sources datées (statistiques officielles, relevés de prix, enquête auprès des clients) : aucune donnée de marché non vérifiée n\'est avancée ici.',{});
+  if(U('demande')) P(U('demande')); else P('[Demande en '+(layer?'œufs':'volaille')+', taille du marché local et saisonnalité des prix à documenter avec des sources datées (statistiques officielles, relevés de prix, enquête auprès des clients). Aucune donnée de marché non vérifiée n\'est avancée ici.]',{i:true});
   H2('4.3 Analyse de la concurrence');
   if(TB('concurrents',4).length) T(['Concurrent / type','Forces','Faiblesses','Notre réponse'],TB('concurrents',4),{}); else T(['Concurrent / type','Forces','Faiblesses','Notre réponse'],[['Autres fermes de la zone','[à documenter]','[à documenter]','Régularité, traçabilité, service de livraison'],['Importations / grossistes','[à documenter]','[à documenter]','Fraîcheur, circuit court'],['Vente informelle','[à documenter]','[à documenter]','Qualité constante, facturation']],{});
   H2('4.4 Positionnement');
@@ -26500,7 +26506,7 @@ function finBpBlocks(D){
   PB(); H1('7. Analyse stratégique et risques');
   H2('7.1 Forces, faiblesses, opportunités, menaces');
   if(U('sw_forces')||U('sw_faiblesses')) T(['Forces','Faiblesses'],[[U('sw_forces')||'—',U('sw_faiblesses')||'—']],{}); else T(['Forces','Faiblesses'],[['Pilotage par ERP et traçabilité des lots\nMarché d\'un produit de consommation courante\nMontage sans entrée au capital, remboursement indexé sur les ventes','Taille de la bande : charges fixes lourdes\nMarge sensible au prix de l\'aliment\nDépendance à un nombre limité de clients et fournisseurs']],{});
-  if(U('sw_opportunites')||U('sw_menaces')) T(['Opportunités','Menaces'],[[U('sw_opportunites')||'—',U('sw_menaces')||'—']],{}); else T(['Opportunités','Menaces'],[['Demande régulière et croissante en protéines animales\nCanaux de vente complémentaires (institutions, restauration)\nValorisation des fientes et des poules de réforme','Hausse du prix des intrants\nMaladies aviaires, chaleur\nConcurrence et importations, retards de paiement']],{});
+  if(U('sw_opportunites')||U('sw_menaces')) T(['Opportunités','Menaces'],[[U('sw_opportunites')||'—',U('sw_menaces')||'—']],{}); else T(['Opportunités','Menaces'],[['Demande en protéines animales [à documenter avec des sources datées]\nCanaux de vente complémentaires (institutions, restauration)\nValorisation des fientes et des poules de réforme','Hausse du prix des intrants\nMaladies aviaires, chaleur\nConcurrence et importations, retards de paiement']],{});
   H2('7.2 Matrice des risques');
   if(TB('risques',4).length) T(['Risque','Probabilité','Impact','Mesure d\'atténuation'],TB('risques',4),{}); else T(['Risque','Probabilité','Impact','Mesure d\'atténuation'],[['Baisse du taux de ponte','Moyenne','Élevé','Suivi quotidien ponte/aliment, prophylaxie, alertes de dérive'],[D.seuil.riskAlim,'Élevée','Élevé','Contrats d\'approvisionnement, stock tampon, achats groupés'],[D.seuil.riskOeuf,'Moyenne','Élevé','Diversification des clients, contrats de livraison'],['Mortalité élevée','Faible à moyenne','Élevé','Biosécurité, vaccination, assurance mortalité'],['Retard d\'encaissement','Moyenne','Moyen','Délais par canal, compte dédié, suivi des impayés'],['Charges externes sous-estimées','Moyenne','Moyen','Devis et contrats signés avant décaissement'],['Risque juridique (usure, épargne publique)','Faible','Élevé','Taux et TEG sous plafond, investisseurs identifiés, aucune sollicitation publique']],{});
   // 8
