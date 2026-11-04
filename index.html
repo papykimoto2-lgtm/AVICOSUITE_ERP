@@ -1705,6 +1705,8 @@ h1,h2,h3,.modal h3,.page-header-title,.lot-title,.app-logo h1{font-family:var(--
   <div id="rolePagesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:260px;overflow:auto;padding:4px"></div>
   <div style="margin:14px 0 6px;font-weight:700;font-size:12px">🗑️ Suppression autorisée <span style="font-weight:400;color:var(--text3);font-size:11px">(décochez pour permettre consultation/création/modification sans suppression)</span></div>
   <div id="roleDeleteGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:200px;overflow:auto;padding:4px"></div>
+  <div style="margin:14px 0 6px;font-weight:700;font-size:12px">👁️ Lecture seule <span style="font-weight:400;color:var(--text3);font-size:11px">(cochez les modules que ce rôle peut consulter, imprimer et exporter sans pouvoir les modifier — appliqué au financement investisseurs)</span></div>
+  <div id="roleReadOnlyGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;max-height:200px;overflow:auto;padding:4px"></div>
   <div class="modal-footer">
     <button class="btn btn-s" onclick="closeOverlay('mRole')">Annuler</button>
     <button class="btn btn-p" onclick="saveRoleModal()"><i class="fas fa-save"></i> Enregistrer</button>
@@ -2569,6 +2571,7 @@ function setupRealtimeSync(){
           await msgRenderSidebar();
           if(msgState.activeConvId) await msgOuvrirConversation(msgState.activeConvId, true);
         }
+        if(curPage==='finbande' && touched.has(S.FINBANDE) && typeof finOnRemote==='function') await finOnRemote();
         if(msgTouched && typeof updateBadgeMessages==='function') await updateBadgeMessages();
       }, 800);
     })
@@ -2763,6 +2766,14 @@ function delRec(st,id){return new Promise(async res=>{
   catch(e){ console.warn('delRec hors-ligne :',e.message); queueOp({op:'del',store:st,id,ts:Date.now()}); toast('📶 Hors-ligne — suppression mise en attente de synchronisation','err'); res(); }
 });}
 
+// Lecture seule : aucune écriture du financement investisseurs ne passe, quel que soit l'appelant (filet de sécurité en plus de la garde de finSave)
+['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(st){
+  if(st===S.FINBANDE && isReadOnly('finbande')){
+    if(!window._roToast||Date.now()-window._roToast>5000){ window._roToast=Date.now(); toast('👁️ Lecture seule : modification refusée','err'); }
+    return Promise.resolve(n==='addRec'?null:undefined);
+  }
+  return f.apply(this,arguments);
+}; });
 ['addRec','updRec','delRec'].forEach(n=>{ const f=window[n]; window[n]=function(st){ invalidateGetAll(st); return f.apply(this,arguments).then(r=>{ invalidateGetAll(st); return r; }); }; });
 
 // ════════════════════════════════════════════════════════
@@ -3251,6 +3262,13 @@ function canDelete(page){
   return !(rp.noDelete && rp.noDelete.includes(page));
 }
 window.canDelete = canDelete;
+// Lecture seule : un rôle peut consulter une page (accès) sans pouvoir la modifier. Seul un rôle explicitement déclaré en lecture seule est restreint.
+function isReadOnly(page){
+  const rp = currentUser && ROLE_PERMS[currentUser.role];
+  return !!(rp && rp.pages!=='all' && Array.isArray(rp.readOnly) && rp.readOnly.includes(page));
+}
+function canEdit(page){ return !!currentUser && canAccessPage(page) && !isReadOnly(page); }
+window.isReadOnly = isReadOnly; window.canEdit = canEdit;
 
 // Liste des modules pilotables par rôle (partagée entre la matrice et le modal d'édition)
 const ROLE_MODULE_PAGES = [
@@ -4707,7 +4725,7 @@ function renderSettingsRoles(isAdmin, isSuperAdmin){
       const rp = ROLE_PERMS[r];
       const has = rp.pages==='all' || rp.pages.includes(p.id);
       return `<td style="text-align:center">
-        <span style="font-size:14px">${has?'✅':'❌'}</span>
+        <span style="font-size:14px">${has?((rp.readOnly&&rp.readOnly.includes(p.id))?'👁️':'✅'):'❌'}</span>
       </td>`;
     }).join('');
     return `<tr><td style="font-weight:600">${p.label}</td>${cells}</tr>`;
@@ -4715,7 +4733,7 @@ function renderSettingsRoles(isAdmin, isSuperAdmin){
 
   return `
   <div class="settings-section-title">🔐 Rôles & Accès aux modules</div>
-  <div class="settings-section-sub">Matrice des droits d'accès par rôle. ✅ = accès autorisé · ❌ = accès refusé.${isSuperAdmin?' Utilisez ✏️ pour modifier les accès d\'un rôle, 🗑️ pour le supprimer.':''}</div>
+  <div class="settings-section-sub">Matrice des droits d'accès par rôle. ✅ = accès autorisé · 👁️ = lecture seule (consulter, imprimer, exporter) · ❌ = accès refusé.${isSuperAdmin?' Utilisez ✏️ pour modifier les accès d\'un rôle, 🗑️ pour le supprimer.':''}</div>
   ${isSuperAdmin?`<button class="btn btn-p btn-sm" style="margin-bottom:12px" onclick="openRoleModal()"><i class="fas fa-plus"></i> Nouveau rôle</button>`:''}
   <div class="card">
     <div class="card-bd tbl-wrap">
@@ -4755,11 +4773,13 @@ window.openRoleModal = function(roleKey){
   const pagesAll = rp && rp.pages==='all';
   const pagesSet = new Set(!pagesAll ? (rp?.pages||[]) : []);
   const noDeleteSet = new Set(rp?.noDelete||[]);
+  const readOnlySet = new Set(rp?.readOnly||[]);
   const grid = document.getElementById('rolePagesGrid');
   const gridDel = document.getElementById('roleDeleteGrid');
   if(locked){
     grid.innerHTML = `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Le rôle Administrateur a toujours accès à tous les modules.</div>`;
     gridDel.innerHTML = `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Le rôle Administrateur peut toujours tout supprimer.</div>`;
+    const gridRo0 = document.getElementById('roleReadOnlyGrid'); if(gridRo0) gridRo0.innerHTML = `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Le rôle Administrateur peut toujours tout modifier.</div>`;
   } else {
     grid.innerHTML = ROLE_MODULE_PAGES.map(p=>{
       const checked = pagesAll || pagesSet.has(p.id);
@@ -4768,6 +4788,7 @@ window.openRoleModal = function(roleKey){
       </label>`;
     }).join('');
     majRoleDeleteGridInterne(pagesAll, pagesSet, noDeleteSet);
+    majRoleReadOnlyGridInterne(pagesAll, pagesSet, readOnlySet);
   }
   openOverlay('mRole');
 };
@@ -4783,10 +4804,19 @@ function majRoleDeleteGridInterne(pagesAll, pagesSet, noDeleteSet){
     </label>`;
   }).join('') : `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Cochez d'abord des modules ci-dessus.</div>`;
 }
+function majRoleReadOnlyGridInterne(pagesAll, pagesSet, readOnlySet){
+  const g = document.getElementById('roleReadOnlyGrid'); if(!g) return;
+  const actives = ROLE_MODULE_PAGES.filter(p=>pagesAll || pagesSet.has(p.id));
+  g.innerHTML = actives.length ? actives.map(p=>`<label style="display:flex;align-items:center;gap:6px;font-size:11px;background:var(--bg);padding:5px 8px;border-radius:6px">
+      <input type="checkbox" class="roleReadOnlyChk" value="${p.id}" ${readOnlySet.has(p.id)?'checked':''}> ${esc(p.label)}
+    </label>`).join('') : `<div style="grid-column:1/-1;color:var(--text3);font-size:11px;padding:6px">Cochez d'abord des modules ci-dessus.</div>`;
+}
 window.majRoleDeleteGrid = function(){
   const pagesSet = new Set(Array.from(document.querySelectorAll('#rolePagesGrid .rolePageChk:checked')).map(c=>c.value));
   const dejaCoche = new Set(Array.from(document.querySelectorAll('#roleDeleteGrid .roleDeleteChk:checked')).map(c=>c.value));
   majRoleDeleteGridInterne(false, pagesSet, new Set(ROLE_MODULE_PAGES.filter(p=>pagesSet.has(p.id) && !dejaCoche.has(p.id)).map(p=>p.id)));
+  const roCoche = new Set(Array.from(document.querySelectorAll('#roleReadOnlyGrid .roleReadOnlyChk:checked')).map(c=>c.value));
+  majRoleReadOnlyGridInterne(false, pagesSet, roCoche);
 };
 
 window.saveRoleModal = async function(){
@@ -4811,7 +4841,8 @@ window.saveRoleModal = async function(){
   const noDelete = key==='admin' ? [] : (Array.isArray(pages) ? pages.filter(p=>!document.querySelector(`#roleDeleteGrid .roleDeleteChk[value="${p}"]`)?.checked) : []);
   const bg = color + '22'; // teinte claire dérivée de la couleur (alpha ~13%)
 
-  ROLE_PERMS[key] = { label, icon:'fa-'+iconRaw, color, bg, pages, noDelete };
+  const readOnly = key==='admin' ? [] : (Array.isArray(pages) ? pages.filter(p=>document.querySelector(`#roleReadOnlyGrid .roleReadOnlyChk[value="${p}"]`)?.checked) : []);
+  ROLE_PERMS[key] = { label, icon:'fa-'+iconRaw, color, bg, pages, noDelete, readOnly };
   try{
     await saveRoleOverrides();
     closeOverlay('mRole');
@@ -26127,6 +26158,7 @@ async function renderFinBande(ca){
   if(t==='calibrage') body=finTabCalibrage(rec,E); else if(t==='projection') body=finTabProjection(rec,E); else if(t==='bilan') body=finTabBilan(rec,E); else if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
   ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+finPrixBanner(rec,t)+finCoutsBanner(rec,t)+finAnalyseHtml(rec,E,t,cfg)+body+'</div>';
+  if(isReadOnly('finbande')) finApplyReadOnly(ca);
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
@@ -26190,7 +26222,7 @@ function finTabPresent(f,E,cfg){
 // Relevé daté conservé dans le dossier (exports reproductibles) ; les valeurs observées s'appliquent au dossier en un clic.
 async function finCalibLire(f){
   var type=f.typeLot==='broiler'?'broiler':'layer', pr=Object.assign({},SIMU_DEFAULTS,f.simu||{}), day=864e5;
-  var d=await Promise.all([getAll(S.FLOCKS),getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.EGG_PROD),getAll(S.FEEDING),getAll(S.SALES),getAll(S.PRODUITS)]);
+  var d=await Promise.all([getAll(S.FLOCKS),getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.EGG_PROD),getAll(S.FEEDING),getAll(S.SALES),getAll(S.PRODUITS),getAll(S.COND_BOM),getAll(S.MVTS)]);
   var flocks=d[0].filter(function(l){ return l.type===type&&(l.initialStock||0)>0&&l.startDate; }), ph=simuGetPhases(type,pr.semReforme);
   var lots=[], mortN=0,mortD=0, picS=0,picN=0, eggs=0,brk=0, feedPh={};
   ph.forEach(function(x){ feedPh[x.id]={kg:0,sd:0,jours:0}; });
@@ -26211,10 +26243,25 @@ async function finCalibLire(f){
   });
   // prix de vente des œufs (12 derniers mois, plateaux et cartons) et prix de réforme / carcasse
   var since=new Date(Date.now()-365*day).toISOString().slice(0,10), prods={}; d[8].forEach(function(p){ prods[p.id]=p; });
-  var eV=0,eN=0, nSales=0; d[7].forEach(function(v){ if((v.date||'')<since||v.statut==='annulee') return; (v.lignes||[]).forEach(function(l){ var p=prods[l.produitId], m=p&&p.ref&&/^CAL-(PLT|CAR)-/.exec(p.ref); if(!m||!(l.qte>0)||!(l.prixUnit>0)) return; var n=(m[1]==='PLT'?FIN_OEUFS_PLATEAU:FIN_OEUFS_CARTON); eN+=l.qte*n; eV+=l.qte*l.prixUnit; nSales++; }); });
+  var eV=0,eN=0, nSales=0, ePlt=0, eCar=0; d[7].forEach(function(v){ if((v.date||'')<since||v.statut==='annulee') return; (v.lignes||[]).forEach(function(l){ var p=prods[l.produitId], m=p&&p.ref&&/^CAL-(PLT|CAR)-/.exec(p.ref); if(!m||!(l.qte>0)||!(l.prixUnit>0)) return; var n=(m[1]==='PLT'?FIN_OEUFS_PLATEAU:FIN_OEUFS_CARTON); eN+=l.qte*n; eV+=l.qte*l.prixUnit; nSales++; if(m[1]==='PLT') ePlt+=l.qte*n; else eCar+=l.qte*n; }); });
   var rW=0,rV=0; d[2].filter(function(x){ return (x.date||'')>=since&&x.poidsCarcasse>0&&x.prixCarcasse>0; }).forEach(function(x){ rW+=x.poidsCarcasse; rV+=x.poidsCarcasse*x.prixCarcasse; });
   var feed={}; ph.forEach(function(x){ var fp=feedPh[x.id]; if(fp.jours>=7&&fp.sd>0) feed[x.id]={g:Math.round(fp.kg*1000/fp.sd*10)/10,jours:fp.jours}; });
-  return {ts:Date.now(),type:type,lots:lots,
+  // Emballages : nomenclature de conditionnement par défaut × prix des consommables (réceptions des 12 derniers mois, à défaut prix du catalogue), pondérés par la part plateaux / cartons vendue
+  var emb=null;
+  if(type==='layer'){
+    var boms=d[9]||[], bom=boms.filter(function(b){return b.parDefaut;})[0]||boms[0];
+    if(bom){
+      var buy={}; (d[10]||[]).forEach(function(mv){ if(mv.type==='entree'&&mv.cadre==='reception'&&(mv.date||'')>=since&&mv.prixUnit>0&&mv.quantite>0){ var b=buy[mv.produitId]=buy[mv.produitId]||{q:0,v:0}; b.q+=mv.quantite; b.v+=mv.quantite*mv.prixUnit; } });
+      var pri=function(id,qte){ if(!id||!(qte>0)) return null; var pd=prods[id]; if(!pd) return {nom:'produit introuvable',p:0,src:'produit supprimé',qte:qte}; var b=buy[id]; if(b&&b.q>0) return {nom:pd.nom,p:Math.round(b.v/b.q*100)/100,src:'achats réels (12 mois)',qte:qte}; return {nom:pd.nom,p:pd.prix>0?pd.prix:0,src:pd.prix>0?'prix du catalogue':'prix absent',qte:qte}; };
+      var r2=function(x){ return Math.round(x*100)/100; }, couvQte=bom.alvCouvQte==null?4:bom.alvCouvQte, pltPar=FIN_OEUFS_CARTON/FIN_OEUFS_PLATEAU;
+      var A=pri(bom.alvId,bom.alvQte), K=pri(bom.cartonId,bom.cartonQte), Fi=pri(bom.ficelleId,bom.ficelleQte), AC=pri(bom.alvCouvId||bom.alvId,couvQte);
+      var cPlt=A?A.qte*A.p:0, cCar=pltPar*cPlt+(K?K.qte*K.p:0)+(Fi?Fi.qte*Fi.p:0)+(AC?AC.qte*AC.p:0), tot=ePlt+eCar;
+      var manque=[A,K,Fi,AC].filter(function(x){ return x&&!(x.p>0); }).map(function(x){ return x.nom; });
+      emb={bom:bom.nom||'nomenclature par défaut',plt:Math.round(cPlt),car:Math.round(cCar),perEggPlt:r2(cPlt/FIN_OEUFS_PLATEAU),perEggCar:r2(cCar/FIN_OEUFS_CARTON),oeufsPlt:ePlt,oeufsCar:eCar,partCar:tot>0?Math.round(eCar/tot*100):null,
+        v:(tot>0&&!manque.length)?r2((ePlt*cPlt/FIN_OEUFS_PLATEAU+eCar*cCar/FIN_OEUFS_CARTON)/tot):null,lignes:{alv:A,carton:K,ficelle:Fi,couv:AC},manque:manque};
+    }
+  }
+  return {ts:Date.now(),type:type,lots:lots,emball:emb,
     mort:mortD>0?{v:Math.round(mortN/mortD*1000)/10,n:lots.filter(function(x){return x.complet;}).length}:null,
     pic:picN>0?{v:Math.round(picS/picN*10)/10,n:picN}:null,
     casse:eggs>0?{v:Math.round(brk/eggs*1000)/10,oeufs:eggs}:null,
@@ -26229,19 +26276,20 @@ window.finCalibRelever=async function(){
 // Lignes de comparaison : hypothèse du dossier, valeur observée, écart, valeur à appliquer
 function finCalibRows(f,E){
   var C=f.calib, p=E.p||{}, o=[]; if(!C) return o;
-  var add=function(k,lbl,hyp,obs,unit,tol,rel,apply,info){ if(obs==null) return; var ec=rel?(hyp>0?(obs-hyp)/hyp*100:0):obs-hyp; o.push({k:k,lbl:lbl,hyp:hyp,obs:obs,unit:unit,tol:tol,rel:rel,ec:ec,apply:apply,info:info||''}); };
+  var add=function(k,lbl,hyp,obs,unit,tol,rel,apply,info,dec){ if(obs==null) return; var ec=rel?(hyp>0?(obs-hyp)/hyp*100:0):obs-hyp; o.push({k:k,lbl:lbl,hyp:hyp,obs:obs,unit:unit,tol:tol,rel:rel,ec:ec,apply:apply,info:info||'',dec:dec||1}); };
   add('mort','Mortalité du cycle',+p.tauxMortalite,C.mort&&C.mort.v,' %',2,false,{tauxMortalite:C.mort&&C.mort.v},C.mort?C.mort.n+' lot(s) terminé(s)':'');
   if(C.type==='layer'){
     add('pic','Taux de ponte au pic',+p.tauxPonteMoy,C.pic&&C.pic.v,' %',3,false,{tauxPonteMoy:C.pic&&Math.min(98,C.pic.v)},C.pic?C.pic.n+' lot(s) · 4 meilleures semaines':'');
     add('casse','Œufs cassés ou déclassés',+p.tauxCasse,C.casse&&C.casse.v,' %',1,false,{tauxCasse:C.casse&&C.casse.v},C.casse?finN(C.casse.oeufs)+' œufs relevés':'');
     add('prix','Prix de vente moyen de l\'œuf',E.prixMoyen,C.prixOeuf&&C.prixOeuf.v,' '+finCur(),5,true,{prixOeufUnit:C.prixOeuf&&E.prixMoyen>0?Math.round((+p.prixOeufUnit||0)*C.prixOeuf.v/E.prixMoyen*10)/10:null},C.prixOeuf?finN(C.prixOeuf.oeufs)+' œufs vendus sur 12 mois ('+C.prixOeuf.ventes+' lignes)':'');
+    add('emball','Emballages par œuf vendu (alvéoles, cartons, ficelle)',+p.ext_emball,C.emball&&C.emball.v,' '+finCur()+'/œuf',15,true,{ext_emball:C.emball&&C.emball.v},C.emball?('nomenclature « '+C.emball.bom+' » ; '+(C.emball.partCar==null?'ventes non relevées':C.emball.partCar+' % des œufs vendus en cartons')):'',2);
     add('refor','Prix de la poule de réforme (par kg de carcasse)',+p.prixReformeKg,C.prixChair&&C.prixChair.v,' '+finCur(),10,true,{prixReformeKg:C.prixChair&&C.prixChair.v},C.prixChair?finN(C.prixChair.kg)+' kg vendus sur 12 mois':'');
   } else add('chair','Prix de la carcasse (par kg)',+p.prixCarcasseKg,C.prixChair&&C.prixChair.v,' '+finCur(),10,true,{prixCarcasseKg:C.prixChair&&C.prixChair.v},C.prixChair?finN(C.prixChair.kg)+' kg vendus sur 12 mois':'');
   return o;
 }
 function finCalibSt(r){ var a=Math.abs(r.ec); if(finCalibOpt(r)==='prudente') return a<=2*r.tol?'ok':'warn'; return a<=r.tol?'ok':(a<=2*r.tol?'warn':'ko'); }
 // Sens de l'écart : hypothèse optimiste ou prudente (mortalité et casse : plus haut = pire ; ponte et prix : plus haut = mieux)
-function finCalibOpt(r){ var worseIfHigher=(r.k==='mort'||r.k==='casse'); var pire=worseIfHigher?r.ec>0:r.ec<0; return pire?'optimiste':'prudente'; }
+function finCalibOpt(r){ var worseIfHigher=(r.k==='mort'||r.k==='casse'||r.k==='emball'); var pire=worseIfHigher?r.ec>0:r.ec<0; return pire?'optimiste':'prudente'; }
 window.finCalibAppliquer=async function(k){
   var r=window._fb.rec; if(!r||!r.calib) return; var E=finRun(r), row=finCalibRows(r,E).filter(function(x){return x.k===k;})[0]; if(!row) return;
   r.simu=Object.assign({},r.simu); Object.keys(row.apply).forEach(function(c){ if(row.apply[c]!=null) r.simu[c]=row.apply[c]; });
@@ -26258,12 +26306,22 @@ function finTabCalibrage(f,E){
   if(!C) return head+'<p style="font-size:12px;margin:0">Aucun relevé. Le calibrage lit les lots '+(f.typeLot==='broiler'?'de chair':'de pondeuses')+' de l\'ERP (mortalité, ponte, casse, aliment, ventes d\'œufs, réforme) et compare le réel aux hypothèses du dossier. Cliquez sur « Relever l\'historique ».</p></div></div>';
   if(!C.lots.length) return head+'<p style="font-size:12px;margin:0">Aucun lot '+(f.typeLot==='broiler'?'de chair':'de pondeuses')+' avec effectif de départ et date de démarrage dans l\'ERP : rien à calibrer.</p></div></div>';
   var tb='<table class="tbl" style="font-size:11px"><thead><tr><th>Paramètre</th><th>Hypothèse</th><th>Réel observé</th><th>Écart</th><th>Lecture</th><th>Source</th><th></th></tr></thead><tbody>'
-    +rows.map(function(r){ var st=finCalibSt(r), fm=function(v){ return finN(v,1)+r.unit; };
+    +rows.map(function(r){ var st=finCalibSt(r), fm=function(v){ return finN(v,r.dec||1)+r.unit; };
       return '<tr><td>'+esc(r.lbl)+'</td><td style="text-align:right">'+fm(r.hyp)+'</td><td style="text-align:right"><strong>'+fm(r.obs)+'</strong></td><td style="text-align:right">'+(r.ec>0?'+':'')+finN(r.ec,1)+(r.rel?' %':' pt')+'</td><td>'+ic[st]+' '+(st==='ok'?'cohérente':'hypothèse '+finCalibOpt(r))+'</td><td style="font-size:10px;color:var(--text3)">'+esc(r.info)+'</td><td><button class="btn btn-s btn-sm" onclick="finCalibAppliquer(\''+r.k+'\')">Appliquer</button></td></tr>'; }).join('')
     +(rows.length?'':'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Données insuffisantes dans les lots relevés (cycle terminé, semaines de ponte, ventes datées de moins de 12 mois).</td></tr>')+'</tbody></table>';
   var fp=Object.keys(C.feed||{}), ph=simuGetPhases(E.typeLot,(E.p||{}).semReforme), fb=fp.length?'<h4 style="margin:14px 0 6px;font-size:12px">Consommation d\'aliment par phase (g par sujet et par jour)</h4><table class="tbl" style="font-size:11px"><thead><tr><th>Phase</th><th>Modèle</th><th>Réel</th><th>Écart</th><th>Jours relevés</th></tr></thead><tbody>'+ph.filter(function(x){return C.feed[x.id];}).map(function(x){ var row=E.res.rows.filter(function(q){return q.ph.id===x.id;})[0], m=row?row.feedGPDPhase:null, g=C.feed[x.id].g, e=m>0?(g-m)/m*100:0; return '<tr><td>'+esc(x.label)+'</td><td style="text-align:right">'+finN(m,1)+'</td><td style="text-align:right"><strong>'+finN(g,1)+'</strong></td><td style="text-align:right">'+(e>0?'+':'')+finN(e,1)+' %</td><td style="text-align:right">'+C.feed[x.id].jours+'</td></tr>'; }).join('')+'</tbody></table>':'';
+  var EM=C.emball, eb='';
+  if(C.type==='layer'){
+    eb='<h4 style="margin:14px 0 6px;font-size:12px">Emballages : détail du calcul (nomenclature de conditionnement de l\'ERP)</h4>';
+    if(!EM) eb+='<p style="font-size:12px;margin:0">Aucune nomenclature de conditionnement dans l\'ERP : définissez-la (alvéole par plateau, carton vide, ficelle, alvéoles de couverture) dans le module Conditionnement pour calculer le coût réel d\'emballage.</p>';
+    else{ var L=EM.lignes, ln=function(lbl,x){ return x?'<tr><td>'+esc(lbl)+' — '+esc(x.nom)+'</td><td style="text-align:right">'+finN(x.qte,x.qte%1?1:0)+'</td><td style="text-align:right">'+(x.p>0?finN(x.p,2)+' '+esc(finCur()):'<strong style="color:#b91c1c">manquant</strong>')+'</td><td style="font-size:10px;color:var(--text3)">'+esc(x.src)+'</td></tr>':''; };
+      eb+='<table class="tbl" style="font-size:11px"><thead><tr><th>Consommable</th><th>Quantité</th><th>Prix unitaire</th><th>Source du prix</th></tr></thead><tbody>'+ln('Alvéole par plateau de '+FIN_OEUFS_PLATEAU+' œufs',L.alv)+ln('Carton vide par carton',L.carton)+ln('Ficelle par carton',L.ficelle)+ln('Alvéoles de couverture par carton',L.couv)+'</tbody></table>'
+        +'<p style="font-size:11px;margin:6px 0 0">Nomenclature « '+esc(EM.bom)+' » : un plateau coûte <strong>'+finM(EM.plt)+'</strong> ('+finN(EM.perEggPlt,2)+' '+esc(finCur())+' par œuf) ; un carton de '+FIN_OEUFS_CARTON+' œufs ('+(FIN_OEUFS_CARTON/FIN_OEUFS_PLATEAU)+' plateaux, carton, ficelle, couverture) coûte <strong>'+finM(EM.car)+'</strong> ('+finN(EM.perEggCar,2)+' '+esc(finCur())+' par œuf).'
+        +(EM.partCar==null?' Ventes en plateaux et cartons non relevées : le coût réel par œuf se situe entre ces deux valeurs.':' Sur 12 mois, '+EM.partCar+' % des œufs vendus l\'ont été en cartons, d\'où un coût moyen de <strong>'+(EM.v==null?'—':finN(EM.v,2)+' '+esc(finCur())+' par œuf')+'</strong>.')
+        +(EM.manque.length?' <span style="color:#b91c1c">Prix manquant pour : '+esc(EM.manque.join(', '))+' — renseignez-le dans le catalogue produits ou par une réception.</span>':'')+'</p>'; }
+  }
   var lt='<h4 style="margin:14px 0 6px;font-size:12px">Lots relevés</h4><table class="tbl" style="font-size:11px"><thead><tr><th>Lot</th><th>Âge (sem.)</th><th>Effectif de départ</th><th>Mortalité</th><th>Cycle</th><th>Pic de ponte</th></tr></thead><tbody>'+C.lots.map(function(l){ return '<tr><td>'+esc(l.nom)+'</td><td style="text-align:right">'+l.age+'</td><td style="text-align:right">'+finN(l.init)+'</td><td style="text-align:right">'+finN(l.mortPct,1)+' %</td><td>'+(l.complet?'terminé':'en cours')+'</td><td style="text-align:right">'+(l.pic==null?'—':finN(l.pic,1)+' %')+'</td></tr>'; }).join('')+'</tbody></table>';
-  return head+tb+(rows.length?'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finCalibTout()"><i class="fas fa-check-double"></i> Appliquer toutes les valeurs observées</button> <span style="font-size:11px;color:var(--text3)">Écrit les valeurs dans les hypothèses du dossier ('+finTabRef('montage')+'). Une hypothèse plus favorable que le réel doit se justifier devant un financeur.</span></div>':'')+fb+lt+'<p style="font-size:10px;color:var(--text3);margin-top:8px">Mortalité : lots dont au moins 90 % de l\'effectif est sorti. Pic de ponte : moyenne des 4 meilleures semaines (au moins 4 jours de saisie par semaine, 4 semaines minimum). Prix : plateaux (30 œufs) et cartons (360 œufs) vendus sur 12 mois, hors ventes annulées. Les lots relevés sont tous ceux du même type, pas seulement le lot financé.</p></div></div>';
+  return head+tb+eb+(rows.length?'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finCalibTout()"><i class="fas fa-check-double"></i> Appliquer toutes les valeurs observées</button> <span style="font-size:11px;color:var(--text3)">Écrit les valeurs dans les hypothèses du dossier ('+finTabRef('montage')+'). Une hypothèse plus favorable que le réel doit se justifier devant un financeur.</span></div>':'')+fb+lt+'<p style="font-size:10px;color:var(--text3);margin-top:8px">Mortalité : lots dont au moins 90 % de l\'effectif est sorti. Pic de ponte : moyenne des 4 meilleures semaines (au moins 4 jours de saisie par semaine, 4 semaines minimum). Prix : plateaux (30 œufs) et cartons (360 œufs) vendus sur 12 mois, hors ventes annulées. Les lots relevés sont tous ceux du même type, pas seulement le lot financé. Emballages : prix = moyenne pondérée des réceptions des 12 derniers mois, à défaut prix du catalogue ; un carton = '+(FIN_OEUFS_CARTON/FIN_OEUFS_PLATEAU)+' plateaux.</p></div></div>';
 }
 function finTabMarche(f,E){
   return finBpCard('📦 Produit et clientèle',finBpTa(f,'produit','Description du produit, calibres, conditionnement, prix retenu',4,'Vide : texte type généré à partir de la Simulation (prix de l\'œuf, calibres, mix). Précisez conditionnement et source du prix.'),'Chapitre 4.1. La source du prix de vente se saisit dans '+finTabRef('montage')+'.')
@@ -26501,7 +26559,7 @@ function finAnalyse(f,E,tab,cfg,deep){
     else if(!f.calib.lots.length) X('warn','Calibrage : aucun lot de ce type dans l\'ERP.','Saisir au moins un lot terminé avec ses relevés (mortalité, ponte, aliment, ventes) pour pouvoir calibrer.');
     else{
       if(!CR.length) X('warn','Calibrage : données insuffisantes dans les lots relevés.','Compléter les saisies (lots terminés, semaines de ponte, ventes d\'œufs datées) puis actualiser le relevé.');
-      CR.forEach(function(r){ var st=finCalibSt(r), opt=finCalibOpt(r); X(st,r.lbl+' : hypothèse '+finN(r.hyp,1)+r.unit+', réel '+finN(r.obs,1)+r.unit+(st==='ok'&&opt==='prudente'&&Math.abs(r.ec)>r.tol?' (prudente)':st==='ok'?'':' (hypothèse '+opt+')'),'Aligner l\'hypothèse sur le réel (bouton « Appliquer »)'+(opt==='optimiste'?' ou justifier l\'écart par une amélioration documentée (souche, aliment, bâtiment) : une hypothèse plus favorable que l\'historique est le premier point contesté par un financeur.':' : l\'hypothèse est plus prudente que le réel, acceptable si c\'est voulu.')); });
+      CR.forEach(function(r){ var st=finCalibSt(r), opt=finCalibOpt(r); X(st,r.lbl+' : hypothèse '+finN(r.hyp,r.dec||1)+r.unit+', réel '+finN(r.obs,r.dec||1)+r.unit+(st==='ok'&&opt==='prudente'&&Math.abs(r.ec)>r.tol?' (prudente)':st==='ok'?'':' (hypothèse '+opt+')'),'Aligner l\'hypothèse sur le réel (bouton « Appliquer »)'+(opt==='optimiste'?' ou justifier l\'écart par une amélioration documentée (souche, aliment, bâtiment) : une hypothèse plus favorable que l\'historique est le premier point contesté par un financeur.':' : l\'hypothèse est plus prudente que le réel, acceptable si c\'est voulu.')); });
     }
   }
   else if(tab==='bilan'){
@@ -26601,17 +26659,87 @@ function finDiff(a,b,p,out){
   return out;
 }
 // Enregistrement : journal des modifications (qui, quand, quel champ, ancienne → nouvelle valeur) et refus des modifications sur un dossier verrouillé
+// ══ Travail à plusieurs : fusion à l'enregistrement (3 voies, par champ), rafraîchissement temps réel, lecture seule ══
+// Base = état du dossier à la dernière lecture (_finPrev), « mien » = dossier en cours de saisie, « leur » = dernier état enregistré par un autre utilisateur.
+function finCanon(v){
+  if(v===undefined) return 'u';
+  if(Array.isArray(v)) return '['+v.map(finCanon).join(',')+']';
+  if(v&&typeof v==='object') return '{'+Object.keys(v).sort().map(function(k){ return JSON.stringify(k)+':'+finCanon(v[k]); }).join(',')+'}';
+  return JSON.stringify(v);
+}
+function finMerge3(b,m,t,path,conf){
+  conf=conf||[]; path=path||'';
+  var isO=function(x){ return x&&typeof x==='object'&&!Array.isArray(x); }, out={}, keys={};
+  [b,m,t].forEach(function(o){ if(isO(o)) Object.keys(o).forEach(function(k){ keys[k]=1; }); });
+  Object.keys(keys).forEach(function(k){
+    var p=path?path+'.'+k:k, bk=isO(b)?b[k]:undefined, mk=isO(m)?m[k]:undefined, tk=isO(t)?t[k]:undefined, cb=finCanon(bk), cm=finCanon(mk), ct=finCanon(tk), val;
+    if(!path&&(k==='journal'||k==='docs')){
+      var seen={}, u=[]; (Array.isArray(tk)?tk:[]).concat(Array.isArray(mk)?mk:[]).forEach(function(e){ var c=finCanon(e); if(!seen[c]){ seen[c]=1; u.push(e); } });
+      u.sort(function(x,y){ return ((x&&x.ts)||0)-((y&&y.ts)||0); }); val=u.slice(k==='journal'?-400:-200);
+    }
+    else if(cm===cb) val=tk;                  // je n'ai pas touché ce champ : valeur de l'autre utilisateur
+    else if(ct===cb) val=mk;                  // l'autre n'y a pas touché : ma valeur
+    else if(cm===ct) val=mk;                  // même modification des deux côtés
+    else if(isO(mk)&&isO(tk)) val=finMerge3(bk,mk,tk,p,conf).merged;
+    else { val=mk; conf.push(p); }            // modifié des deux côtés : ma valeur est conservée, conflit signalé
+    if(val!==undefined) out[k]=val;
+  });
+  return {merged:out,conflicts:conf};
+}
+// Version et contenu du dossier côté serveur (une seule ligne, requête légère)
+async function finRemote(id,withData){
+  if(typeof supa==='undefined'||!supa||!(id>0)) return null;
+  try{ var r=await supa.from('avico_records').select(withData?'id,version,data':'id,version').eq('id',id).eq('store',S.FINBANDE).eq('org_id',SUPA_ORG).maybeSingle(); return (r&&r.data)||null; }catch(e){ return null; }
+}
+// Enregistrement : lecture seule, verrou, journal, puis fusion avec les modifications faites entre-temps par un autre utilisateur
 async function finSave(rec){
-  var prevS=_finPrev[rec.id], diffs=[];
-  if(prevS){
-    var prev=JSON.parse(prevS); diffs=finDiff(prev,rec);
+  var prevS=_finPrev[rec.id], diffs=[], prev=prevS?JSON.parse(prevS):null, restore=function(src){ Object.keys(rec).forEach(function(k){ delete rec[k]; }); Object.assign(rec,src); };
+  if(isReadOnly('finbande')){ if(prev) restore(prev); toast('👁️ Lecture seule : votre rôle permet de consulter ce dossier, pas de le modifier','err'); return; }
+  if(prev){
+    diffs=finDiff(prev,rec);
     if(diffs.length&&rec.verrou&&diffs.some(function(d){return !/^(suivi|statut)/.test(d.c);})){
-      Object.keys(rec).forEach(function(k){ delete rec[k]; }); Object.assign(rec,prev);
+      restore(prev);
       toast('🔒 Dossier verrouillé (version v'+((prev.verrou&&prev.verrou.ver)||'?')+') : déverrouillez-le pour le modifier','err'); return;
     }
     if(diffs.length){ var u=finUserName(), ts=Date.now(), ent=diffs.length>12?[{c:'(modification multiple)',a:'',n:diffs.length+' champs'}]:diffs; rec.journal=(rec.journal||[]).concat(ent.map(function(d){ return {ts:ts,u:u,c:d.c,a:d.a,n:d.n}; })).slice(-400); }
   }
+  var key=S.FINBANDE+':'+rec.id, known=(typeof _recVersions!=='undefined')?_recVersions[key]:undefined;
+  if(prev&&known!==undefined){
+    var head=await finRemote(rec.id,false);
+    if(head&&head.version!==known){
+      var full=await finRemote(rec.id,true);
+      if(full&&full.data){
+        var cur=Object.assign({id:rec.id},full.data), M=finMerge3(prev,rec,cur);
+        if(cur.verrou&&!prev.verrou&&diffs.some(function(d){return !/^(suivi|statut)/.test(d.c);})){
+          restore(cur); _recVersions[key]=full.version; _finPrev[rec.id]=JSON.stringify(rec);
+          toast('🔒 Dossier verrouillé entre-temps par un autre utilisateur : votre modification n\'a pas été enregistrée','err'); return;
+        }
+        restore(M.merged); rec.id=cur.id; _recVersions[key]=full.version;
+        if(M.conflicts.length){ rec.journal=(rec.journal||[]).concat([{ts:Date.now(),u:finUserName(),c:'(fusion)',a:'',n:M.conflicts.length+' champ(s) modifié(s) en parallèle, votre valeur conservée : '+M.conflicts.slice(0,3).join(', ')+(M.conflicts.length>3?'…':'')}]).slice(-400); toast('⚠️ '+M.conflicts.length+' champ(s) modifié(s) en même temps par un autre utilisateur : votre valeur est conservée ('+M.conflicts.slice(0,2).join(', ')+(M.conflicts.length>2?'…':'')+')','err'); }
+        else toast('🔄 Vos modifications ont été fusionnées avec celles d\'un autre utilisateur');
+      }
+    }
+  }
   await updRec(S.FINBANDE,rec.id,rec); _finPrev[rec.id]=JSON.stringify(rec);
+}
+// Modification faite par un autre utilisateur (événement temps réel) : actualisation, ou bandeau si une saisie est en cours
+window.finOnRemote=async function(){
+  var B=window._fb; if(!B||!B.rec) return;
+  var all=await getAll(S.FINBANDE), cur=all.find(function(x){return x.id===B.rec.id;}); if(!cur) return;
+  var prevS=_finPrev[cur.id]; if(prevS&&finCanon(JSON.parse(prevS))===finCanon(cur)) return;   // écho de notre propre enregistrement
+  var last=(cur.journal||[]).slice(-1)[0], who=(last&&last.u&&last.u!==finUserName())?last.u:'un autre utilisateur';
+  var ed=document.activeElement, editing=!!(ed&&/^(INPUT|TEXTAREA|SELECT)$/.test(ed.tagName)&&ed.closest&&ed.closest('.fb-wrap'));
+  if(editing){
+    if(!document.getElementById('finRemoteBanner')){ var w=document.querySelector('.fb-wrap'); if(w) w.insertAdjacentHTML('afterbegin','<div id="finRemoteBanner" style="background:#eff6ff;border:1px solid #93c5fd;border-left:4px solid #3b82f6;border-radius:8px;padding:8px 12px;font-size:12px;color:#1e3a8a;margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>🔄 Ce dossier a été modifié par '+esc(who)+'. Vos saisies sont fusionnées à l\'enregistrement.</span><button class="btn btn-s btn-sm" onclick="document.getElementById(\'finRemoteBanner\').remove();finRefresh()">Actualiser maintenant</button></div>'); }
+    return;
+  }
+  await finRefresh(); toast('🔄 Dossier mis à jour par '+who);
+};
+// Lecture seule : champs et boutons de modification désactivés, consultation, impression et exports conservés
+function finApplyReadOnly(root){
+  var SAFE=/^(fbTab|finBilanVue|finCEPvue|finImprimer|finExporter|finCSV|finCEPcsv|finPick)/;
+  root.querySelectorAll('.fb-wrap input,.fb-wrap select,.fb-wrap textarea,.fb-wrap button').forEach(function(el){ var h=el.getAttribute('onclick')||el.getAttribute('onchange')||''; if(SAFE.test(h)) return; el.disabled=true; });
+  var w=root.querySelector('.fb-wrap'); if(w) w.insertAdjacentHTML('afterbegin','<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-left:4px solid #64748b;border-radius:8px;padding:8px 12px;font-size:12px;color:#334155;margin-bottom:10px">👁️ <strong>Lecture seule</strong> : votre rôle permet de consulter ce dossier, de l\'imprimer et de l\'exporter, pas de le modifier.</div>');
 }
 async function finMeta(rec,j){ if(j) rec.journal=(rec.journal||[]).concat([{ts:Date.now(),u:finUserName(),c:j[0],a:j[1]||'',n:j[2]||''}]).slice(-400); await updRec(S.FINBANDE,rec.id,rec); _finPrev[rec.id]=JSON.stringify(rec); }
 async function finRegistrer(f,type,fmt){
@@ -26870,7 +26998,7 @@ function finBpBlocks(D){
   T(['Hypothèse','Valeur'],[['Effectif logé',finN(S.nbBetes)+' sujets'],['Souche',S.souche||'Général'],['Taux de ponte au pic',finN(S.tauxPonteMoy,1)+' %'],['Prix de l\'œuf (gros calibre)',finN(S.prixOeufUnit)+' F'],['Casse / déclassement',finN(S.tauxCasse,1)+' %'],['Mortalité du cycle',finN(S.tauxMortalite,1)+' %'],['Poussin / poulette J0',finF(layer?S.coutPoussineLayer:S.coutPoussin)],['Aliment démarrage / croissance / pré-ponte / ponte (F/kg)',[S.coutAlimentD,S.coutAlimentC,S.coutAlimentPP,S.coutAlimentP].map(function(x){return finN(x);}).join(' / ')],['Réforme à la semaine',finN(S.semReforme)],['Taux d\'actualisation',finN(f.tauxActu)+' %'],['Frais de dossier / aléas',finN(f.fraisDossierPct,1)+' % / '+finN(f.contingence)+' %'],['Charges externes incluses',S.extOn===false?'non':'oui (part imputée '+finN(S.extPart==null?100:S.extPart)+' %)']]);
   if(f.calib&&finCalibRows(f,E).length){ var CRb=finCalibRows(f,E);
     H2('Hypothèses confrontées à l\'historique de la ferme');
-    T(['Paramètre','Hypothèse','Réel observé','Écart','Source'],CRb.map(function(r){ var fm=function(v){ return finN(v,1)+r.unit; }; return [r.lbl,fm(r.hyp),fm(r.obs),(r.ec>0?'+':'')+finN(r.ec,1)+(r.rel?' %':' pt'),r.info]; }),{right:[1,2,3]});
+    T(['Paramètre','Hypothèse','Réel observé','Écart','Source'],CRb.map(function(r){ var fm=function(v){ return finN(v,r.dec||1)+r.unit; }; return [r.lbl,fm(r.hyp),fm(r.obs),(r.ec>0?'+':'')+finN(r.ec,1)+(r.rel?' %':' pt'),r.info]; }),{right:[1,2,3]});
     P('Relevé du '+new Date(f.calib.ts).toLocaleDateString('fr-FR')+' sur '+f.calib.lots.length+' lot(s) de l\'exploitation. Les hypothèses plus favorables que le réel sont à justifier.',{i:true}); }
   H2('Charges externes : prestataires, structure, commercial, logistique');
   var ex=EXT_DEFS.map(function(x){ var v=S['ext_'+x.k]; v=(v==null?x.def:v); return [x.g,x.lbl,x.cpt,x.auto?finN(D.com.commis,2)+' (canaux)':finN(v,x.mode==='oeuf'||x.mode==='pctCA'?2:0),EXT_UNIT[x.mode],finF((E.extTot||{})[x.k]||0)]; }); ex.push(['','Total charges externes','','','',finF(D.extTot)]);
