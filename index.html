@@ -26190,7 +26190,7 @@ function finTabPresent(f,E,cfg){
 // Relevé daté conservé dans le dossier (exports reproductibles) ; les valeurs observées s'appliquent au dossier en un clic.
 async function finCalibLire(f){
   var type=f.typeLot==='broiler'?'broiler':'layer', pr=Object.assign({},SIMU_DEFAULTS,f.simu||{}), day=864e5;
-  var d=await Promise.all([getAll(S.FLOCKS),getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.EGG_PROD),getAll(S.FEEDING),getAll(S.SALES),getAll(S.PRODUITS)]);
+  var d=await Promise.all([getAll(S.FLOCKS),getAll(S.MORTALITE),getAll(S.REFORME),getAll(S.VENTE_VIVANT),getAll(S.SLAUGHTER),getAll(S.EGG_PROD),getAll(S.FEEDING),getAll(S.SALES),getAll(S.PRODUITS),getAll(S.COND_BOM),getAll(S.MVTS)]);
   var flocks=d[0].filter(function(l){ return l.type===type&&(l.initialStock||0)>0&&l.startDate; }), ph=simuGetPhases(type,pr.semReforme);
   var lots=[], mortN=0,mortD=0, picS=0,picN=0, eggs=0,brk=0, feedPh={};
   ph.forEach(function(x){ feedPh[x.id]={kg:0,sd:0,jours:0}; });
@@ -26211,10 +26211,25 @@ async function finCalibLire(f){
   });
   // prix de vente des œufs (12 derniers mois, plateaux et cartons) et prix de réforme / carcasse
   var since=new Date(Date.now()-365*day).toISOString().slice(0,10), prods={}; d[8].forEach(function(p){ prods[p.id]=p; });
-  var eV=0,eN=0, nSales=0; d[7].forEach(function(v){ if((v.date||'')<since||v.statut==='annulee') return; (v.lignes||[]).forEach(function(l){ var p=prods[l.produitId], m=p&&p.ref&&/^CAL-(PLT|CAR)-/.exec(p.ref); if(!m||!(l.qte>0)||!(l.prixUnit>0)) return; var n=(m[1]==='PLT'?FIN_OEUFS_PLATEAU:FIN_OEUFS_CARTON); eN+=l.qte*n; eV+=l.qte*l.prixUnit; nSales++; }); });
+  var eV=0,eN=0, nSales=0, ePlt=0, eCar=0; d[7].forEach(function(v){ if((v.date||'')<since||v.statut==='annulee') return; (v.lignes||[]).forEach(function(l){ var p=prods[l.produitId], m=p&&p.ref&&/^CAL-(PLT|CAR)-/.exec(p.ref); if(!m||!(l.qte>0)||!(l.prixUnit>0)) return; var n=(m[1]==='PLT'?FIN_OEUFS_PLATEAU:FIN_OEUFS_CARTON); eN+=l.qte*n; eV+=l.qte*l.prixUnit; nSales++; if(m[1]==='PLT') ePlt+=l.qte*n; else eCar+=l.qte*n; }); });
   var rW=0,rV=0; d[2].filter(function(x){ return (x.date||'')>=since&&x.poidsCarcasse>0&&x.prixCarcasse>0; }).forEach(function(x){ rW+=x.poidsCarcasse; rV+=x.poidsCarcasse*x.prixCarcasse; });
   var feed={}; ph.forEach(function(x){ var fp=feedPh[x.id]; if(fp.jours>=7&&fp.sd>0) feed[x.id]={g:Math.round(fp.kg*1000/fp.sd*10)/10,jours:fp.jours}; });
-  return {ts:Date.now(),type:type,lots:lots,
+  // Emballages : nomenclature de conditionnement par défaut × prix des consommables (réceptions des 12 derniers mois, à défaut prix du catalogue), pondérés par la part plateaux / cartons vendue
+  var emb=null;
+  if(type==='layer'){
+    var boms=d[9]||[], bom=boms.filter(function(b){return b.parDefaut;})[0]||boms[0];
+    if(bom){
+      var buy={}; (d[10]||[]).forEach(function(mv){ if(mv.type==='entree'&&mv.cadre==='reception'&&(mv.date||'')>=since&&mv.prixUnit>0&&mv.quantite>0){ var b=buy[mv.produitId]=buy[mv.produitId]||{q:0,v:0}; b.q+=mv.quantite; b.v+=mv.quantite*mv.prixUnit; } });
+      var pri=function(id,qte){ if(!id||!(qte>0)) return null; var pd=prods[id]; if(!pd) return {nom:'produit introuvable',p:0,src:'produit supprimé',qte:qte}; var b=buy[id]; if(b&&b.q>0) return {nom:pd.nom,p:Math.round(b.v/b.q*100)/100,src:'achats réels (12 mois)',qte:qte}; return {nom:pd.nom,p:pd.prix>0?pd.prix:0,src:pd.prix>0?'prix du catalogue':'prix absent',qte:qte}; };
+      var r2=function(x){ return Math.round(x*100)/100; }, couvQte=bom.alvCouvQte==null?4:bom.alvCouvQte, pltPar=FIN_OEUFS_CARTON/FIN_OEUFS_PLATEAU;
+      var A=pri(bom.alvId,bom.alvQte), K=pri(bom.cartonId,bom.cartonQte), Fi=pri(bom.ficelleId,bom.ficelleQte), AC=pri(bom.alvCouvId||bom.alvId,couvQte);
+      var cPlt=A?A.qte*A.p:0, cCar=pltPar*cPlt+(K?K.qte*K.p:0)+(Fi?Fi.qte*Fi.p:0)+(AC?AC.qte*AC.p:0), tot=ePlt+eCar;
+      var manque=[A,K,Fi,AC].filter(function(x){ return x&&!(x.p>0); }).map(function(x){ return x.nom; });
+      emb={bom:bom.nom||'nomenclature par défaut',plt:Math.round(cPlt),car:Math.round(cCar),perEggPlt:r2(cPlt/FIN_OEUFS_PLATEAU),perEggCar:r2(cCar/FIN_OEUFS_CARTON),oeufsPlt:ePlt,oeufsCar:eCar,partCar:tot>0?Math.round(eCar/tot*100):null,
+        v:(tot>0&&!manque.length)?r2((ePlt*cPlt/FIN_OEUFS_PLATEAU+eCar*cCar/FIN_OEUFS_CARTON)/tot):null,lignes:{alv:A,carton:K,ficelle:Fi,couv:AC},manque:manque};
+    }
+  }
+  return {ts:Date.now(),type:type,lots:lots,emball:emb,
     mort:mortD>0?{v:Math.round(mortN/mortD*1000)/10,n:lots.filter(function(x){return x.complet;}).length}:null,
     pic:picN>0?{v:Math.round(picS/picN*10)/10,n:picN}:null,
     casse:eggs>0?{v:Math.round(brk/eggs*1000)/10,oeufs:eggs}:null,
@@ -26229,19 +26244,20 @@ window.finCalibRelever=async function(){
 // Lignes de comparaison : hypothèse du dossier, valeur observée, écart, valeur à appliquer
 function finCalibRows(f,E){
   var C=f.calib, p=E.p||{}, o=[]; if(!C) return o;
-  var add=function(k,lbl,hyp,obs,unit,tol,rel,apply,info){ if(obs==null) return; var ec=rel?(hyp>0?(obs-hyp)/hyp*100:0):obs-hyp; o.push({k:k,lbl:lbl,hyp:hyp,obs:obs,unit:unit,tol:tol,rel:rel,ec:ec,apply:apply,info:info||''}); };
+  var add=function(k,lbl,hyp,obs,unit,tol,rel,apply,info,dec){ if(obs==null) return; var ec=rel?(hyp>0?(obs-hyp)/hyp*100:0):obs-hyp; o.push({k:k,lbl:lbl,hyp:hyp,obs:obs,unit:unit,tol:tol,rel:rel,ec:ec,apply:apply,info:info||'',dec:dec||1}); };
   add('mort','Mortalité du cycle',+p.tauxMortalite,C.mort&&C.mort.v,' %',2,false,{tauxMortalite:C.mort&&C.mort.v},C.mort?C.mort.n+' lot(s) terminé(s)':'');
   if(C.type==='layer'){
     add('pic','Taux de ponte au pic',+p.tauxPonteMoy,C.pic&&C.pic.v,' %',3,false,{tauxPonteMoy:C.pic&&Math.min(98,C.pic.v)},C.pic?C.pic.n+' lot(s) · 4 meilleures semaines':'');
     add('casse','Œufs cassés ou déclassés',+p.tauxCasse,C.casse&&C.casse.v,' %',1,false,{tauxCasse:C.casse&&C.casse.v},C.casse?finN(C.casse.oeufs)+' œufs relevés':'');
     add('prix','Prix de vente moyen de l\'œuf',E.prixMoyen,C.prixOeuf&&C.prixOeuf.v,' '+finCur(),5,true,{prixOeufUnit:C.prixOeuf&&E.prixMoyen>0?Math.round((+p.prixOeufUnit||0)*C.prixOeuf.v/E.prixMoyen*10)/10:null},C.prixOeuf?finN(C.prixOeuf.oeufs)+' œufs vendus sur 12 mois ('+C.prixOeuf.ventes+' lignes)':'');
+    add('emball','Emballages par œuf vendu (alvéoles, cartons, ficelle)',+p.ext_emball,C.emball&&C.emball.v,' '+finCur()+'/œuf',15,true,{ext_emball:C.emball&&C.emball.v},C.emball?('nomenclature « '+C.emball.bom+' » ; '+(C.emball.partCar==null?'ventes non relevées':C.emball.partCar+' % des œufs vendus en cartons')):'',2);
     add('refor','Prix de la poule de réforme (par kg de carcasse)',+p.prixReformeKg,C.prixChair&&C.prixChair.v,' '+finCur(),10,true,{prixReformeKg:C.prixChair&&C.prixChair.v},C.prixChair?finN(C.prixChair.kg)+' kg vendus sur 12 mois':'');
   } else add('chair','Prix de la carcasse (par kg)',+p.prixCarcasseKg,C.prixChair&&C.prixChair.v,' '+finCur(),10,true,{prixCarcasseKg:C.prixChair&&C.prixChair.v},C.prixChair?finN(C.prixChair.kg)+' kg vendus sur 12 mois':'');
   return o;
 }
 function finCalibSt(r){ var a=Math.abs(r.ec); if(finCalibOpt(r)==='prudente') return a<=2*r.tol?'ok':'warn'; return a<=r.tol?'ok':(a<=2*r.tol?'warn':'ko'); }
 // Sens de l'écart : hypothèse optimiste ou prudente (mortalité et casse : plus haut = pire ; ponte et prix : plus haut = mieux)
-function finCalibOpt(r){ var worseIfHigher=(r.k==='mort'||r.k==='casse'); var pire=worseIfHigher?r.ec>0:r.ec<0; return pire?'optimiste':'prudente'; }
+function finCalibOpt(r){ var worseIfHigher=(r.k==='mort'||r.k==='casse'||r.k==='emball'); var pire=worseIfHigher?r.ec>0:r.ec<0; return pire?'optimiste':'prudente'; }
 window.finCalibAppliquer=async function(k){
   var r=window._fb.rec; if(!r||!r.calib) return; var E=finRun(r), row=finCalibRows(r,E).filter(function(x){return x.k===k;})[0]; if(!row) return;
   r.simu=Object.assign({},r.simu); Object.keys(row.apply).forEach(function(c){ if(row.apply[c]!=null) r.simu[c]=row.apply[c]; });
@@ -26258,12 +26274,22 @@ function finTabCalibrage(f,E){
   if(!C) return head+'<p style="font-size:12px;margin:0">Aucun relevé. Le calibrage lit les lots '+(f.typeLot==='broiler'?'de chair':'de pondeuses')+' de l\'ERP (mortalité, ponte, casse, aliment, ventes d\'œufs, réforme) et compare le réel aux hypothèses du dossier. Cliquez sur « Relever l\'historique ».</p></div></div>';
   if(!C.lots.length) return head+'<p style="font-size:12px;margin:0">Aucun lot '+(f.typeLot==='broiler'?'de chair':'de pondeuses')+' avec effectif de départ et date de démarrage dans l\'ERP : rien à calibrer.</p></div></div>';
   var tb='<table class="tbl" style="font-size:11px"><thead><tr><th>Paramètre</th><th>Hypothèse</th><th>Réel observé</th><th>Écart</th><th>Lecture</th><th>Source</th><th></th></tr></thead><tbody>'
-    +rows.map(function(r){ var st=finCalibSt(r), fm=function(v){ return finN(v,1)+r.unit; };
+    +rows.map(function(r){ var st=finCalibSt(r), fm=function(v){ return finN(v,r.dec||1)+r.unit; };
       return '<tr><td>'+esc(r.lbl)+'</td><td style="text-align:right">'+fm(r.hyp)+'</td><td style="text-align:right"><strong>'+fm(r.obs)+'</strong></td><td style="text-align:right">'+(r.ec>0?'+':'')+finN(r.ec,1)+(r.rel?' %':' pt')+'</td><td>'+ic[st]+' '+(st==='ok'?'cohérente':'hypothèse '+finCalibOpt(r))+'</td><td style="font-size:10px;color:var(--text3)">'+esc(r.info)+'</td><td><button class="btn btn-s btn-sm" onclick="finCalibAppliquer(\''+r.k+'\')">Appliquer</button></td></tr>'; }).join('')
     +(rows.length?'':'<tr><td colspan="7" style="text-align:center;color:var(--text3)">Données insuffisantes dans les lots relevés (cycle terminé, semaines de ponte, ventes datées de moins de 12 mois).</td></tr>')+'</tbody></table>';
   var fp=Object.keys(C.feed||{}), ph=simuGetPhases(E.typeLot,(E.p||{}).semReforme), fb=fp.length?'<h4 style="margin:14px 0 6px;font-size:12px">Consommation d\'aliment par phase (g par sujet et par jour)</h4><table class="tbl" style="font-size:11px"><thead><tr><th>Phase</th><th>Modèle</th><th>Réel</th><th>Écart</th><th>Jours relevés</th></tr></thead><tbody>'+ph.filter(function(x){return C.feed[x.id];}).map(function(x){ var row=E.res.rows.filter(function(q){return q.ph.id===x.id;})[0], m=row?row.feedGPDPhase:null, g=C.feed[x.id].g, e=m>0?(g-m)/m*100:0; return '<tr><td>'+esc(x.label)+'</td><td style="text-align:right">'+finN(m,1)+'</td><td style="text-align:right"><strong>'+finN(g,1)+'</strong></td><td style="text-align:right">'+(e>0?'+':'')+finN(e,1)+' %</td><td style="text-align:right">'+C.feed[x.id].jours+'</td></tr>'; }).join('')+'</tbody></table>':'';
+  var EM=C.emball, eb='';
+  if(C.type==='layer'){
+    eb='<h4 style="margin:14px 0 6px;font-size:12px">Emballages : détail du calcul (nomenclature de conditionnement de l\'ERP)</h4>';
+    if(!EM) eb+='<p style="font-size:12px;margin:0">Aucune nomenclature de conditionnement dans l\'ERP : définissez-la (alvéole par plateau, carton vide, ficelle, alvéoles de couverture) dans le module Conditionnement pour calculer le coût réel d\'emballage.</p>';
+    else{ var L=EM.lignes, ln=function(lbl,x){ return x?'<tr><td>'+esc(lbl)+' — '+esc(x.nom)+'</td><td style="text-align:right">'+finN(x.qte,x.qte%1?1:0)+'</td><td style="text-align:right">'+(x.p>0?finN(x.p,2)+' '+esc(finCur()):'<strong style="color:#b91c1c">manquant</strong>')+'</td><td style="font-size:10px;color:var(--text3)">'+esc(x.src)+'</td></tr>':''; };
+      eb+='<table class="tbl" style="font-size:11px"><thead><tr><th>Consommable</th><th>Quantité</th><th>Prix unitaire</th><th>Source du prix</th></tr></thead><tbody>'+ln('Alvéole par plateau de '+FIN_OEUFS_PLATEAU+' œufs',L.alv)+ln('Carton vide par carton',L.carton)+ln('Ficelle par carton',L.ficelle)+ln('Alvéoles de couverture par carton',L.couv)+'</tbody></table>'
+        +'<p style="font-size:11px;margin:6px 0 0">Nomenclature « '+esc(EM.bom)+' » : un plateau coûte <strong>'+finM(EM.plt)+'</strong> ('+finN(EM.perEggPlt,2)+' '+esc(finCur())+' par œuf) ; un carton de '+FIN_OEUFS_CARTON+' œufs ('+(FIN_OEUFS_CARTON/FIN_OEUFS_PLATEAU)+' plateaux, carton, ficelle, couverture) coûte <strong>'+finM(EM.car)+'</strong> ('+finN(EM.perEggCar,2)+' '+esc(finCur())+' par œuf).'
+        +(EM.partCar==null?' Ventes en plateaux et cartons non relevées : le coût réel par œuf se situe entre ces deux valeurs.':' Sur 12 mois, '+EM.partCar+' % des œufs vendus l\'ont été en cartons, d\'où un coût moyen de <strong>'+(EM.v==null?'—':finN(EM.v,2)+' '+esc(finCur())+' par œuf')+'</strong>.')
+        +(EM.manque.length?' <span style="color:#b91c1c">Prix manquant pour : '+esc(EM.manque.join(', '))+' — renseignez-le dans le catalogue produits ou par une réception.</span>':'')+'</p>'; }
+  }
   var lt='<h4 style="margin:14px 0 6px;font-size:12px">Lots relevés</h4><table class="tbl" style="font-size:11px"><thead><tr><th>Lot</th><th>Âge (sem.)</th><th>Effectif de départ</th><th>Mortalité</th><th>Cycle</th><th>Pic de ponte</th></tr></thead><tbody>'+C.lots.map(function(l){ return '<tr><td>'+esc(l.nom)+'</td><td style="text-align:right">'+l.age+'</td><td style="text-align:right">'+finN(l.init)+'</td><td style="text-align:right">'+finN(l.mortPct,1)+' %</td><td>'+(l.complet?'terminé':'en cours')+'</td><td style="text-align:right">'+(l.pic==null?'—':finN(l.pic,1)+' %')+'</td></tr>'; }).join('')+'</tbody></table>';
-  return head+tb+(rows.length?'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finCalibTout()"><i class="fas fa-check-double"></i> Appliquer toutes les valeurs observées</button> <span style="font-size:11px;color:var(--text3)">Écrit les valeurs dans les hypothèses du dossier ('+finTabRef('montage')+'). Une hypothèse plus favorable que le réel doit se justifier devant un financeur.</span></div>':'')+fb+lt+'<p style="font-size:10px;color:var(--text3);margin-top:8px">Mortalité : lots dont au moins 90 % de l\'effectif est sorti. Pic de ponte : moyenne des 4 meilleures semaines (au moins 4 jours de saisie par semaine, 4 semaines minimum). Prix : plateaux (30 œufs) et cartons (360 œufs) vendus sur 12 mois, hors ventes annulées. Les lots relevés sont tous ceux du même type, pas seulement le lot financé.</p></div></div>';
+  return head+tb+eb+(rows.length?'<div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finCalibTout()"><i class="fas fa-check-double"></i> Appliquer toutes les valeurs observées</button> <span style="font-size:11px;color:var(--text3)">Écrit les valeurs dans les hypothèses du dossier ('+finTabRef('montage')+'). Une hypothèse plus favorable que le réel doit se justifier devant un financeur.</span></div>':'')+fb+lt+'<p style="font-size:10px;color:var(--text3);margin-top:8px">Mortalité : lots dont au moins 90 % de l\'effectif est sorti. Pic de ponte : moyenne des 4 meilleures semaines (au moins 4 jours de saisie par semaine, 4 semaines minimum). Prix : plateaux (30 œufs) et cartons (360 œufs) vendus sur 12 mois, hors ventes annulées. Les lots relevés sont tous ceux du même type, pas seulement le lot financé. Emballages : prix = moyenne pondérée des réceptions des 12 derniers mois, à défaut prix du catalogue ; un carton = '+(FIN_OEUFS_CARTON/FIN_OEUFS_PLATEAU)+' plateaux.</p></div></div>';
 }
 function finTabMarche(f,E){
   return finBpCard('📦 Produit et clientèle',finBpTa(f,'produit','Description du produit, calibres, conditionnement, prix retenu',4,'Vide : texte type généré à partir de la Simulation (prix de l\'œuf, calibres, mix). Précisez conditionnement et source du prix.'),'Chapitre 4.1. La source du prix de vente se saisit dans '+finTabRef('montage')+'.')
@@ -26501,7 +26527,7 @@ function finAnalyse(f,E,tab,cfg,deep){
     else if(!f.calib.lots.length) X('warn','Calibrage : aucun lot de ce type dans l\'ERP.','Saisir au moins un lot terminé avec ses relevés (mortalité, ponte, aliment, ventes) pour pouvoir calibrer.');
     else{
       if(!CR.length) X('warn','Calibrage : données insuffisantes dans les lots relevés.','Compléter les saisies (lots terminés, semaines de ponte, ventes d\'œufs datées) puis actualiser le relevé.');
-      CR.forEach(function(r){ var st=finCalibSt(r), opt=finCalibOpt(r); X(st,r.lbl+' : hypothèse '+finN(r.hyp,1)+r.unit+', réel '+finN(r.obs,1)+r.unit+(st==='ok'&&opt==='prudente'&&Math.abs(r.ec)>r.tol?' (prudente)':st==='ok'?'':' (hypothèse '+opt+')'),'Aligner l\'hypothèse sur le réel (bouton « Appliquer »)'+(opt==='optimiste'?' ou justifier l\'écart par une amélioration documentée (souche, aliment, bâtiment) : une hypothèse plus favorable que l\'historique est le premier point contesté par un financeur.':' : l\'hypothèse est plus prudente que le réel, acceptable si c\'est voulu.')); });
+      CR.forEach(function(r){ var st=finCalibSt(r), opt=finCalibOpt(r); X(st,r.lbl+' : hypothèse '+finN(r.hyp,r.dec||1)+r.unit+', réel '+finN(r.obs,r.dec||1)+r.unit+(st==='ok'&&opt==='prudente'&&Math.abs(r.ec)>r.tol?' (prudente)':st==='ok'?'':' (hypothèse '+opt+')'),'Aligner l\'hypothèse sur le réel (bouton « Appliquer »)'+(opt==='optimiste'?' ou justifier l\'écart par une amélioration documentée (souche, aliment, bâtiment) : une hypothèse plus favorable que l\'historique est le premier point contesté par un financeur.':' : l\'hypothèse est plus prudente que le réel, acceptable si c\'est voulu.')); });
     }
   }
   else if(tab==='bilan'){
@@ -26870,7 +26896,7 @@ function finBpBlocks(D){
   T(['Hypothèse','Valeur'],[['Effectif logé',finN(S.nbBetes)+' sujets'],['Souche',S.souche||'Général'],['Taux de ponte au pic',finN(S.tauxPonteMoy,1)+' %'],['Prix de l\'œuf (gros calibre)',finN(S.prixOeufUnit)+' F'],['Casse / déclassement',finN(S.tauxCasse,1)+' %'],['Mortalité du cycle',finN(S.tauxMortalite,1)+' %'],['Poussin / poulette J0',finF(layer?S.coutPoussineLayer:S.coutPoussin)],['Aliment démarrage / croissance / pré-ponte / ponte (F/kg)',[S.coutAlimentD,S.coutAlimentC,S.coutAlimentPP,S.coutAlimentP].map(function(x){return finN(x);}).join(' / ')],['Réforme à la semaine',finN(S.semReforme)],['Taux d\'actualisation',finN(f.tauxActu)+' %'],['Frais de dossier / aléas',finN(f.fraisDossierPct,1)+' % / '+finN(f.contingence)+' %'],['Charges externes incluses',S.extOn===false?'non':'oui (part imputée '+finN(S.extPart==null?100:S.extPart)+' %)']]);
   if(f.calib&&finCalibRows(f,E).length){ var CRb=finCalibRows(f,E);
     H2('Hypothèses confrontées à l\'historique de la ferme');
-    T(['Paramètre','Hypothèse','Réel observé','Écart','Source'],CRb.map(function(r){ var fm=function(v){ return finN(v,1)+r.unit; }; return [r.lbl,fm(r.hyp),fm(r.obs),(r.ec>0?'+':'')+finN(r.ec,1)+(r.rel?' %':' pt'),r.info]; }),{right:[1,2,3]});
+    T(['Paramètre','Hypothèse','Réel observé','Écart','Source'],CRb.map(function(r){ var fm=function(v){ return finN(v,r.dec||1)+r.unit; }; return [r.lbl,fm(r.hyp),fm(r.obs),(r.ec>0?'+':'')+finN(r.ec,1)+(r.rel?' %':' pt'),r.info]; }),{right:[1,2,3]});
     P('Relevé du '+new Date(f.calib.ts).toLocaleDateString('fr-FR')+' sur '+f.calib.lots.length+' lot(s) de l\'exploitation. Les hypothèses plus favorables que le réel sont à justifier.',{i:true}); }
   H2('Charges externes : prestataires, structure, commercial, logistique');
   var ex=EXT_DEFS.map(function(x){ var v=S['ext_'+x.k]; v=(v==null?x.def:v); return [x.g,x.lbl,x.cpt,x.auto?finN(D.com.commis,2)+' (canaux)':finN(v,x.mode==='oeuf'||x.mode==='pctCA'?2:0),EXT_UNIT[x.mode],finF((E.extTot||{})[x.k]||0)]; }); ex.push(['','Total charges externes','','','',finF(D.extTot)]);
