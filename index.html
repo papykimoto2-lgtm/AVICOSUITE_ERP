@@ -24690,10 +24690,64 @@ window.mobToggleLots = function(){
 //  Réutilise le moteur de Simulation (simuCalcBande) → cohérence des chiffres.
 //  ⚠️ Aides juridiques/fiscales indicatives — validation avocat + expert-comptable requise.
 // ════════════════════════════════════════════════════════════════════════
-const FIN_USURE_NON_BANCAIRE = 24;   // % l'an — UMOA, EFC/SFD/autres agents économiques (Déc. CM/UMOA n°19 du 29/12/2025)
-const FIN_USURE_BANQUES = 14;        // % l'an — banques, en vigueur au 01/06/2026
+
+
 const FIN_SEUIL_DSCR = 1.2, FIN_SEUIL_LTV = 0.8;   // cibles partagées par la conformité et l'analyse des onglets
-const FIN_SEUIL_APE = 100;           // APE : > 100 personnes sans lien juridique → visa AMF-UMOA
+// ══ Profils juridiques par pays / zone : plafond d'usure, seuil d'appel public à l'épargne, textes de cadre ══
+// Seule la zone UMOA est renseignée (valeurs historiques du module). Pour tout autre pays, aucune valeur légale n'est supposée :
+// elles se saisissent dans l'onglet Juridique avec le conseil local et les textes de cadre restent génériques.
+const FIN_PAYS = {
+  umoa:{label:'Zone UMOA (BCEAO) · droit OHADA', court:'UMOA', usure:24, usureBq:14, ape:100, ohada:true},
+  autre:{label:'Autre pays ou zone (à paramétrer)', court:'', usure:null, usureBq:null, ape:null, ohada:false}
+};
+const FIN_UMOA_PAYS = ['benin','burkina faso','cote d\'ivoire','guinee-bissau','guinee bissau','mali','niger','senegal','togo'];
+function finJuri(f,cfg){
+  cfg=cfg||{};
+  var norm=function(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[’]/g,'\'').toLowerCase().trim(); };
+  var id=(f&&f.profilPays&&FIN_PAYS[f.profilPays])?f.profilPays:(FIN_UMOA_PAYS.indexOf(norm(cfg.pays))>=0?'umoa':'autre');
+  var b=FIN_PAYS[id], ov=(f&&f.juriOv)||{}, has=function(k){ return ov[k]!==undefined&&ov[k]!==null&&ov[k]!==''; }, v=function(k){ return has(k)?+ov[k]:b[k]; };
+  var J=Object.assign({},b,{id:id,pays:cfg.pays||'',usure:v('usure'),usureBq:v('usureBq'),ape:v('ape'),custom:['usure','usureBq','ape'].some(has)});
+  J.t=finJuriTxt(J);
+  return J;
+}
+function finSetJuri(f,cfg){ window._finJ=finJuri(f,cfg); }
+function finJ(){ return window._finJ||finJuri(null,{pays:'Côte d\'Ivoire'}); }
+// Textes de cadre : version UMOA (historique) ou version générique sans référence légale supposée
+function finJuriTxt(J){
+  var um=J.id==='umoa', cu=J.custom, usN=J.usure==null, apN=J.ape==null;
+  var refCourt=cu?'valeurs saisies pour ce dossier':'valeurs relevées en novembre 2026';
+  var plaf=function(){ return usN?'plafond d\'usure à renseigner':J.usure+' % pour les agents non bancaires'+(J.usureBq!=null?', '+J.usureBq+' % pour les banques':''); };
+  return {
+    gageBL: um?'Gage sans dépossession sur les stocks (œufs, aliments) : écrit avec inventaire, gardien désigné, inscription au RCCM (Acte uniforme OHADA sur les sûretés révisé, 2010).':'Sûreté sur les stocks (œufs, aliments) : écrit avec inventaire et gardien désigné, avec la publicité exigée par le droit des sûretés applicable [à préciser avec le conseil local].',
+    gageContrat: um?'gage sans dépossession sur les stocks (œufs, aliments) par bordereau de gage de stocks (AUS révisé 2010), par écrit avec inventaire, gardien désigné et inscription au RCCM (condition d\'opposabilité)':'sûreté sur les stocks (œufs, aliments), par écrit avec inventaire et gardien désigné, avec la publicité exigée par le droit applicable [à préciser]',
+    gagePPT: um?'Gage de stocks (AUS révisé 2010) : inventaire, gardien, inscription RCCM':'Sûreté sur stocks : inventaire, gardien, publicité légale locale',
+    cadrePPT: um?'Cadre OHADA / UMOA · à faire valider par un avocat ou un notaire':'Cadre juridique local à confirmer par un avocat ou un notaire',
+    usureBL: function(taux,teg){ return 'Taux nominal '+taux+' % et TEG '+teg+' à comparer au plafond d\'usure applicable ('+(usN?'à renseigner dans l\'onglet Juridique':plaf()+' — '+refCourt)+', à vérifier et à dater '+(um?'auprès de la BCEAO / UMOA':'auprès de la réglementation locale')+' avant signature).'; },
+    apeBL: function(nInv){ return apN?'Appel public à l\'épargne : seuil légal local à renseigner ; en attendant, aucun démarchage ni publicité.':'Appel public à l\'épargne : le nombre d\'investisseurs reste très inférieur au seuil de '+J.ape+' personnes, sans démarchage ni publicité.'; },
+    bancaireLi: um?'la collecte habituelle de fonds remboursables auprès du public est réservée aux établissements agréés (loi bancaire UMOA). Limiter à un cercle restreint, opération ponctuelle, à titre non habituel.':'la collecte habituelle de fonds remboursables auprès du public est en règle générale réservée aux établissements agréés (réglementation bancaire locale à vérifier). Limiter à un cercle restreint, opération ponctuelle, à titre non habituel.',
+    apeLi: apN?'seuil local à renseigner ; en attendant, pas de démarchage de masse ni de publicité grand public.':'au-delà de '+J.ape+' personnes sans lien juridique → visa préalable de '+(um?'l\'AMF-UMOA':'l\'autorité des marchés financiers compétente')+'. Pas de démarchage de masse ni de publicité grand public.',
+    usureLi: usN?'plafond d\'usure à renseigner dans le cadre juridique ci-dessus. Le contrat généré ne cite pas de chiffre : « taux d\'usure en vigueur à la date de signature ».':'TEG ≤ '+J.usure+' % (agents non bancaires)'+(J.usureBq!=null?' ; '+J.usureBq+' % si le prêteur est une banque':'')+' ('+(cu?'valeurs saisies pour ce dossier':'valeurs relevées en nov. 2026, décision du Conseil des ministres UMOA du 29/12/2025')+' — <em>à vérifier et à dater avant chaque signature</em>). Le contrat généré ne cite pas de chiffre : « taux d\'usure en vigueur à la date de signature ».',
+    droit: function(pays){ return um?'Droit en vigueur en '+(pays||'[pays]')+' et actes uniformes OHADA. Règlement amiable préalable (60 jours), puis [tribunal de commerce compétent / arbitrage].':'Droit applicable : [droit de '+(pays||'[pays]')+']. Règlement amiable préalable (60 jours), puis [tribunal compétent / arbitrage].'; },
+    formalites: um?'À la signature. Écrit sous seing privé en deux exemplaires originaux ; enregistrement auprès de la DGI ; inscription des sûretés au RCCM le cas échéant.':'À la signature. Écrit sous seing privé en deux exemplaires originaux ; enregistrement auprès de l\'administration fiscale si exigé ; publicité des sûretés auprès du registre compétent le cas échéant.',
+    compta: um||J.ohada?'Tenir une comptabilité conforme au SYSCOHADA':'Tenir une comptabilité conforme au référentiel comptable applicable',
+    usureCourt: usN?'plafond d\'usure local (à renseigner)':'plafond d\'usure '+(J.court||'local'),
+    usureNote: usN?'Plafond d\'usure non paramétré pour ce pays (onglet Juridique).':'Plafond d\'usure : '+J.usure+' % (investisseurs non bancaires)'+(J.usureBq!=null?' · '+J.usureBq+' % (banques)':'')+(um&&!cu?', depuis le 01/06/2026':cu?' (valeurs saisies pour ce dossier)':'')+'.'
+  };
+}
+window.finSetProfil=async function(v){ var r=window._fb.rec; if(!r) return; r.profilPays=v; await finSave(r); finRefresh(); };
+window.finSetJuriOv=async function(k,v){ var r=window._fb.rec; if(!r) return; r.juriOv=Object.assign({},r.juriOv); if(v===''||isNaN(parseFloat(v))) delete r.juriOv[k]; else r.juriOv[k]=parseFloat(v); await finSave(r); finRefresh(); };
+window.finResetJuri=async function(){ var r=window._fb.rec; if(!r) return; r.juriOv={}; r.profilPays=null; await finSave(r); finRefresh(); };
+function finJuriCard(f,cfg){
+  var J=finJuri(f,cfg), inp=function(k,lab,val,ph){ return '<label style="font-size:12px;display:inline-flex;flex-direction:column;gap:3px">'+lab+'<input type="number" step="0.1" style="width:130px" value="'+(f.juriOv&&f.juriOv[k]!=null?esc(String(f.juriOv[k])):'')+'" placeholder="'+(ph==null?'à renseigner':ph)+'" onchange="finSetJuriOv(\''+k+'\',this.value)"></label>'; };
+  var base=FIN_PAYS[J.id];
+  return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🌍 Cadre juridique du pays</span><span style="font-size:11px;color:var(--text3)">'+esc(J.label)+(J.custom?' · valeurs personnalisées':'')+'</span></div><div class="card-bd" style="font-size:12px">'
+    +'<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px"><label style="font-size:12px;display:inline-flex;flex-direction:column;gap:3px">Profil<select onchange="finSetProfil(this.value)" style="padding:5px 8px;border-radius:6px">'+Object.keys(FIN_PAYS).map(function(k){ return '<option value="'+k+'"'+(k===J.id?' selected':'')+'>'+esc(FIN_PAYS[k].label)+'</option>'; }).join('')+'</select></label>'
+    +inp('usure','Plafond d\'usure (% l\'an)',null,base.usure)+inp('usureBq','Plafond banques (%)',null,base.usureBq)+inp('ape','Seuil appel public à l\'épargne (personnes)',null,base.ape)
+    +'<button class="btn btn-s btn-sm" onclick="finResetJuri()"><i class="fas fa-rotate-left"></i> Valeurs du profil</button></div>'
+    +(J.usure==null||J.ape==null?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 12px;color:#92400e;margin-bottom:8px">⚠️ Cadre non paramétré pour <strong>'+esc(J.pays||'ce pays')+'</strong> : aucune valeur légale n\'est supposée par l\'outil. Renseignez le plafond d\'usure et le seuil d\'appel public à l\'épargne avec votre conseil juridique ; les contrôles de conformité du taux restent en attente tant qu\'ils sont vides. Les écritures comptables sont générées au plan SYSCOHADA : à adapter hors zone OHADA.</div>':'')
+    +'<div style="font-size:11px;color:var(--text3)">Un champ vide utilise la valeur du profil'+(J.id==='umoa'?' (UMOA : valeurs relevées en novembre 2026, décision du Conseil des ministres UMOA du 29/12/2025 pour les agents non bancaires, plafond des banques depuis le 01/06/2026)':'')+'. Ces plafonds évoluent : à vérifier et à dater avant chaque signature.</div></div></div>';
+}
+
 // Chocs du business plan (prudent / optimiste) et sensibilités : UNE seule définition, les textes en sont dérivés
 const FIN_SC_BP = {prudent:{ponte:0.93,oeuf:0.95,alim:1.08,mort:1.5}, optimiste:{ponte:1.06,alim:0.95}};
 const FIN_SENS = [['Prix de l\'œuf −10 %',{oeuf:0.9}],['Prix de l\'œuf +10 %',{oeuf:1.1}],['Aliment +10 %',{alim:1.1}],['Aliment −10 %',{alim:0.9}],['Ponte −5 %',{ponte:0.95}],['Ponte +5 %',{ponte:1.05}],['Mortalité ×2',{mort:2}]];
@@ -25164,10 +25218,11 @@ function finMC(f, n){
 function finConformite(f, E){
   var out=[], nInv=(f.investisseurs||[]).length, tot=(f.investisseurs||[]).reduce(function(a,i){return a+(+i.montant||0);},0), g=f.garanties||{};
   var add=function(s,t){ out.push({s:s,t:t}); };
-  add(f.taux<=FIN_USURE_NON_BANCAIRE?'ok':'ko','Taux nominal '+f.taux+' % ≤ plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' % (agents non bancaires, UMOA).');
-  add(E.teg!=null&&E.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG (intérêts + frais) '+finPc(E.teg)+(E.teg!=null&&E.teg*100<=FIN_USURE_NON_BANCAIRE?' ≤ ':' > ')+FIN_USURE_NON_BANCAIRE+' %. Un taux supérieur = usure.');
-  if(E.heter) (E.groups||[]).forEach(function(g){ add(g.teg!=null&&g.teg*100<=FIN_USURE_NON_BANCAIRE?'ok':'ko','TEG '+esc(g.inv.nom||'financier')+' ('+FIN_TYPES[g.fin]+') : '+finPc(g.teg)+(g.teg!=null&&g.teg*100>FIN_USURE_NON_BANCAIRE?' > plafond d\'usure.':'.')); });
-  add(nInv<FIN_SEUIL_APE-10?'ok':'ko','Investisseurs : '+nInv+' — seuil indicatif d\'appel public à l\'épargne : '+FIN_SEUIL_APE+' personnes sans lien (à vérifier) ; surtout : aucune publicité ni démarchage, collecte occasionnelle.');
+  var JU=finJ();
+  add(JU.usure==null?'warn':(f.taux<=JU.usure?'ok':'ko'),JU.usure==null?'Plafond d\'usure non paramétré ('+JU.label+') : renseignez-le dans « Cadre juridique du pays » avant de conclure sur le taux nominal de '+f.taux+' %.':'Taux nominal '+f.taux+' %'+(f.taux<=JU.usure?' ≤ ':' > ')+'plafond d\'usure '+JU.usure+' % (agents non bancaires'+(JU.court?', '+JU.court:'')+').');
+  add(JU.usure==null?'warn':(E.teg!=null&&E.teg*100<=JU.usure?'ok':'ko'),'TEG (intérêts + frais) '+finPc(E.teg)+(JU.usure==null?' : plafond d\'usure non paramétré.':(E.teg!=null&&E.teg*100<=JU.usure?' ≤ ':' > ')+JU.usure+' %. Un taux supérieur = usure.'));
+  if(E.heter&&JU.usure!=null) (E.groups||[]).forEach(function(g){ add(g.teg!=null&&g.teg*100<=JU.usure?'ok':'ko','TEG '+esc(g.inv.nom||'financier')+' ('+FIN_TYPES[g.fin]+') : '+finPc(g.teg)+(g.teg!=null&&g.teg*100>JU.usure?' > plafond d\'usure.':'.')); });
+  add(JU.ape==null?'warn':(nInv<JU.ape-10?'ok':'ko'),'Investisseurs : '+nInv+' — seuil indicatif d\'appel public à l\'épargne : '+(JU.ape==null?'à renseigner pour ce pays':JU.ape+' personnes sans lien (à vérifier)')+' ; surtout : aucune publicité ni démarchage, collecte occasionnelle.');
   add(nInv>0&&tot>=E.montant?'ok':'warn','Tickets souscrits '+finM(tot)+' / besoin '+finM(E.montant)+'.');
   add((f.investisseurs||[]).every(function(i){return i.nom&&i.contact&&i.origine;})&&nInv>0?'ok':'warn','Identification (KYC/LBC-FT) : nom + contact + origine des fonds pour chaque investisseur.');
   var AQ=finAcquis(f); add(AQ.on&&AQ.val>0?(AQ.val>=E.montant?'ok':'warn'):'warn',AQ.on&&AQ.val>0?'Acquis valorisés de la ferme pris en compte : '+finM(AQ.val)+' ('+(E.montant>0?(AQ.val/E.montant).toFixed(2):'—')+' × le financement) — couverture complémentaire du financeur.':'Acquis valorisés de la ferme non pris en compte (option « Non » ou aucun actif existant saisi).');
@@ -25184,7 +25239,7 @@ function finContrat(f, E, cfg, inv, gr){
   var ex=(cfg&&cfg.nomExploitation)||'[Exploitation — dénomination]', fj=(cfg&&cfg.formeJuridique)||'[forme juridique]', rc=(cfg&&cfg.rccm)||'[RCCM]';
   var fin=inv?(inv.nom||'[Financier]'):((f.investisseurs||[]).map(function(i){return i.nom||'[Investisseur]';}).join(', ')||'[Financier(s)]');
   var g=f.garanties||{}, gar=[];
-  if(g.gageStock) gar.push('gage sans dépossession sur les stocks (œufs, aliments) par bordereau de gage de stocks (AUS révisé 2010), par écrit avec inventaire, gardien désigné et inscription au RCCM (condition d\'opposabilité)');
+  if(g.gageStock) gar.push(finJ().t.gageContrat);
   if(g.cessionCreances) gar.push('cession de créances clients identifiées (liste en annexe) issues des ventes d\'œufs, notifiée aux débiteurs cédés');
   if(g.caution) gar.push('cautionnement personnel du dirigeant par acte distinct comportant la mention manuscrite légale (montant maximal, durée)');
   if(g.domiciliation) gar.push('domiciliation des encaissements sur compte dédié (mandat/compte séquestre)');
@@ -25209,7 +25264,7 @@ function finContrat(f, E, cfg, inv, gr){
     ['Durée','La convention est conclue pour '+fin12+' mois à compter de son entrée en vigueur, jusqu\'au complet remboursement. Elle n\'est pas renouvelable par tacite reconduction ; toute prorogation fait l\'objet d\'un avenant écrit.'],
     ['Remboursement anticipé','Le Bénéficiaire peut rembourser par anticipation, en tout ou partie, sur préavis de 15 jours. Pour le mode forfaitaire, les intérêts restant dus sont recalculés au prorata de la durée courue.'],
     ['Garanties',gar.length?'En garantie du remboursement : '+gar.join(' ; ')+'.':'[À définir : gage de stocks, cession de créances, caution, assurance.]'],
-    ['Engagements du Bénéficiaire','Tenir une comptabilité conforme au SYSCOHADA ; conduire l\'élevage selon les règles de l\'art (programme sanitaire, biosécurité) ; informer sans délai de tout sinistre, mortalité anormale (> 2× le standard) ou maladie réputée contagieuse ; ne pas distraire les encaissements de la bande hors charges d\'exploitation et service du financement.'],
+    ['Engagements du Bénéficiaire',finJ().t.compta+' ; conduire l\'élevage selon les règles de l\'art (programme sanitaire, biosécurité) ; informer sans délai de tout sinistre, mortalité anormale (> 2× le standard) ou maladie réputée contagieuse ; ne pas distraire les encaissements de la bande hors charges d\'exploitation et service du financement.'],
     ['Engagements du Financier','Verser les fonds aux dates convenues ; ne rien faire qui entrave l\'exécution de l\'objet ; respecter la confidentialité.'],
     ['Information & reporting','Relevé mensuel : effectif, mortalité, consommation d\'aliment, taux de ponte, encaissements, solde dû.'],
     ['Intérêts de retard & clause pénale','Toute somme non payée à l\'échéance porte intérêt de plein droit au taux contractuel majoré de [x] points, sans excéder le plafond légal d\'usure, à compter de la mise en demeure. [Pénalité forfaitaire : x % du montant échu.]'],
@@ -25218,8 +25273,8 @@ function finContrat(f, E, cfg, inv, gr){
     ['Fiscalité & capitalisation','Retenue à la source applicable selon la législation fiscale en vigueur ('+f.retenuePct+' % retenu par défaut — à confirmer selon la qualité du Financier) ; les intérêts sont stipulés [bruts / nets] de toute retenue, que le Bénéficiaire reverse à l\'administration fiscale en remettant une attestation au Financier.'+((P.mode==='ponte'||P.mode==='degressif'||P.mode==='annuite'||P.mode==='infine')&&f.interetDiffere==='capitalise'?' Les intérêts échus pendant le différé sont capitalisés à la fin du différé et produisent eux-mêmes intérêt.':'')+' Les droits d\'enregistrement sont supportés par [le Bénéficiaire / à parts égales].'],
     ['Modification','Toute modification fait l\'objet d\'un avenant écrit et signé des deux parties.'],
     ['Confidentialité & données','Les parties gardent la convention confidentielle. Les données personnelles (identification, origine des fonds) sont traitées conformément à la loi ivoirienne n° 2013-450, déclarées à l\'ARTCI le cas échéant ; droits d\'accès, de rectification et d\'opposition auprès du Bénéficiaire.'],
-    ['Droit applicable & litiges','Droit ivoirien et actes uniformes OHADA. Règlement amiable préalable (60 jours), puis [tribunal de commerce compétent / arbitrage].'],
-    ['Entrée en vigueur & formalités','À la signature. Écrit sous seing privé en deux exemplaires originaux ; enregistrement auprès de la DGI ; inscription des sûretés au RCCM le cas échéant.']
+    ['Droit applicable & litiges',finJ().t.droit((cfg&&cfg.pays)||'')],
+    ['Entrée en vigueur & formalités',finJ().t.formalites],
   ];
   return cl;
 }
@@ -25560,7 +25615,7 @@ function finTabMontage(f,E){
     +finIn('% cash-flow net affecté (mode ponte)','sweepPct',f.sweepPct,5)+finIn('Différé (mois)','differeMois',f.differeMois,1)+finIn('Durée de remboursement (mois)','dureeRemb',f.dureeRemb,1)
     +finSel('Intérêts pendant différé','interetDiffere',f.interetDiffere,[['capitalise','Capitalisés'],['paye','Payés']])+finSel('Mise à disposition','tirage',f.tirage,[['progressif','Tirages mensuels (réduit les intérêts)'],['unique','Versement unique']])
     +finIn('Retenue à la source sur intérêts (%)','retenuePct',f.retenuePct,0.5)+finIn('Taux d\'actualisation (%)','tauxActu',f.tauxActu,0.5)
-    +'</div><div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Plafond d\'usure : '+FIN_USURE_NON_BANCAIRE+' % (investisseurs non bancaires) · '+FIN_USURE_BANQUES+' % (banques, depuis le 01/06/2026). Tendance marché : plateau 30 œufs bord-ferme 2 400 F (≈ 80 F/œuf, fév. 2026) ; TVA 9 % sur aliment volaille.</div></div>'
+    +'</div><div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">'+finJ().t.usureNote+' Tendance marché : plateau 30 œufs bord-ferme 2 400 F (≈ 80 F/œuf, fév. 2026) ; TVA 9 % sur aliment volaille.</div></div>'
     +'<div class="card"><div class="card-hd">👥 Investisseurs — '+inv.length+' · souscrit '+finM(tot)+' / besoin '+finM(E.montant)+' ('+finPc(E.montant>0?tot/E.montant:0)+')</div><div class="card-bd tbl-wrap">'
     +'<table class="tbl" style="font-size:11px"><thead><tr><th>Nom</th><th>Personne</th><th>Contact / origine des fonds</th><th>Ticket (F)</th><th>Type de financement</th><th>Conditions</th><th>Retour net attendu</th><th></th></tr></thead><tbody>'
     +inv.map(function(i,ix){
@@ -25687,7 +25742,7 @@ function finTabEvaluation(f,E){
     +row('TRI brut / net',finPc(E.irrInvB)+' / '+finPc(E.irrInvN),'net = après retenue '+f.retenuePct+' %')+row('Multiple net (MOIC)',E.moic==null?'—':E.moic.toFixed(2)+' ×')
     +row('Durée jusqu\'à solde',E.fullMonth?E.fullMonth+' mois':'non soldé')+row('Impayé estimé au terme',finM(E.soldeFin))+'</tbody></table></div></div>'
     +'<div class="card"><div class="card-hd">🧑‍🌾 Exploitant</div><div class="card-bd"><table class="tbl"><tbody>'
-    +row('TEG (coût réel du crédit)',finPc(E.teg),'plafond '+FIN_USURE_NON_BANCAIRE+' %')+row('Charge financière totale',finM(E.intTot+E.frais))
+    +row('TEG (coût réel du crédit)',finPc(E.teg),(finJ().usure==null?'plafond à renseigner':'plafond '+finJ().usure+' %'))+row('Charge financière totale',finM(E.intTot+E.frais))
     +row('Fonds propres / trésorerie pic',finM(-E.minCash))+row('Investissements matériels à acquérir',finM(E.imm.capexTot))+row('Dotation matériel (par mois)',finM(E.imm.mensTot))+row('Trésorerie finale après dette',finM(E.cashFin))
     +row('Capacité de remboursement',E.capac==null?'—':E.capac.toFixed(2)+' ×','CF du cycle / dette au démarrage')+row('DSCR minimum',E.dscrMin==null?'—':E.dscrMin.toFixed(2))+row('DSCR moyen',E.dscrAvg==null?'—':E.dscrAvg.toFixed(2))+row('Couverture globale service',E.cov==null?'—':E.cov.toFixed(2)+' ×')+'</tbody></table></div></div>'
     +'<div class="card"><div class="card-hd">🛡️ Garantie</div><div class="card-bd"><table class="tbl"><tbody>'
@@ -25719,12 +25774,12 @@ function finTabRisques(f,E){
 function finTabJuridique(f,E,cfg){
   var g=f.garanties||{}, cl=finContrat(f,E,cfg), conf=finConformite(f,E);
   var box=function(t,items){ return '<div class="card" style="margin-bottom:14px"><div class="card-hd">'+t+'</div><div class="card-bd" style="font-size:12px;line-height:1.55">'+items+'</div></div>'; };
-  return '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:11px;color:#92400e;margin-bottom:14px"><strong>⚠️ Aide à la structuration, pas un avis juridique.</strong> Faire valider le montage, le contrat et le régime fiscal par un avocat et un expert-comptable avant toute levée.</div>'
+  return finJuriCard(f,cfg)+'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:11px;color:#92400e;margin-bottom:14px"><strong>⚠️ Aide à la structuration, pas un avis juridique.</strong> Faire valider le montage, le contrat et le régime fiscal par un avocat et un expert-comptable avant toute levée.</div>'
     +box('1. Qualification & cadre',
       '<ul style="padding-left:18px"><li><strong>Prêt de financement de bande</strong> (contrat de prêt à remboursement adossé à la production), sans entrée au capital ni droit de vote.</li>'
-      +'<li><strong>Activité bancaire :</strong> la collecte habituelle de fonds remboursables auprès du public est réservée aux établissements agréés (loi bancaire UMOA). Limiter à un cercle restreint, opération ponctuelle, à titre non habituel.</li>'
-      +'<li><strong>Appel public à l\'épargne :</strong> au-delà de '+FIN_SEUIL_APE+' personnes sans lien juridique → visa préalable de l\'AMF-UMOA. Pas de démarchage de masse ni de publicité grand public.</li>'
-      +'<li><strong>Usure :</strong> TEG ≤ '+FIN_USURE_NON_BANCAIRE+' % (agents non bancaires) ; '+FIN_USURE_BANQUES+' % si le prêteur est une banque (valeurs relevées en nov. 2026, décision du Conseil des ministres UMOA du 29/12/2025 — <em>à vérifier et à dater avant chaque signature</em>). Le contrat généré ne cite pas de chiffre : « taux d\'usure en vigueur à la date de signature ».</li>'
+      +'<li><strong>Activité bancaire :</strong> '+finJ().t.bancaireLi+'</li>'
+      +'<li><strong>Appel public à l\'épargne :</strong> '+finJ().t.apeLi+'</li>'
+      +'<li><strong>Usure :</strong> '+finJ().t.usureLi+'</li>'
       +'<li><strong>Alternatives à étudier :</strong> contrat de partenariat/participation aux résultats, compte courant d\'associé (si associés), prêt bancaire garanti par le flux œufs, warrant/gage de stocks via institution financière.</li></ul>')
     +box('2. Sûretés & protections (cocher ce qui sera mis en place)',
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px">'
@@ -25817,7 +25872,7 @@ window.finImprimer=async function(){
 };
 
 async function renderFinBande(ca){
-  var rec=await finLoad(), B=window._fb, cfg=await getExploitationSettings(); window._finDev=cfg.devise||'FCFA';
+  var rec=await finLoad(), B=window._fb, cfg=await getExploitationSettings(); window._finDev=cfg.devise||'FCFA'; finSetJuri(rec,cfg);
   var style='<style>.fb-wrap{flex:1;overflow-y:auto;padding:16px 20px}.fb-hero{background:linear-gradient(135deg,#152e22,#2b5f45,#4a8b68);color:#fff;border-radius:16px;padding:18px 24px;margin-bottom:14px}.fb-hero h2{font-size:18px;font-weight:800;margin:0 0 3px}.fb-hero p{font-size:12px;opacity:.75;margin:0}.fb-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.fb-tabs button{padding:7px 14px;border-radius:8px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);font-family:inherit}.fb-tabs button.active{background:var(--g2);color:#fff;border-color:var(--g2)}.fb-wrap .sbl{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}.fb-wrap .simu-params-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:14px 18px}.fb-wrap .simu-params-body input,.fb-wrap .simu-params-body select,.fb-wrap td input,.fb-wrap td select{border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:13px;font-family:inherit;width:100%;box-sizing:border-box}.fb-wrap .simu-detail-line{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #f0f0f0}@media(max-width:700px){.fb-wrap{padding:10px}}</style>';
   var head='<div class="fb-hero"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"><div><div style="font-size:8px;font-weight:700;letter-spacing:2px;opacity:.7">SANIX AVINEST PRO</div><h2>🤝 Financement de bande — Investisseurs</h2><p>Financer l\'alimentation jusqu\'à la ponte · remboursement adossé aux ventes d\'œufs · sans entrée au capital</p></div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande</button><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production</button>'+(rec?'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDup()"><i class="fas fa-copy"></i></button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finImprimerMenu()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'pdf\')" title="Business plan PDF complet"><i class="fas fa-file-pdf"></i> PDF BP</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'word\')" title="Business plan Word"><i class="fas fa-file-word"></i> Word</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'excel\')" title="Business plan Excel"><i class="fas fa-file-excel"></i> Excel</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'ppt\')" title="Business plan PowerPoint"><i class="fas fa-file-powerpoint"></i> PowerPoint</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finArchiver()" title="Archiver ce dossier"><i class="fas fa-box-archive"></i></button>':'')+'</div></div>'
@@ -25849,7 +25904,7 @@ const FIN_NOTES = {
   echeancier:'Tableau d\'amortissement : calendrier des tirages et des remboursements (capital, intérêts, différé) pour chaque investisseur, selon le type de financement choisi.',
   evaluation:'Évaluation de l\'opération : rentabilité pour l\'investisseur (TRI brut et net, TEG), délai de retour et valeur créée pour la ferme. Sert à juger si les conditions proposées sont équilibrées.',
   risques:'Tests de robustesse : scénarios (mortalité, prix, retard de ponte…) et simulation probabiliste (P10 / P50 / P90). Montre dans quelles conditions le remboursement reste assuré.',
-  juridique:'Cadre juridique et fiscal, garanties, contrôle (KYC/LBC-FT, seuil d\'appel public à l\'épargne) et convention de financement par investisseur. Modèles indicatifs, à faire valider par un conseil juridique.',
+  juridique:'Profil juridique du pays (plafond d\'usure, seuil d\'appel public à l\'épargne, textes de cadre : UMOA renseigné, autre pays à paramétrer), puis cadre juridique et fiscal, garanties, contrôle (KYC/LBC-FT, seuil d\'appel public à l\'épargne) et convention de financement par investisseur. Modèles indicatifs, à faire valider par un conseil juridique.',
   suivi:'Suivi de la bande une fois financée (réel vs prévu) et écritures comptables générées : fonds reçus (compte 168), intérêts (671), remboursements.',
   docs:'Exports (Word, Excel, PowerPoint, PDF), pièces jointes et journal des modifications du dossier.'
 };
@@ -26054,7 +26109,7 @@ function finAnalyse(f,E,tab,cfg,deep){
   else if(tab==='montage'){
     var cov=E.montant>0?sumT/E.montant:0;
     X(sumT>=E.montant-1?'ok':sumT>0?'warn':'ko','Tickets souscrits : '+mo(sumT)+' pour un besoin de '+mo(E.montant)+' ('+finP(cov,0)+').','Compléter la levée ('+mo(Math.max(0,E.montant-sumT))+' manquants) : ajouter des investisseurs, réduire le périmètre financé (objets ou horizon) ou combler par un apport de l\'exploitant.');
-    X(E.teg==null||E.teg<0?'warn':(f.taux<=FIN_USURE_NON_BANCAIRE&&E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko'),'Taux nominal '+finN(f.taux,1)+' % ; TEG '+finP(E.teg)+' (plafond d\'usure '+FIN_USURE_NON_BANCAIRE+' %).','Ramener le taux nominal ou les frais de dossier pour que le TEG reste sous '+FIN_USURE_NON_BANCAIRE+' % : au-delà, le prêt est usuraire et nul pour la part excédentaire.');
+    X(E.teg==null||E.teg<0||finJ().usure==null?'warn':(f.taux<=finJ().usure&&E.teg<=finJ().usure/100?'ok':'ko'),'Taux nominal '+finN(f.taux,1)+' % ; TEG '+finP(E.teg)+' ('+(finJ().usure==null?'plafond d\'usure non paramétré':'plafond d\'usure '+finJ().usure+' %')+').','Ramener le taux nominal ou les frais de dossier pour que le TEG reste sous '+(finJ().usure==null?'le plafond d\'usure local (à renseigner dans le cadre juridique)':finJ().usure+' %')+' : au-delà, le prêt est usuraire et nul pour la part excédentaire.');
     X((f.investisseurs||[]).length>0?'ok':'ko','Investisseurs identifiés : '+(f.investisseurs||[]).length+'.','Saisir au moins un investisseur (nom, contact, origine des fonds) : sans lui le dossier n\'a ni convention ni calendrier de remboursement.');
     X(f.contingence>=5?'ok':'warn','Marge d\'aléas : '+finN(f.contingence,1)+' % du besoin.','Porter les aléas à 5 % minimum : le coût de l\'aliment et des intrants varie rapidement et un besoin sous-estimé oblige à relancer les investisseurs en cours de bande.');
     X((f.immos||[]).length>0?'ok':'warn','Investissements matériels saisis : '+(f.immos||[]).length+'.','Charger les investissements types ou saisir les équipements (bâtiment, cages, abreuvoirs…) afin que l\'amortissement et le plan de financement soient complets.');
@@ -26103,9 +26158,9 @@ function finAnalyse(f,E,tab,cfg,deep){
     X(E.minCash>=0?'ok':'warn','Fonds propres à prévoir au point bas de trésorerie : '+mo(Math.max(0,-E.minCash))+'.','Anticiper cette trésorerie (apport, découvert autorisé, report d\'investissements) ou étaler les dépenses : le creux se produit avant l\'encaissement des premières ventes.');
   }
   else if(tab==='evaluation'){
-    X(E.irrInvN==null?'warn':E.irrInvN>=0.08?'ok':E.irrInvN>=0?'warn':'ko','TRI net des investisseurs : '+finPc(E.irrInvN)+' (MOIC '+(E.moic==null?'—':finN(E.moic,2)+' ×')+').','Rendre l\'opération rémunératrice : relever la rémunération dans la limite de l\'usure ('+FIN_USURE_NON_BANCAIRE+' %), améliorer le remboursement (carence plus courte, part de cash-flow plus élevée) ou réduire le risque d\'impayé qui détruit le TRI.');
+    X(E.irrInvN==null?'warn':E.irrInvN>=0.08?'ok':E.irrInvN>=0?'warn':'ko','TRI net des investisseurs : '+finPc(E.irrInvN)+' (MOIC '+(E.moic==null?'—':finN(E.moic,2)+' ×')+').','Rendre l\'opération rémunératrice : relever la rémunération dans la limite de l\'usure ('+(finJ().usure==null?'plafond à renseigner':finJ().usure+' %')+'), améliorer le remboursement (carence plus courte, part de cash-flow plus élevée) ou réduire le risque d\'impayé qui détruit le TRI.');
     X(E.npv>=0?'ok':'warn','VAN du projet à '+finN(f.tauxActu,0)+' % : '+mo(E.npv)+'.','Une VAN négative indique que le projet ne rémunère pas le capital engagé : améliorer la marge, ou le dimensionner autrement (taille de bande, cycle).');
-    X(E.teg==null||E.teg<0?'warn':(E.teg<=FIN_USURE_NON_BANCAIRE/100?'ok':'ko'),'TEG : '+finP(E.teg)+' pour un plafond de '+FIN_USURE_NON_BANCAIRE+' %.','Réduire le taux ou les frais jusqu\'à passer sous le plafond d\'usure.');
+    X(E.teg==null||E.teg<0||finJ().usure==null?'warn':(E.teg<=finJ().usure/100?'ok':'ko'),'TEG : '+finP(E.teg)+(finJ().usure==null?' (plafond d\'usure non paramétré).':' pour un plafond de '+finJ().usure+' %.'),'Réduire le taux ou les frais jusqu\'à passer sous le plafond d\'usure.');
   }
   else if(tab==='graphes'){
     var R=E.rows||[], fp=-1; R.forEach(function(r,i){ if(fp<0&&(r.rev-r.opex)>0) fp=i; });
@@ -26306,7 +26361,7 @@ var finF=function(v){ return v==null||isNaN(v)?'—':finN(v)+' '+finCur(); }, fi
 
 // Jeu de données complet du dossier (scénarios, sensibilités, seuils, Monte-Carlo, compte d'exploitation, plan)
 async function finBpData(f){
-  var cfg=await getExploitationSettings(), E=finRun(f), D={f:f,E:E,cfg:cfg,S:E.p}; window._finDev=cfg.devise||'FCFA';
+  var cfg=await getExploitationSettings(), E=finRun(f), D={f:f,E:E,cfg:cfg,S:E.p}; window._finDev=cfg.devise||'FCFA'; finSetJuri(f,cfg);
   var sc=function(m){ var e=finRun(f,m); return {irr:e.irrInvN,moic:e.moic,npv:e.npv,dscr:e.dscrMin,solde:e.soldeFin,teg:e.teg,mo:e.margeOeuf,pm:e.prixMoyen,irrProj:e.irrProj,oeufs:e.oeufsTot,intTot:e.intTot,full:e.fullMonth,minCash:e.minCash,back:e.ivN.reduce(function(a,v){return a+(v>0?v:0);},0)}; };
   D.sc={prudent:sc(FIN_SC_BP.prudent),base:sc({}),optimiste:sc(FIN_SC_BP.optimiste)};
   D.sens=FIN_SENS.map(function(x){ return [x[0],sc(x[1])]; });
@@ -26479,7 +26534,7 @@ function finBpBlocks(D){
   P('Les fonds sont affectés exclusivement aux objets listés ci-dessus et décaissés par tirages mensuels. Un état d\'emploi des fonds est remis avec chaque reporting mensuel.');
   // 13
   PB(); H1('13. Garanties, cadre juridique et conformité');
-  BL(['Gage sans dépossession sur les stocks (œufs, aliments) : écrit avec inventaire, gardien désigné, inscription au RCCM (Acte uniforme OHADA sur les sûretés révisé, 2010).','Domiciliation des encaissements sur un compte dédié ; assurance mortalité / sinistre avec désignation du bénéficiaire.','Convention de financement par investisseur : objet, tirages, remboursement, exigibilité anticipée, confidentialité, droit applicable, juridiction compétente.','Identification de chaque investisseur (nom, contact, origine des fonds — LBC-FT).','Taux nominal '+finN(f.taux)+' % et TEG '+finP(B.teg)+' à comparer au plafond d\'usure applicable ('+FIN_USURE_NON_BANCAIRE+' % pour les agents non bancaires, '+FIN_USURE_BANQUES+' % pour les banques — valeurs relevées en novembre 2026, à vérifier et à dater auprès de la BCEAO / UMOA avant signature).','Appel public à l\'épargne : le nombre d\'investisseurs reste très inférieur au seuil de '+FIN_SEUIL_APE+' personnes, sans démarchage ni publicité.']);
+  BL([finJ().t.gageBL,'Domiciliation des encaissements sur un compte dédié ; assurance mortalité / sinistre avec désignation du bénéficiaire.','Convention de financement par investisseur : objet, tirages, remboursement, exigibilité anticipée, confidentialité, droit applicable, juridiction compétente.','Identification de chaque investisseur (nom, contact, origine des fonds — LBC-FT).',finJ().t.usureBL(finN(f.taux),finP(B.teg)),finJ().t.apeBL()]);
   H2('Réglementation sectorielle');
   P('L\'exploitation doit disposer des autorisations liées à l\'élevage (déclaration ou autorisation d\'exploitation, respect des normes sanitaires, suivi vétérinaire) auprès des autorités compétentes ; la liste exacte est à confirmer avec le ministère en charge des ressources animales et les services locaux.');
   H2('Contrôles de conformité');
@@ -26790,9 +26845,9 @@ async function finBpPpt(D){
   R.forEach(function(r,i){ var x=0.5+(i%3)*4.18, y=1.75+Math.floor(i/3)*2.6; card(s,x,y,3.97,2.4); s.addShape(pp.ShapeType.rect,{x:x,y:y,w:3.97,h:0.09,fill:{color:i%3===1?C.gold:(i%3===2?C.pri:C.acc)},line:{color:C.acc,transparency:100}}); txt(s,r[0],x+0.25,y+0.3,3.5,0.4,{fontSize:16,bold:true,color:C.dark}); txt(s,r[1],x+0.25,y+0.85,3.5,1.4,{fontSize:12.5,color:C.mut}); });
 
   // 13 garanties
-  s=slide('Garanties et conformité','Sûretés réelles et contrôles juridiques','Cadre OHADA / UMOA · à faire valider par un avocat ou un notaire');
+  s=slide('Garanties et conformité','Sûretés réelles et contrôles juridiques',finJ().t.cadrePPT);
   card(s,0.5,1.75,6,5.05); txt(s,'Sûretés et suivi',0.75,1.88,5.5,0.3,{fontSize:15,bold:true,color:C.dark});
-  s.addText(bullets(['Gage de stocks (AUS révisé 2010) : inventaire, gardien, inscription RCCM','Domiciliation des encaissements ; assurance mortalité et sinistre','Convention par investisseur ; KYC / LBC-FT','Taux '+finN(f.taux)+' % / TEG '+finP(B.teg)+' à comparer au plafond d\'usure UMOA (à dater)','Écritures SYSCOHADA : 521/168, 631, 671, 72, 6813','Reporting mensuel : effectif, ponte, aliment, trésorerie, solde dû']),{x:0.75,y:2.3,w:5.5,h:4.4,fontFace:FONT,fontSize:12.5,color:C.txt,valign:'top',margin:0});
+  s.addText(bullets([finJ().t.gagePPT,'Domiciliation des encaissements ; assurance mortalité et sinistre','Convention par investisseur ; KYC / LBC-FT','Taux '+finN(f.taux)+' % / TEG '+finP(B.teg)+' à comparer au '+finJ().t.usureCourt+' (à dater)','Écritures SYSCOHADA : 521/168, 631, 671, 72, 6813','Reporting mensuel : effectif, ponte, aliment, trésorerie, solde dû']),{x:0.75,y:2.3,w:5.5,h:4.4,fontFace:FONT,fontSize:12.5,color:C.txt,valign:'top',margin:0});
   card(s,6.73,1.75,6.1,5.05); txt(s,'Contrôles de conformité',6.98,1.88,5.5,0.3,{fontSize:15,bold:true,color:C.dark});
   D.cf.slice(0,8).forEach(function(c,i){ var y=2.35+i*0.55; s.addShape(pp.ShapeType.ellipse,{x:6.98,y:y+0.06,w:0.2,h:0.2,fill:{color:chipCol[c[0]]||C.mut},line:{color:'FFFFFF'}}); txt(s,c[1].slice(0,92),7.3,y,5.35,0.5,{fontSize:10.5,color:C.txt}); });
 
