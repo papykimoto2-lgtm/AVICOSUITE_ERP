@@ -24758,6 +24758,17 @@ function finMultText(m){
 }
 // Prix et coûts par défaut de l'ERP issus d'un relevé de ferme : à confirmer pour chaque dossier
 const FIN_PROFIL_PRIX = {nom:'relevé ferme-jolan, nov. 2026', cles:['coutPoussineLayer','coutAlimentD','coutAlimentC','coutAlimentPP','coutAlimentP','prixOeufUnit','ratioPetit']};
+// Coûts types de l'ERP (investissements par sujet, charges externes, coûts par tête) : indicatifs, exprimés en FCFA, à confirmer par dossier
+const FIN_PROFIL_COUTS = {nom:'valeurs indicatives de l\'ERP, en FCFA', simu:['coutVacc','coutMed','coutLitiere','coutEau','coutMain','coutEnergie','coutAmort','coutTransport','coutDivers']};
+function finCoutsParDefaut(f){
+  if(!f||f.coutsVerifies) return null;
+  var s=f.simu||{}, unset=function(k){ return s[k]==null||s[k]===''; };
+  var ext=s.extOn!==false&&EXT_DEFS.filter(function(x){return !x.auto;}).every(function(x){ return unset('ext_'+x.k); });
+  var sim=FIN_PROFIL_COUTS.simu.every(unset), imm=(f.immos||[]).some(function(i){return i.type;});
+  return (ext||sim||imm)?{ext:ext,sim:sim,imm:imm}:null;
+}
+// Devise différente du FCFA alors que prix et coûts par défaut sont en FCFA
+function finDefautsHorsDevise(f){ return (window._finDev||'FCFA')!=='FCFA'&&(finPrixParDefaut(f)||!!finCoutsParDefaut(f)); }
 function finPrixParDefaut(f){ if(!f||f.prixVerifies) return false; var s=f.simu||{}; return FIN_PROFIL_PRIX.cles.every(function(k){ return s[k]==null||s[k]===''; }); }
 // Devise de l'exploitation (paramètres) : symbole utilisé par les formateurs de montants du module
 function finCur(){ var d=window._finDev||'FCFA'; return ({FCFA:'F',EUR:'€',USD:'$',GNF:'GNF'})[d]||d; }
@@ -24798,8 +24809,9 @@ function finAmortTable(f){
 }
 window.finInitImmos=async function(){
   var r=window._fb.rec, lst=FIN_IMMO_TYPES[r.typeLot==='broiler'?'broiler':'layer'], nb=((r.simu&&r.simu.nbBetes)||SIMU_DEFAULTS.nbBetes)||0, dd=r.dateDebut||new Date().toISOString().slice(0,10);
+  if((window._finDev||'FCFA')!=='FCFA'&&!confirm('Les investissements types sont exprimés en FCFA, alors que la devise du dossier est '+window._finDev+'. Les charger quand même (valeurs à convertir) ?')) return;
   if((r.immos||[]).length&&!confirm('Remplacer les investissements existants par les investissements types ?')) return;
-  r.immos=lst.map(function(x){ var v=Math.round(x[2]*nb+x[3]); return {libelle:x[1],cat:x[0],valeur:v,dureeAns:x[4],quote:100,residuel:Math.round(v*x[5]/100),date:dd,neuf:false}; });
+  r.immos=lst.map(function(x){ var v=Math.round(x[2]*nb+x[3]); return {libelle:x[1],cat:x[0],valeur:v,dureeAns:x[4],quote:100,residuel:Math.round(v*x[5]/100),date:dd,neuf:false,type:true}; });
   await finSave(r); finRefresh(); toast('Investissements types chargés — valeurs indicatives à confirmer');
 };
 const FIN_IMMO_CAT = [['terrain','Terrain (non amortissable)',0],['batiment','Bâtiment d\'élevage',20],['cages','Cages / batteries de ponte',10],['mangeoires','Mangeoires, abreuvoirs',5],['ventilation','Ventilation / installation électrique',7],['groupe','Groupe électrogène',5],['transport','Matériel de transport',5],['amenagement','Aménagements / clôtures',10],['mobilier','Mobilier / informatique',3],['autre','Autre matériel',5]];
@@ -25399,7 +25411,7 @@ window.finSaveImmo=async function(){
   var r=window._fb.rec; if(!r||finEditImmo==null||!(r.immos||[])[finEditImmo]) return; var g=function(i){return (document.getElementById(i)||{}).value||'';};
   var val=parseFloat(g('fm_val'))||0; if(val<=0){ toast('Valeur requise','err'); return; }
   var old=r.immos[finEditImmo], q=parseFloat(g('fm_q')), dur=parseFloat(g('fm_dur'));
-  r.immos[finEditImmo]=Object.assign({},old,{libelle:g('fm_lib').trim()||((FIN_IMMO_CAT.filter(function(c){return c[0]===g('fm_cat');})[0]||[])[1]||'Matériel'),cat:g('fm_cat'),valeur:val,dureeAns:dur>0?dur:5,quote:isNaN(q)?100:Math.min(100,Math.max(0,q)),residuel:Math.max(0,parseFloat(g('fm_res'))||0),date:g('fm_date')||r.dateDebut,neuf:!!(document.getElementById('fm_neuf')||{}).checked});
+  r.immos[finEditImmo]=Object.assign({},old,{libelle:g('fm_lib').trim()||((FIN_IMMO_CAT.filter(function(c){return c[0]===g('fm_cat');})[0]||[])[1]||'Matériel'),cat:g('fm_cat'),valeur:val,dureeAns:dur>0?dur:5,quote:isNaN(q)?100:Math.min(100,Math.max(0,q)),residuel:Math.max(0,parseFloat(g('fm_res'))||0),date:g('fm_date')||r.dateDebut,neuf:!!(document.getElementById('fm_neuf')||{}).checked,type:false});
   finEditImmo=null; await finSave(r); finRefresh(); toast('Ligne modifiée','ok');
 };
 window.finDelImmo=async function(i){ if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée','err'); return; } var r=window._fb.rec; r.immos.splice(i,1); finEditImmo=null; await finSave(r); finRefresh(); };
@@ -25530,7 +25542,7 @@ function finBlocImmos(f,E){
   var ev=function(k,d){ return ed&&ed[k]!=null?esc(String(ed[k])):d; };
   return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🏗️ Investissements matériels & amortissement</span><span style="font-size:11px;color:var(--text3)">Dotation mensuelle imputée : '+finM(E.imm.mensTot)+' · acquisitions : '+finM(E.imm.capexTot)+'</span></div><div class="card-bd tbl-wrap">'
     +'<table class="tbl" style="font-size:11px"><thead><tr><th>Matériel</th><th>Valeur</th><th>Durée (ans)</th><th>Quote bande</th><th>Mise en service</th><th>Statut</th><th>Dotation/mois</th><th>VNC fin période</th><th></th></tr></thead><tbody>'
-    +im.map(function(m,i){ var d=det[i]||{mens:0,vnc:0}; return '<tr'+(finEditImmo===i?' style="background:#fef9c3"':'')+'><td>'+esc(m.libelle)+'</td><td>'+ff(m.valeur)+'</td><td>'+m.dureeAns+'</td><td>'+(m.quote==null?100:m.quote)+' %</td><td>'+esc(m.date||'')+'</td><td>'+(m.neuf?'<span class="badge b-a">À acquérir</span>':'<span class="badge b-gr">Déjà possédé</span>')+'</td><td>'+ff(d.mens)+'</td><td>'+ff(d.vnc)+'</td><td style="white-space:nowrap"><button class="btn btn-s btn-sm" title="Modifier cette ligne" onclick="finEditImmoStart('+i+')"><i class="fas fa-pen"></i></button> <button class="btn btn-s btn-sm" title="Supprimer" onclick="finDelImmo('+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
+    +im.map(function(m,i){ var d=det[i]||{mens:0,vnc:0}; return '<tr'+(finEditImmo===i?' style="background:#fef9c3"':'')+'><td>'+esc(m.libelle)+'</td><td>'+ff(m.valeur)+'</td><td>'+m.dureeAns+'</td><td>'+(m.quote==null?100:m.quote)+' %</td><td>'+esc(m.date||'')+'</td><td>'+(m.neuf?'<span class="badge b-a">À acquérir</span>':'<span class="badge b-gr">Déjà possédé</span>')+(m.type&&!f.coutsVerifies?' <span class="badge b-a" title="Valeur type indicative (FCFA) : à confirmer par devis">type</span>':'')+'</td><td>'+ff(d.mens)+'</td><td>'+ff(d.vnc)+'</td><td style="white-space:nowrap"><button class="btn btn-s btn-sm" title="Modifier cette ligne" onclick="finEditImmoStart('+i+')"><i class="fas fa-pen"></i></button> <button class="btn btn-s btn-sm" title="Supprimer" onclick="finDelImmo('+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
     +'<tr'+(ed?' style="background:#fef9c3"':'')+'><td>'+(ed?'<div style="font-size:11px;font-weight:700;margin-bottom:3px">✏️ Modification de la ligne n° '+(finEditImmo+1)+'</div>':'')+'<input id="fm_lib" placeholder="Libellé (optionnel)" value="'+ev('libelle','')+'"><select id="fm_cat" onchange="finImmoCat(this)">'+FIN_IMMO_CAT.map(function(c){return '<option value="'+c[0]+'"'+(ed&&ed.cat===c[0]?' selected':'')+'>'+c[1]+'</option>';}).join('')+'</select></td>'
     +'<td><input id="fm_val" type="number" placeholder="Valeur F" value="'+ev('valeur','')+'"><input id="fm_res" type="number" placeholder="Résiduel F" value="'+ev('residuel','')+'"></td><td><input id="fm_dur" type="number" value="'+ev('dureeAns',FIN_IMMO_CAT[0][2])+'"></td><td><input id="fm_q" type="number" value="'+ev('quote','100')+'"></td><td><input id="fm_date" type="date" value="'+(ed&&ed.date?esc(ed.date):esc(today))+'"></td>'
     +'<td><label style="font-size:11px"><input id="fm_neuf" type="checkbox"'+(ed&&ed.neuf?' checked':'')+'> à acquérir</label></td><td colspan="3">'+(ed?'<button class="btn btn-p btn-sm" onclick="finSaveImmo()"><i class="fas fa-check"></i> Enregistrer</button> <button class="btn btn-s btn-sm" onclick="finEditImmoCancel()">Annuler</button>':'<button class="btn btn-p btn-sm" onclick="finAddImmo()"><i class="fas fa-plus"></i> Ajouter</button>')+'</td></tr>'
@@ -25887,7 +25899,7 @@ async function renderFinBande(ca){
   var t=B.tab||'synthese';
   if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
-  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+finPrixBanner(rec,t)+finAnalyseHtml(rec,E,t,cfg)+body+'</div>';
+  ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+finPrixBanner(rec,t)+finCoutsBanner(rec,t)+finAnalyseHtml(rec,E,t,cfg)+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
@@ -25928,6 +25940,7 @@ function finBpTbl(f,k,heads,w){
     +(FIN_BP_SEED[k]&&!rows.length?'<button class="btn btn-s btn-sm" onclick="finSeedBp(\''+k+'\')"><i class="fas fa-list-check"></i> Pré-remplir avec le modèle</button>':'')+'</div>';
 }
 function finBpCard(title,body,sub){ return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>'+title+'</span></div><div class="card-bd">'+(sub?'<p style="font-size:11px;color:var(--text3);margin:0 0 10px">'+sub+'</p>':'')+body+'</div></div>'; }
+window.finConfirmCouts=async function(){ var r=window._fb.rec; if(!r) return; r.coutsVerifies=true; await finSave(r); finRefresh(); };
 window.finConfirmPrix=async function(){ var r=window._fb.rec; if(!r) return; r.prixVerifies=true; await finSave(r); finRefresh(); };
 window.finSetBp=async function(k,v){ var r=window._fb.rec; if(!r) return; r.bp=Object.assign({},r.bp); r.bp[k]=v; await finSave(r); if(r.verrou) finRefresh(); };
 window.finSetBpCell=async function(k,i,j,v){ var r=window._fb.rec; if(!r||!(r.bp&&r.bp[k]&&r.bp[k][i])) return; r.bp=Object.assign({},r.bp); r.bp[k]=r.bp[k].map(function(x,ix){ if(ix!==i) return x; var y=x.slice(); y[j]=v; return y; }); await finSave(r); if(r.verrou) finRefresh(); };
@@ -26099,6 +26112,13 @@ function finAnalyse(f,E,tab,cfg,deep){
   var ca=(E.res&&E.res.cumRecette)||0, cout=(E.res&&E.res.totalCout)||0, mg=ca>0?(ca-cout)/ca:null;
   var cn=((f.com&&f.com.canaux)||[]).filter(function(x){ return (+x.part||0)>0; }), ct=cn.reduce(function(a,x){return a+(+x.part||0);},0);
   if(tab==='montage') X(finPrixParDefaut(f)?'warn':'ok',finPrixParDefaut(f)?'Prix et coûts : valeurs par défaut de l\'ERP ('+FIN_PROFIL_PRIX.nom+'), non confirmées pour ce dossier.':'Prix et coûts : saisis ou confirmés pour ce dossier.','Comparer poussin, aliments et prix de l\'œuf avec vos factures et vos ventes récentes, corriger les champs de prix du Montage, puis confirmer : le financement demandé et tous les indicateurs en dépendent.');
+  if(tab==='montage'||tab==='commercial'){
+    var cp=finCoutsParDefaut(f);
+    if(tab==='montage'){ var lm=[]; if(cp&&cp.sim) lm.push('coûts par tête'); if(cp&&cp.imm) lm.push('investissements types');
+      X(lm.length?'warn':'ok',lm.length?'Coûts types non confirmés : '+lm.join(', ')+' ('+FIN_PROFIL_COUTS.nom+'). Les investissements « déjà possédés » alimentent l\'apport en nature du plan de financement.':'Coûts par tête et investissements : saisis ou confirmés pour ce dossier.','Comparer avec vos devis et factures (bâtiment, cages, vaccins, main d\'œuvre…), corriger les valeurs, puis confirmer : ces montants entrent dans le coût de revient, l\'amortissement et le plan de financement.'); }
+    else X(cp&&cp.ext?'warn':'ok',cp&&cp.ext?'Charges externes aux valeurs par défaut de l\'ERP (vétérinaire, comptable, assurances…), non confirmées.':'Charges externes : saisies ou confirmées pour ce dossier.','Remplacer par vos devis et contrats (vétérinaire, expert-comptable, assurance, gardiennage, logistique), puis confirmer : elles pèsent sur la marge et la capacité de remboursement.');
+    if(finDefautsHorsDevise(f)) X('ko','Devise du dossier : '+window._finDev+', mais prix, coûts types et charges par défaut sont en FCFA.','Ressaisir tous les prix et coûts dans la devise du dossier : les valeurs par défaut sont exprimées en FCFA et faussent tous les résultats.');
+  }
   if(tab==='montage'&&!(E.montant>0)) X('ko','Aucun montant à financer : aucun objet de financement n\'est coché ou le besoin est nul.','Cocher au moins un objet financé (aliment, poussins, prophylaxie, investissements…) ou saisir un montant forcé : sans montant, tous les indicateurs de rendement sont sans objet.');
   if(tab==='present'){
     X(cfg2.nomExploitation?'ok':'warn','Identité de l\'exploitation : '+(cfg2.nomExploitation?'renseignée ('+cfg2.nomExploitation+').':'dénomination absente des paramètres.'),'Compléter dénomination, forme juridique, RCCM/NIF et adresse dans les paramètres de l\'exploitation : un financeur vérifie d\'abord l\'existence légale du porteur.');
@@ -26207,6 +26227,14 @@ function finAnalyseHtml(f,E,tab,cfg){
   }
   var c=col[A.st];
   return '<details class="fb-analyse" '+(A.st==='ok'?'':'open')+' style="background:'+c[0]+';border:1px solid '+c[1]+';border-left:4px solid '+c[1]+';border-radius:10px;padding:8px 14px;margin:0 0 14px;font-size:12px;color:#1f2937"><summary style="cursor:pointer;font-weight:700;color:'+c[2]+'">🩺 Analyse '+(tab==='synthese'?'globale du dossier':'de cet onglet')+' — '+c[3]+'</summary><div style="margin-top:6px;line-height:1.5">'+body+'</div><div style="font-size:10px;opacity:.7;margin-top:6px">Analyse automatique à partir des chiffres du dossier : elle aide à décider mais ne remplace pas l\'avis d\'un expert.</div></details>';
+}
+function finCoutsBanner(f,t){
+  if(t!=='montage'&&t!=='commercial') return '';
+  var h='', cp=finCoutsParDefaut(f);
+  if(finDefautsHorsDevise(f)) h+='<div style="background:#fef2f2;border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:10px;padding:8px 14px;margin:0 0 14px;font-size:12px;color:#991b1b">⚠️ <strong>Devise du dossier : '+esc(window._finDev)+'.</strong> Les prix, coûts types et charges par défaut de l\'ERP sont exprimés en <strong>FCFA</strong> : ne les utilisez pas sans les ressaisir dans votre devise.</div>';
+  if(cp){ var l=[]; if(cp.ext&&t==='commercial') l.push('charges externes (vétérinaire, comptable, assurances…)'); if(cp.sim&&t==='montage') l.push('coûts par tête (vaccins, litière, main d\'œuvre, énergie…)'); if(cp.imm&&t==='montage') l.push('investissements types');
+    if(l.length) h+='<div style="background:#fffbeb;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:10px;padding:8px 14px;margin:0 0 14px;font-size:12px;color:#92400e;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>🧮 <strong>Coûts types non confirmés</strong> ('+esc(FIN_PROFIL_COUTS.nom)+') : '+l.join(', ')+'. Comparez-les à vos devis, contrats et factures.</span><button class="btn btn-s btn-sm" onclick="finConfirmCouts()"><i class="fas fa-check"></i> J\'ai confirmé ces coûts</button></div>'; }
+  return h;
 }
 function finPrixBanner(f,t){
   if(t!=='montage'||!finPrixParDefaut(f)) return '';
