@@ -24828,7 +24828,7 @@ function finObjets(f){
 function finImmoClass(im){ return (im.cat==='batiment'||im.cat==='amenagement'||im.cat==='terrain')?'construction':'materiel'; }
 function finObjList(f){ var o=finObjets(f); return FIN_OBJETS.filter(function(x){return o[x[0]];}).map(function(x){return x[1].toLowerCase();}); }
 const FIN_TABS = [['synthese','Synthèse','fa-gauge-high'],['present','1. Présentation','fa-id-card'],['montage','2. Projet & montage','fa-sliders'],['marche','3. Étude de marché','fa-chart-pie'],['commercial','4. Commercial & charges','fa-bullhorn'],['organisation','5. Organisation & stratégie','fa-sitemap'],
-  ['plan','6. Plan de financement','fa-scale-balanced'],['echeancier','7. Amortissement','fa-table'],['cep','8. Compte d\'exploitation','fa-file-invoice'],['evaluation','9. Évaluation','fa-scale-balanced'],['graphes','10. Graphiques & analyse','fa-chart-pie'],['risques','11. Risques & scénarios','fa-dice'],['juridique','12. Juridique','fa-gavel'],['suivi','13. Suivi & compta','fa-book'],['docs','14. Documents & historique','fa-folder-open']];
+  ['plan','6. Plan de financement','fa-scale-balanced'],['echeancier','7. Amortissement','fa-table'],['cep','8. Compte d\'exploitation','fa-file-invoice'],['bilan','9. Bilan prévisionnel','fa-scale-unbalanced'],['evaluation','10. Évaluation','fa-scale-balanced'],['graphes','11. Graphiques & analyse','fa-chart-pie'],['risques','12. Risques & scénarios','fa-dice'],['juridique','13. Juridique','fa-gavel'],['suivi','14. Suivi & compta','fa-book'],['docs','15. Documents & historique','fa-folder-open']];
 
 function finParams(f,inv,amt,share){
   var c=(inv&&inv.cond)||{}, t=(inv&&inv.fin)||'pret', pick=function(k,d){ return c[k]!=null&&c[k]!==''?+c[k]:d; };
@@ -25192,6 +25192,73 @@ function finCEP(f,E,vue){
   );
   if(E.immoP) lines=lines.filter(function(l){return l.lbl.indexOf('Ventes de poules')!==0;});
   return {cols:cols,total:tot,lines:lines,M:M};
+}
+
+// ══ Bilan prévisionnel : situation à la fin de chaque phase, année ou mois, construite sur le compte d'exploitation, la dette et la trésorerie ══
+// Hypothèses : ouverture = apports en numéraire du plan ; immobilisations existantes comptées avec en contrepartie des capitaux propres antérieurs ;
+// créances clients = écart entre chiffre d'affaires comptabilisé et encaissé (délai d'encaissement) ; impôt sur les sociétés non modélisé (piste suivante).
+function finBilan(f,E,vue){
+  var C=finCEP(f,E,'mois'), cols=C.cols, M=C.M, pl=f.plan||{}, imm=E.imm, rows=E.rows, t, ph=simuGetPhases(E.typeLot);
+  var exist=imm.det.reduce(function(a,d){return a+(d.neuf?0:d.val);},0);
+  var O=(pl.capital||0)+(pl.cca||0)+(pl.empruntBanque||0)+(pl.autres||0);
+  var feIn=(pl.fraisEtab||0)+(pl.incorp||0), iFin=pl.immoFin||0;
+  var simTot=imm.det.length?0:cols.reduce(function(a,c){return a+c.d.dotSim;},0);
+  var cum={capi:0,dotP:0,vnc:0,dotM:0,dotF:0,dotSim:0,capex:0,fixes:0,subv:0,qp:0,rn:0,ca:0,rev:0}, mo=[];
+  for(t=1;t<=M;t++){
+    var d=cols[t-1].d, r=rows[t-1]||{rev:0,cash:0,close:0};
+    cum.capi+=d.capi; cum.dotP+=d.dotP; cum.vnc+=d.vncCes; cum.dotM+=d.dotM; cum.dotF+=d.dotF; cum.dotSim+=d.dotSim; cum.capex+=d.capexM; cum.fixes+=d.fixes; cum.subv+=d.subv; cum.qp+=d.qpSub; cum.rn+=d.rn; cum.ca+=d.oeufs+d.ref+d.cession; cum.rev+=r.rev;
+    var a={fe:feIn-cum.dotF, imm:exist+cum.capex-cum.dotM, sim:simTot-cum.dotSim, chep:cum.capi-cum.dotP-cum.vnc, ifin:iFin, cre:cum.ca-cum.rev, tre:O+r.cash+cum.subv-cum.fixes};
+    var p={cap:pl.capital||0, cca:pl.cca||0, ant:exist+simTot, res:cum.rn, sub:cum.subv-cum.qp, emp:pl.empruntBanque||0, aut:pl.autres||0, inv:r.close||0};
+    var TA=a.fe+a.imm+a.sim+a.chep+a.ifin+a.cre+a.tre, TP=p.cap+p.cca+p.ant+p.res+p.sub+p.emp+p.aut+p.inv;
+    var cp=p.cap+p.cca+p.ant+p.res+p.sub, dfin=p.inv+p.emp;
+    mo.push({t:t,a:a,p:p,TA:TA,TP:TP,ecart:TA-TP,cp:cp,dfin:dfin,net:a.tre-dfin});
+  }
+  var W=E.W, endM={}; W.forEach(function(x){ endM[x.ph]=Math.max(endM[x.ph]||0,finMonth(x.wr)); });
+  var pick=[];
+  if(vue==='mois') mo.forEach(function(m){ pick.push({label:'M'+m.t,m:m}); });
+  else if(vue==='annee'){ for(t=12;t<M;t+=12) pick.push({label:'Fin année '+(t/12),m:mo[t-1]}); pick.push({label:'Fin M'+M,m:mo[M-1]}); }
+  else { ph.forEach(function(x){ var e=Math.min(M,endM[x.id]||0); if(e>0) pick.push({label:x.icon+' '+x.label,m:mo[e-1]}); }); if(mo.length&&(!pick.length||pick[pick.length-1].m.t<M)) pick.push({label:'Fin M'+M,m:mo[M-1]}); }
+  var open={a:{fe:0,imm:exist,sim:0,chep:0,ifin:0,cre:0,tre:O},p:{cap:pl.capital||0,cca:pl.cca||0,ant:exist,res:0,sub:0,emp:pl.empruntBanque||0,aut:pl.autres||0,inv:0}};
+  var maxEcart=mo.reduce(function(x,m){return Math.max(x,Math.abs(m.ecart));},0);
+  return {pick:pick,months:mo,open:open,exist:exist,simTot:simTot,maxEcart:maxEcart,M:M,O:O};
+}
+window.finBilanVue=function(v){ window._fb.bilanVue=v; finRefresh(); };
+function finBilanLines(B){
+  var L=function(l,fn,k){ return {lbl:l,f:fn,kind:k||'item'}; }, A=[], P=[];
+  var any=function(k,side){ return B.months.some(function(m){ return Math.abs(m[side][k])>0.5; }); };
+  A.push(L('Frais d\'établissement et immobilisations incorporelles (nets)',function(m){return m.a.fe;}));
+  A.push(L('Immobilisations corporelles (valeur nette)',function(m){return m.a.imm;}));
+  if(any('sim','a')) A.push(L('Immobilisations de la Simulation (valeur nette)',function(m){return m.a.sim;}));
+  if(any('chep','a')) A.push(L('Cheptel pondeuses immobilisé (valeur nette)',function(m){return m.a.chep;}));
+  if(B.months.some(function(m){return m.a.ifin>0;})) A.push(L('Immobilisations financières',function(m){return m.a.ifin;}));
+  A.push(L('Créances clients',function(m){return m.a.cre;}));
+  A.push(L('Trésorerie',function(m){return m.a.tre;}));
+  A.push(L('TOTAL ACTIF',function(m){return m.TA;},'total'));
+  if(any('cap','p')) P.push(L('Capital',function(m){return m.p.cap;}));
+  if(any('cca','p')) P.push(L('Comptes courants d\'associés',function(m){return m.p.cca;}));
+  if(any('ant','p')) P.push(L('Capitaux propres antérieurs (immobilisations existantes)',function(m){return m.p.ant;}));
+  P.push(L('Résultat cumulé',function(m){return m.p.res;}));
+  if(any('sub','p')) P.push(L('Subvention d\'investissement (nette des reprises)',function(m){return m.p.sub;}));
+  if(any('emp','p')) P.push(L('Emprunt bancaire',function(m){return m.p.emp;}));
+  if(any('aut','p')) P.push(L('Autres ressources',function(m){return m.p.aut;}));
+  P.push(L('Dettes envers les investisseurs (compte 168)',function(m){return m.p.inv;}));
+  P.push(L('TOTAL PASSIF',function(m){return m.TP;},'total'));
+  return {A:A,P:P};
+}
+function finBilanHtml(B,fm){
+  var Ls=finBilanLines(B), cols=B.pick, th='<tr><th>En '+finCur()+'</th>'+cols.map(function(c){return '<th style="text-align:right">'+esc(c.label)+'</th>';}).join('')+'</tr>';
+  var rowsH=function(list){ return list.map(function(l){ return '<tr'+(l.kind==='total'?' style="font-weight:800;background:#dcfce7"':'')+'><td>'+esc(l.lbl)+'</td>'+cols.map(function(c){ var v=l.f(c.m); return '<td style="text-align:right'+(v<-0.5?';color:#b91c1c':'')+'">'+ff(v)+'</td>'; }).join('')+'</tr>'; }).join(''); };
+  return '<table class="tbl" style="font-size:11px"><thead>'+th+'</thead><tbody><tr><td colspan="'+(cols.length+1)+'" style="background:#f0fdf4;font-weight:700">ACTIF</td></tr>'+rowsH(Ls.A)+'<tr><td colspan="'+(cols.length+1)+'" style="background:#f0fdf4;font-weight:700">PASSIF</td></tr>'+rowsH(Ls.P)
+    +'<tr style="color:var(--text3)"><td>Capitaux propres</td>'+cols.map(function(c){ return '<td style="text-align:right">'+ff(c.m.cp)+'</td>'; }).join('')+'</tr>'
+    +'<tr style="color:var(--text3)"><td>Endettement net (dettes financières − trésorerie)</td>'+cols.map(function(c){ return '<td style="text-align:right">'+ff(-c.m.net)+'</td>'; }).join('')+'</tr></tbody></table>';
+}
+function finTabBilan(f,E){
+  var vue=window._fb.bilanVue||'phase', B=finBilan(f,E,vue), ok=B.maxEcart<=1;
+  var sel=function(v,l){ return '<button class="btn btn-sm '+(vue===v?'btn-p':'btn-s')+'" onclick="finBilanVue(\''+v+'\')">'+l+'</button>'; };
+  return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🧾 Bilan prévisionnel</span><span style="display:flex;gap:6px">'+sel('phase','Par phase')+sel('annee','Par année')+sel('mois','Par mois')+'</span></div><div class="card-bd tbl-wrap">'
+    +'<div style="background:'+(ok?'#f0fdf4':'#fef2f2')+';border:1px solid '+(ok?'#86efac':'#fca5a5')+';border-radius:8px;padding:7px 12px;font-size:12px;margin-bottom:10px;color:'+(ok?'#166534':'#991b1b')+'">'+(ok?'✅ Actif = passif à chaque mois (écart maximal '+ff(B.maxEcart)+').':'❌ Écart actif − passif jusqu\'à '+ff(B.maxEcart)+' : hypothèse non modélisée, à signaler.')+'</div>'
+    +finBilanHtml(B)
+    +'<p style="font-size:10px;color:var(--text3);margin-top:8px">Ouverture : apports en numéraire du plan de financement ('+finM(B.O)+'). Les immobilisations existantes sont comptées avec, en contrepartie, des capitaux propres antérieurs. Créances clients = chiffre d\'affaires comptabilisé − encaissé (délai d\'encaissement). Le cheptel acquis et les stocks de départ de l\'option « acquis valorisés » ne sont pas repris ici. L\'impôt sur les sociétés n\'est pas modélisé.</p></div></div>';
 }
 window.finCEPvue=function(v){ window._fb.cepVue=v; finRefresh(); };
 window.finCEPcsv=function(){
@@ -25899,13 +25966,14 @@ async function renderFinBande(ca){
   var E, body='';
   try{ E=finRun(rec); }catch(e){ console.error(e); ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="card"><div class="card-bd">Erreur de calcul : '+esc(e.message)+'</div></div></div>'; return; }
   var t=B.tab||'synthese';
-  if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
+  if(t==='bilan') body=finTabBilan(rec,E); else if(t==='graphes') body=finTabGraph(rec,E); else if(t==='present') body=finTabPresent(rec,E,cfg); else if(t==='marche') body=finTabMarche(rec,E); else if(t==='organisation') body=finTabOrga(rec,E); else if(t==='plan') body=finTabPlan(rec,E); else if(t==='cep') body=finTabCEP(rec,E); else if(t==='synthese') body=finTabSynthese(rec,E); else if(t==='montage') body=finTabMontage(rec,E); else if(t==='commercial') body=finTabCom(rec,E); else if(t==='echeancier') body=finTabEcheancier(rec,E);
   else if(t==='evaluation') body=finTabEvaluation(rec,E); else if(t==='risques') body=finTabRisques(rec,E); else if(t==='juridique') body=finTabJuridique(rec,E,cfg); else if(t==='docs') body=finTabDocs(rec,E); else body=await finTabSuivi(rec,E);
   ca.innerHTML=style+'<div class="fb-wrap">'+head+'<div class="fb-tabs">'+FIN_TABS.map(function(x){return '<button class="'+(x[0]===t?'active':'')+'" onclick="fbTab(\''+x[0]+'\')"><i class="fas '+x[2]+'"></i> '+x[1]+'</button>';}).join('')+'</div>'+finNote(t)+finPrixBanner(rec,t)+finCoutsBanner(rec,t)+finAnalyseHtml(rec,E,t,cfg)+body+'</div>';
 }
 window.renderFinBande=renderFinBande;
 // Note explicative affichée en tête de chaque onglet (repliable, état mémorisé)
 const FIN_NOTES = {
+  bilan:'Bilan prévisionnel à la fin de chaque phase, année ou mois : actif (immobilisations, cheptel, créances, trésorerie) et passif (capitaux propres, subvention, dettes investisseurs), construit sur le compte d\'exploitation, la dette et la trésorerie. Contrôle automatique actif = passif.',
   graphes:'Camemberts (structure des coûts, sources de financement, canaux de vente), histogrammes (flux, dette, charges, sensibilités) et courbes (recettes, trésorerie, scénarios), chacun avec une interprétation automatique. À relire avant de présenter le dossier.',
   present:'Étape 1 — Qui porte le projet ? Mission, vision, valeurs, contexte et équipe dirigeante. Ces textes alimentent le chapitre 2 du business plan ; laissez un champ vide pour conserver le texte type.',
   marche:'Étape 3 — Pour qui produit-on ? Demande et saisonnalité, concurrence et positionnement. Chapitre 4 du business plan : citez des sources datées, aucune donnée de marché n\'est inventée par l\'outil.',
@@ -26182,6 +26250,13 @@ function finAnalyse(f,E,tab,cfg,deep){
     X(ri<=0.1?'ok':ri<=0.15?'warn':'ko','Intérêts : '+mo(E.intTot)+' soit '+finP(ri,0)+' du chiffre d\'affaires.','Alléger la charge financière : baisser le taux, raccourcir la durée ou réduire le montant emprunté.');
     X(E.minCash>=0?'ok':'warn','Fonds propres à prévoir au point bas de trésorerie : '+mo(Math.max(0,-E.minCash))+'.','Anticiper cette trésorerie (apport, découvert autorisé, report d\'investissements) ou étaler les dépenses : le creux se produit avant l\'encaissement des premières ventes.');
   }
+  else if(tab==='bilan'){
+    var BL=finBilan(f,E,'phase'), mc=BL.months.reduce(function(a,m){ return m.cp<a.cp?m:a; },BL.months[0]), mt=BL.months.reduce(function(a,m){ return m.a.tre<a.a.tre?m:a; },BL.months[0]), lm=BL.months[BL.months.length-1];
+    X(BL.maxEcart<=1?'ok':'ko',BL.maxEcart<=1?'Bilan équilibré : actif = passif à chaque mois.':'Bilan déséquilibré : écart actif − passif jusqu\'à '+mo(BL.maxEcart)+'.','Signaler cet écart : une hypothèse du dossier n\'est pas reprise dans le bilan (vérifier les investissements et les apports saisis).');
+    X(mc.cp>=0?'ok':'ko',mc.cp>=0?'Capitaux propres positifs sur toute la période (minimum '+mo(mc.cp)+').':'Capitaux propres négatifs dès le mois '+mc.t+' (minimum '+mo(mc.cp)+').','Renforcer les fonds propres de ≈'+mo(Math.max(0,-mc.cp))+' : apport en capital ou compte courant de l\'exploitant, subvention, ou réduction des charges et des investissements. Un financeur hésite devant des capitaux propres négatifs.');
+    X(mt.a.tre>=0?'ok':'warn',mt.a.tre>=0?'Trésorerie positive à chaque fin de mois.':'Trésorerie négative au plus bas : '+mo(mt.a.tre)+' (mois '+mt.t+').','Couvrir ce besoin avant le démarrage : apport, découvert autorisé, report des investissements ou étalement des dépenses.');
+    X(lm.cp>0&&lm.dfin/lm.cp>3?'warn':'ok','Dettes financières en fin de période : '+mo(lm.dfin)+' pour '+mo(lm.cp)+' de capitaux propres.','Réduire le recours à la dette ou renforcer les fonds propres : au-delà de 3 fois les capitaux propres, la structure financière est fragile.');
+  }
   else if(tab==='evaluation'){
     X(E.irrInvN==null?'warn':E.irrInvN>=0.08?'ok':E.irrInvN>=0?'warn':'ko','TRI net des investisseurs : '+finPc(E.irrInvN)+' (MOIC '+(E.moic==null?'—':finN(E.moic,2)+' ×')+').','Rendre l\'opération rémunératrice : relever la rémunération dans la limite de l\'usure ('+(finJ().usure==null?'plafond à renseigner':finJ().usure+' %')+'), améliorer le remboursement (carence plus courte, part de cash-flow plus élevée) ou réduire le risque d\'impayé qui détruit le TRI.');
     X(E.npv>=0?'ok':'warn','VAN du projet à '+finN(f.tauxActu,0)+' % : '+mo(E.npv)+'.','Une VAN négative indique que le projet ne rémunère pas le capital engagé : améliorer la marge, ou le dimensionner autrement (taille de bande, cycle).');
@@ -26215,7 +26290,7 @@ function finAnalyse(f,E,tab,cfg,deep){
   var rank={ok:0,warn:1,ko:2}, st2=it.reduce(function(a,x){ return rank[x.s]>rank[a]?x.s:a; },'ok');
   return {st:st2,items:it};
 }
-var FIN_ANALYSE_TABS=['present','montage','marche','commercial','organisation','plan','echeancier','cep','evaluation','graphes','risques','juridique','suivi','docs'];
+var FIN_ANALYSE_TABS=['present','montage','marche','commercial','organisation','plan','echeancier','cep','bilan','evaluation','graphes','risques','juridique','suivi','docs'];
 function finAnalyseHtml(f,E,tab,cfg){
   var col={ok:['#f0fdf4','#86efac','#166534','✅ Résultats satisfaisants'],warn:['#fffbeb','#fcd34d','#92400e','⚠️ Points de vigilance'],ko:['#fef2f2','#fca5a5','#991b1b','❌ Résultats insuffisants']}, ic={ok:'✅',warn:'⚠️',ko:'❌'};
   var A, body;
@@ -26550,6 +26625,10 @@ function finBpBlocks(D){
   H2('10.4 Graphiques et interprétation');
   P('Les graphiques suivants sont calculés à partir des hypothèses du dossier ; chacun est suivi d\'une lecture rédigée à partir des chiffres.');
   finGraphs(f,E,D).forEach(function(g){ b.push({t:'chart',title:g.title,cat:g.cat,svg:g.svg,text:g.text,labels:g.labels,series:g.series}); });
+  (function(){ var BI=finBilan(f,E,'phase'), LS=finBilanLines(BI);
+    H2('10.5 Bilan prévisionnel');
+    T(['En '+finCur()].concat(BI.pick.map(function(c){return c.label.replace(/[^\wÀ-ſ\- ]/g,'').trim();})),[['ACTIF'].concat(BI.pick.map(function(){return '';}))].concat(LS.A.map(function(l){ return [l.lbl].concat(BI.pick.map(function(c){return finN(l.f(c.m));})); })).concat([['PASSIF'].concat(BI.pick.map(function(){return '';}))]).concat(LS.P.map(function(l){ return [l.lbl].concat(BI.pick.map(function(c){return finN(l.f(c.m));})); })).concat([['Capitaux propres'].concat(BI.pick.map(function(c){return finN(c.m.cp);}))]),{right:BI.pick.map(function(c,i){return i+1;}),sz:15});
+    P('Bilan établi à la fin de chaque phase, à partir du compte d\'exploitation, de la dette et de la trésorerie ; les créances clients reflètent le délai d\'encaissement. L\'impôt sur les sociétés n\'est pas modélisé.',{i:true}); })();
   // 11
   PB(); H1('11. Scénarios, sensibilités et risque de crédit');
   var K3=['prudent','base','optimiste'];
