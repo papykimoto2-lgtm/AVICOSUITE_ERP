@@ -23191,7 +23191,7 @@ function simuCalcBande(p){
     const nbMoisPhase = nbSem / 4.33;
     const dureeLotsem = dureeLot;
     const ratioSem = nbSem / dureeLotsem;
-    const coutMainPhase    = p.coutMain * nbMoisPhase;
+    const coutMainPhase    = (p.coutMainPhases&&p.coutMainPhases[ph.id]!=null)?p.coutMainPhases[ph.id]:p.coutMain * nbMoisPhase;
     const coutEnergiePhase = p.coutEnergie * nbMoisPhase;
     const coutAmortPhase   = p.coutAmort * nbMoisPhase;
     // Transport : gros volume en phase finale (abattage/réforme) + incidents mineurs
@@ -24974,6 +24974,7 @@ function finRun(f, m){
   f.semPonte=Math.max(1,Math.round(+f.semPonte||1)); // borne : évite rows[-1]
   var typeLot=f.typeLot==='broiler'?'broiler':'layer';
   var p0=Object.assign({},SIMU_DEFAULTS,f.simu||{},{typeLot:typeLot}), p=Object.assign({},p0);
+  if(finRhActif(f)){ var rhP=finRhPhases(f,typeLot,p0); p0.coutMainPhases=rhP; p.coutMainPhases=rhP; }
   // Plan commercial : mix de canaux → prix relatif, commissions, délai d'encaissement
   var K=finCom(f); if(K.n){ p0.ext_commis=K.commis; p0.prixOeufUnit*=K.prix; p.ext_commis=K.commis; p.prixOeufUnit*=K.prix; f.delaiEncaiss=K.lag; }
   if(m.oeuf) p.prixOeufUnit*=m.oeuf; // le petit calibre suit (ratio du prix du gros)
@@ -25718,6 +25719,40 @@ window.finDelCanal=async function(i){ var r=window._fb.rec; r.com.canaux.splice(
 window.finSetAct=async function(i,k,v){ var r=window._fb.rec, x=r.com.actions[i]; if(!x) return; x[k]=(k==='mois'||k==='budget')?(parseFloat(v)||0):String(v).slice(0,160); await finSave(r); finRefresh(); };
 window.finAddAct=async function(){ var r=window._fb.rec; r.com=Object.assign({canaux:[]},r.com); r.com.actions=(r.com.actions||[]).concat([{action:'Nouvelle action',mois:1,resp:'',kpi:'',budget:0}]); await finSave(r); finRefresh(); };
 window.finDelAct=async function(i){ var r=window._fb.rec; r.com.actions.splice(i,1); await finSave(r); finRefresh(); };
+// ══ Personnel : postes, effectifs, salaires, charges sociales, dates d'entrée et de sortie (remplace le coût unique « main d'œuvre » de la Simulation) ══
+// Aucun taux de cotisation n'est supposé : le taux de charges patronales du pays se saisit poste par poste.
+function finRhMois(f,t){
+  return (f.rh||[]).reduce(function(a,r){
+    var d=Math.max(1,Math.round(+r.debut||1)), fin=(r.fin===''||r.fin==null||isNaN(+r.fin)||+r.fin<=0)?1e9:Math.round(+r.fin);
+    if(t<d||t>fin) return a;
+    var s=(+r.effectif||0)*(+r.salaire||0)*(r.treizieme?13/12:1);
+    return a+s*(1+(+r.charges||0)/100);
+  },0);
+}
+function finRhActif(f){ return (f&&f.rh||[]).some(function(r){ return (+r.effectif||0)*(+r.salaire||0)>0; }); }
+// Coût du personnel par phase du cycle, en tenant compte du mois de chaque semaine (bande en production : semaines décalées de l'âge du lot)
+function finRhPhases(f,type,p){
+  var ph=simuGetPhases(type,p.semReforme), o={}, off=(f.portee==='production'&&f.reel)?Math.round(f.reel.age||0):0;
+  ph.forEach(function(x){ var c=0; for(var w=x.semDeb;w<=x.semFin;w++) c+=finRhMois(f,finMonth(Math.max(1,w-off)))/4.3333; o[x.id]=c; });
+  return o;
+}
+var FIN_RH_SEED=[['Opérateur d\'élevage',1,null,0,1,''],['Responsable d\'élevage',0,0,0,1,''],['Gérant / encadrement',0,0,0,1,''],['Gardien',0,0,0,1,''],['Chauffeur-livreur',0,0,0,1,'']];
+window.finSeedRh=async function(){
+  var r=window._fb.rec; if(!r) return; var op=(r.simu&&r.simu.coutMain!=null)?r.simu.coutMain:SIMU_DEFAULTS.coutMain;
+  r.rh=FIN_RH_SEED.map(function(x){ return {poste:x[0],effectif:x[1],salaire:x[2]==null?op:x[2],charges:x[3],debut:x[4],fin:x[5],treizieme:false}; }); await finSave(r); finRefresh();
+};
+window.finAddRh=async function(){ var r=window._fb.rec; if(!r) return; r.rh=(r.rh||[]).concat([{poste:'Nouveau poste',effectif:1,salaire:0,charges:0,debut:1,fin:'',treizieme:false}]); await finSave(r); finRefresh(); };
+window.finDelRh=async function(i){ if(!canDelete('finbande')){ toast('⛔ Suppression non autorisée','err'); return; } var r=window._fb.rec; if(!r||!r.rh) return; r.rh=r.rh.filter(function(x,ix){return ix!==i;}); await finSave(r); finRefresh(); };
+window.finSetRh=async function(i,k,v){ var r=window._fb.rec; if(!r||!r.rh||!r.rh[i]) return; r.rh=r.rh.map(function(x,ix){ if(ix!==i) return x; var y=Object.assign({},x); y[k]=(k==='poste')?String(v).slice(0,80):(k==='treizieme'?!!v:(k==='fin'&&v===''?'':(parseFloat(v)||0))); return y; }); await finSave(r); finRefresh(); };
+function finRhCard(f,E){
+  var rh=f.rh||[], act=finRhActif(f), cyc=E.res.rows.reduce(function(a,r){return a+r.coutMainPhase;},0);
+  var inp=function(i,k,v,w,t){ return '<input '+(t==='t'?'':'type="number" step="any" ')+'style="width:'+w+'px;padding:3px 5px" value="'+esc(v==null?'':v)+'" onchange="finSetRh('+i+',\''+k+'\',this.value)">'; };
+  return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>👷 Personnel : postes, salaires et charges sociales</span><span>'+(rh.length?'':'<button class="btn btn-p btn-sm" onclick="finSeedRh()">Pré-remplir avec le modèle</button>')+'</span></div><div class="card-bd tbl-wrap">'
+    +'<table class="tbl" style="font-size:11px"><thead><tr><th>Poste</th><th>Effectif</th><th>Salaire brut ('+esc(finCur())+'/mois)</th><th>Charges patronales (%)</th><th>13e mois</th><th>Début (mois)</th><th>Fin (mois)</th><th>Coût mensuel</th><th></th></tr></thead><tbody>'
+    +rh.map(function(r,i){ var c=finRhMois({rh:[r]},Math.max(1,Math.round(+r.debut||1))); return '<tr><td>'+inp(i,'poste',r.poste,170,'t')+'</td><td>'+inp(i,'effectif',r.effectif,55)+'</td><td>'+inp(i,'salaire',r.salaire,95)+'</td><td>'+inp(i,'charges',r.charges,70)+'</td><td style="text-align:center"><input type="checkbox"'+(r.treizieme?' checked':'')+' onchange="finSetRh('+i+',\'treizieme\',this.checked)"></td><td>'+inp(i,'debut',r.debut,55)+'</td><td>'+inp(i,'fin',r.fin,55)+'</td><td style="text-align:right">'+finM(c)+'</td><td><button class="btn btn-s btn-sm" title="Supprimer" onclick="finDelRh('+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
+    +(rh.length?'':'<tr><td colspan="9" style="text-align:center;color:var(--text3)">Aucun poste : le coût du personnel reste le paramètre unique « main d\'œuvre » ('+finM((E.p&&E.p.coutMain)||SIMU_DEFAULTS.coutMain)+' par mois, un opérateur).</td></tr>')
+    +'</tbody></table><div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-p btn-sm" onclick="finAddRh()"><i class="fas fa-plus"></i> Ajouter un poste</button><span style="font-size:11px;color:var(--text3)">'+(act?'Coût du personnel sur le cycle : <strong>'+finM(cyc)+'</strong>. Le paramètre unique « main d\'œuvre » est remplacé par ces postes.':'Dès qu\'un poste a un effectif et un salaire, il remplace le paramètre unique « main d\'œuvre ».')+' Début et fin en mois depuis le démarrage du dossier (fin vide = jusqu\'à la fin). Taux de charges patronales : celui de votre pays, à renseigner poste par poste.</span></div></div></div>';
+}
 function finTabCom(f,E){
   var K=E.K||finCom(f), c=(f.com&&f.com.canaux)||[], a=(f.com&&f.com.actions)||[], s=Object.assign({},SIMU_DEFAULTS,f.simu||{});
   var extTot=Object.keys(E.extTot||{}).reduce(function(t,k){return t+E.extTot[k];},0), comTot=(E.comM||[]).reduce(function(t,v){return t+v;},0);
@@ -25736,6 +25771,7 @@ function finTabCom(f,E){
     +'<table class="tbl" style="font-size:11px"><thead><tr><th>Action</th><th>Responsable</th><th>Mois</th><th>Budget (F)</th><th>Indicateur de suivi</th><th></th></tr></thead><tbody>'
     +a.map(function(x,i){ return '<tr><td><input style="width:300px;padding:3px 5px" value="'+esc(x.action)+'" onchange="finSetAct('+i+',\'action\',this.value)"></td><td><input style="width:130px;padding:3px 5px" value="'+esc(x.resp)+'" onchange="finSetAct('+i+',\'resp\',this.value)"></td><td><input type="number" style="width:55px" value="'+x.mois+'" onchange="finSetAct('+i+',\'mois\',this.value)"></td><td><input type="number" style="width:95px" value="'+x.budget+'" onchange="finSetAct('+i+',\'budget\',this.value)"></td><td><input style="width:190px;padding:3px 5px" value="'+esc(x.kpi)+'" onchange="finSetAct('+i+',\'kpi\',this.value)"></td><td><button class="btn btn-s btn-sm" onclick="finDelAct('+i+')"><i class="fas fa-trash"></i></button></td></tr>'; }).join('')
     +'</tbody></table><div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="finAddAct()"><i class="fas fa-plus"></i> Ajouter une action</button> <span style="font-size:11px;color:var(--text3)">Budgets cumulés : <strong>'+finM(comTot)+'</strong> (charge 627, décaissée au mois indiqué)</span></div></div></div>';
+  h+=finRhCard(f,E);
   var grp={}; EXT_DEFS.forEach(function(x){ (grp[x.g]=grp[x.g]||[]).push(x); });
   h+='<div class="card"><div class="card-hd"><span>🧾 Charges externes : prestataires, structure, commercial, logistique</span><span style="font-size:11px;color:var(--text3)">estimations indicatives à confirmer (devis, contrats)</span></div><div class="card-bd tbl-wrap">'
     +'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;align-items:center">'+finChk('Inclure ces charges','extOn',s.extOn!==false,'finSetSimuBool')+'<div style="display:flex;gap:6px;align-items:center;font-size:12px">Part de la structure imputée à la bande (%) <input type="number" style="width:70px" value="'+(s.extPart==null?100:s.extPart)+'" onchange="finSetSimu(\'extPart\',this.value)"></div></div>'
@@ -26062,7 +26098,7 @@ const FIN_NOTES = {
   organisation:'Étape 5 — Comment le projet sera-t-il conduit ? Conduite d\'élevage, aliment, biosécurité, qualité-hygiène-sécurité, puis analyse SWOT et matrice des risques. Chapitres 6 et 7 du business plan ; champ vide = texte type.',
   synthese:'Vue d\'ensemble du dossier : besoin de financement, coût pour la ferme, rendement des investisseurs (TRI), indicateurs clés et points de contrôle. À consulter en premier ; tous les chiffres sont recalculés dès qu\'un onglet est modifié.',
   montage:'Étape 2 — Paramétrage du dossier : hypothèses de la bande (effectif, prix, mortalité, ponte), objets financés, conditions de financement et liste des investisseurs avec leur ticket et leur type de financement. C\'est l\'onglet où l\'on saisit les données de départ.',
-  commercial:'Étape 4 — Plan commercial (débouchés, prix, volumes d\'œufs ou de viande) et charges externes de la bande. Ces éléments alimentent le compte d\'exploitation et la capacité de remboursement.',
+  commercial:'Étape 4 — Plan commercial (débouchés, prix, volumes d\'œufs ou de viande), personnel (postes, salaires, charges sociales) et charges externes de la bande. Ces éléments alimentent le compte d\'exploitation et la capacité de remboursement.',
   plan:'Étape 6 — Plan de financement : besoins (investissements, fonds de roulement) face aux ressources (capital, emprunts, investisseurs). Les options « Cheptel existant » et « Stocks existants » y valorisent, avec décote de prudence, les actifs déjà détenus par la ferme comme apport en nature (sans effet sur la trésorerie). Le bilan d\'ouverture en découle.',
   cep:'Compte d\'exploitation prévisionnel (SYSCOHADA) : produits, charges, résultat, capacité d\'autofinancement et trésorerie mois par mois, intérêts du financement inclus.',
   echeancier:'Tableau d\'amortissement : calendrier des tirages et des remboursements (capital, intérêts, différé) pour chaque investisseur, selon le type de financement choisi.',
@@ -26270,7 +26306,10 @@ function finAnalyse(f,E,tab,cfg,deep){
     var cp=finCoutsParDefaut(f);
     if(tab==='montage'){ var lm=[]; if(cp&&cp.sim) lm.push('coûts par tête'); if(cp&&cp.imm) lm.push('investissements types');
       X(lm.length?'warn':'ok',lm.length?'Coûts types non confirmés : '+lm.join(', ')+' ('+FIN_PROFIL_COUTS.nom+'). Les investissements « déjà possédés » alimentent l\'apport en nature du plan de financement.':'Coûts par tête et investissements : saisis ou confirmés pour ce dossier.','Comparer avec vos devis et factures (bâtiment, cages, vaccins, main d\'œuvre…), corriger les valeurs, puis confirmer : ces montants entrent dans le coût de revient, l\'amortissement et le plan de financement.'); }
-    else X(cp&&cp.ext?'warn':'ok',cp&&cp.ext?'Charges externes aux valeurs par défaut de l\'ERP (vétérinaire, comptable, assurances…), non confirmées.':'Charges externes : saisies ou confirmées pour ce dossier.','Remplacer par vos devis et contrats (vétérinaire, expert-comptable, assurance, gardiennage, logistique), puis confirmer : elles pèsent sur la marge et la capacité de remboursement.');
+    else { X(finRhActif(f)?'ok':'warn',finRhActif(f)?'Personnel : '+(f.rh||[]).filter(function(r){return (+r.effectif||0)*(+r.salaire||0)>0;}).length+' poste(s) saisi(s).':'Personnel : un seul opérateur au coût par défaut de la Simulation, sans encadrement ni charges sociales.','Saisir les postes (opérateurs, responsable d\'élevage, gérant, gardien, livreur) avec salaires et charges patronales : le personnel pèse sur la marge et l\'EBE, et un financeur vérifie que l\'encadrement est prévu.');
+      if(finRhActif(f)) X((f.rh||[]).every(function(r){ return (+r.effectif||0)*(+r.salaire||0)<=0||(+r.charges||0)>0; })?'ok':'warn','Charges patronales : '+((f.rh||[]).every(function(r){ return (+r.effectif||0)*(+r.salaire||0)<=0||(+r.charges||0)>0; })?'renseignées pour tous les postes.':'nulles sur au moins un poste.'),'Renseigner le taux de cotisations employeur de votre pays pour chaque poste : un coût de personnel sans charges sociales est sous-estimé.');
+      if(finRhActif(f)&&((f.simu&&+f.simu.ext_encadr)||0)>0) X('warn','Encadrement saisi deux fois : poste dans le personnel et charge externe « Encadrement / gérant ».','Garder une seule saisie : mettre la charge externe « Encadrement / gérant » à 0 ou retirer le poste.');
+      X(cp&&cp.ext?'warn':'ok',cp&&cp.ext?'Charges externes aux valeurs par défaut de l\'ERP (vétérinaire, comptable, assurances…), non confirmées.':'Charges externes : saisies ou confirmées pour ce dossier.','Remplacer par vos devis et contrats (vétérinaire, expert-comptable, assurance, gardiennage, logistique), puis confirmer : elles pèsent sur la marge et la capacité de remboursement.'); }
     if(finDefautsHorsDevise(f)) X('ko','Devise du dossier : '+window._finDev+', mais prix, coûts types et charges par défaut sont en FCFA.','Ressaisir tous les prix et coûts dans la devise du dossier : les valeurs par défaut sont exprimées en FCFA et faussent tous les résultats.');
   }
   if(tab==='montage'&&!(E.montant>0)) X('ko','Aucun montant à financer : aucun objet de financement n\'est coché ou le besoin est nul.','Cocher au moins un objet financé (aliment, poussins, prophylaxie, investissements…) ou saisir un montant forcé : sans montant, tous les indicateurs de rendement sont sans objet.');
@@ -26664,7 +26703,7 @@ function finBpBlocks(D){
   if(U('biosec')) P(U('biosec')+' Programme de vaccination et de traitements (dates calculées à partir du jour d\'arrivée) :'); else P('Mesures : accès contrôlé, pédiluve, vide sanitaire, gestion des mortalités, lutte contre les nuisibles, eau de qualité. Programme de vaccination et de traitements (dates calculées à partir du jour d\'arrivée) :');
   if(proph.length) T(['Âge (jours)','Date prévue','Action'],proph.slice(0,16).map(function(x){ return ['J'+x.ageDays,new Date(d0.getTime()+x.ageDays*864e5).toLocaleDateString('fr-FR'),x.action]; }),{});
   H2('6.4 Ressources humaines et prestataires');
-  T(['Prestataire / poste','Rôle','Coût sur le cycle'],EXT_DEFS.filter(function(x){return x.g==='Prestataires'&&((E.extTot||{})[x.k]||0)>0;}).map(function(x){ return [x.lbl.replace(/ \(.*$/,''),x.cpt==='637'?'Surveillance du site':'Honoraires / prestations',finF(E.extTot[x.k])]; }).concat([['Main d\'œuvre salariée','Conduite quotidienne de l\'élevage',finF(E.res.rows.reduce(function(a,r){return a+r.coutMainPhase;},0))]]),{right:[2]});
+  T(['Prestataire / poste','Rôle','Coût sur le cycle'],EXT_DEFS.filter(function(x){return x.g==='Prestataires'&&((E.extTot||{})[x.k]||0)>0;}).map(function(x){ return [x.lbl.replace(/ \(.*$/,''),x.cpt==='637'?'Surveillance du site':'Honoraires / prestations',finF(E.extTot[x.k])]; }).concat(finRhActif(f)?(f.rh||[]).filter(function(r){return (+r.effectif||0)*(+r.salaire||0)>0;}).map(function(r){ return [r.poste+' ('+finN(+r.effectif)+')','Salaire '+finF(+r.salaire)+'/mois'+((+r.charges||0)>0?' + '+finN(+r.charges,1)+' % de charges':'')+', du mois '+finN(Math.max(1,+r.debut||1))+((r.fin===''||r.fin==null||!(+r.fin>0))?'':' au mois '+finN(+r.fin)),finF((function(){ var q=finRhPhases({rh:[r],portee:f.portee,reel:f.reel},E.typeLot,E.p); return Object.keys(q).reduce(function(a,k){return a+q[k];},0); })())]; }):[['Main d\'œuvre salariée','Conduite quotidienne de l\'élevage',finF(E.res.rows.reduce(function(a,r){return a+r.coutMainPhase;},0))]]),{right:[2]});
   H2('6.5 Qualité, hygiène, sécurité et environnement');
   if(LN(U('qhse')).length) BL(LN(U('qhse'))); else BL(['Traçabilité par lot, enregistrement des traitements et des délais d\'attente.','Gestion des fientes (stockage, valorisation en fertilisant) et des eaux de lavage.','Sécurité du personnel, équipements de protection, formation.','Bien-être animal : densité, ventilation, accès à l\'eau et à l\'aliment.']);
   // 7
