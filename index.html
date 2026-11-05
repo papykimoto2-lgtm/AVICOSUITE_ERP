@@ -26010,6 +26010,39 @@ function finTabCom(f,E){
     +'<p style="font-size:10px;color:var(--text3);margin-top:8px">Comptes SYSCOHADA : 6324 honoraires, 637 personnel extérieur, 625 assurances, 624 entretien, 628 télécom, 6412 patentes, 612 transports sur ventes, 627 publicité, 631 frais bancaires, 6322 commissions, 608 emballages, 654 pertes sur créances. Mettre 0 pour exclure un poste.</p></div></div>';
   return h;
 }
+
+// ── Grille tarifaire fournisseur (prix de vente publiés) : référence pour les prix d'aliment, appliquée à la demande ─────────
+// Source : grille tarifaire Ivograin, zone 1, prix de vente au 29/05/2026, en FCFA, TVA 9 % (loi de finances 2026). Sac en kg ; null = poids du sac non indiqué sur la grille.
+var FIN_GRILLE_ALIMENT={nom:'Ivograin — zone 1',date:'29/05/2026',devise:'FCFA',tva:9,
+ layer:{coutAlimentD:['835050','835150','835250','839950','872250'],coutAlimentC:['835150','835250','839950','872250','835550'],coutAlimentPP:['835250','839950','872250','835550','870550'],coutAlimentP:['835550','870550','835350','836050']},
+ broiler:{coutAlimentD:['890025'],coutAlimentC:[]},
+ produits:[['890025','NURSY CHICK (pré-démarrage)',25,18000],['832150','CHAIR DÉMARRAGE PRO',null,19500],['832250','CHAIR CROISSANCE PRO',null,18500],['832350','CHAIR FINITION PRO',null,17750],
+  ['835050','POULETTE DÉMARRAGE',50,18500],['835150','POULETTE CROISSANCE',50,17050],['835250','POULETTE ÉLEVAGE FARINE',50,15250],['839950','POULETTE ÉLEVAGE GRANULÉ',50,17850],['872250','POULETTE ÉLEVAGE OTC800 FARINE',50,17900],
+  ['835550','PONTE 20',50,15500],['870550','PONTE 20 OTC 800 PPM',50,18850],['835350','PONTE 36',50,14500],['836050','PONTE ECOGRAIN',50,13500]]};
+function finGrilleProd(ref){ return FIN_GRILLE_ALIMENT.produits.filter(function(x){return x[0]===ref;})[0]; }
+function finGrilleHtml(f){
+  var G=FIN_GRILLE_ALIMENT, bro=f.typeLot==='broiler', sel=bro?G.broiler:G.layer, s=f.simu||{}, src=s.srcAliment||{};
+  var champs=bro?[['coutAlimentD','Aliment démarrage'],['coutAlimentC','Aliment croissance']]:[['coutAlimentD','Aliment démarrage'],['coutAlimentC','Aliment croissance'],['coutAlimentPP','Aliment pré-ponte'],['coutAlimentP','Aliment ponte']];
+  var head='<div class="card" style="margin-bottom:14px"><div class="card-hd">🌾 Prix d\'aliment — grille fournisseur</div><div class="card-bd" style="font-size:12px">'
+    +'<div style="color:var(--text3);margin-bottom:8px">Source : grille tarifaire <strong>'+esc(G.nom)+'</strong>, prix de vente au <strong>'+esc(G.date)+'</strong>, en '+G.devise+', TVA '+G.tva+' %. Ces prix sont ceux du fournisseur : ils ne remplacent pas vos prix réels (remises, transport). Rien n\'est modifié tant que vous ne cliquez pas sur « Appliquer ».</div>';
+  if((window._finDev||'FCFA')!==G.devise) return head+'<div style="color:#991b1b">La devise du dossier ('+esc(window._finDev)+') diffère de celle de la grille ('+G.devise+') : application désactivée.</div></div></div>';
+  var tvaOn=!!(f.tva&&f.tva.on);
+  head+='<table class="tbl" style="width:100%"><thead><tr><th>Poste</th><th style="text-align:right">Actuel (F/kg)</th><th>Produit de la grille</th><th></th></tr></thead><tbody>';
+  head+=champs.map(function(c){
+    var k=c[0], refs=sel[k]||[], cur=s[k]==null?'':s[k];
+    var opts=refs.map(function(r){ var x=finGrilleProd(r), kg=x[2]; return '<option value="'+r+'">'+esc(x[1])+' — '+(kg?Math.round(x[3]/kg)+' F/kg HT · '+Math.round(x[3]*(1+G.tva/100)/kg)+' TTC':'sac non précisé')+'</option>'; }).join('');
+    var cell=refs.length?'<select id="finGr_'+k+'" style="max-width:340px">'+opts+'</select>':'<span style="color:var(--text3)">'+(bro?'La grille ne précise pas le poids du sac chair : saisir le prix au kg ci-dessus.':'—')+'</span>';
+    var btn=refs.length?'<button class="btn btn-s btn-sm" onclick="finGrilleApply(\''+k+'\',\'ht\')">Appliquer HT</button> <button class="btn btn-s btn-sm" onclick="finGrilleApply(\''+k+'\',\'ttc\')">TTC</button>':'';
+    return '<tr><td>'+c[1]+(src[k]?'<div style="font-size:10px;color:var(--text3)">dernier choix : '+esc(src[k])+'</div>':'')+'</td><td style="text-align:right">'+esc(cur)+'</td><td>'+cell+'</td><td>'+btn+'</td></tr>';
+  }).join('');
+  return head+'</tbody></table><div style="color:var(--text3);margin-top:6px">'+(tvaOn?'La TVA est activée dans ce dossier : utilisez le prix <strong>HT</strong> (la TVA est calculée à part).':'La TVA n\'est pas activée dans ce dossier : le prix <strong>TTC</strong> reflète ce que la ferme paie réellement, sauf récupération de la TVA.')+'</div></div></div>';
+}
+window.finGrilleApply=async function(k,mode){
+  var r=window._fb.rec; if(!r) return; var el=document.getElementById('finGr_'+k); if(!el) return; var x=finGrilleProd(el.value); if(!x||!x[2]) return;
+  var G=FIN_GRILLE_ALIMENT, v=Math.round(x[3]*(mode==='ttc'?1+G.tva/100:1)/x[2]);
+  r.simu=Object.assign({},r.simu); r.simu[k]=v; r.simu.srcAliment=Object.assign({},r.simu.srcAliment); r.simu.srcAliment[k]=G.nom+', '+G.date+' — '+x[1]+' ('+x[0]+'), '+(mode==='ttc'?'TTC':'HT');
+  await finSave(r); finRefresh(); toast('✅ '+v+' F/kg appliqués ('+(mode==='ttc'?'TTC':'HT')+')');
+};
 function finTabMontage(f,E){
   var s=f.simu||{}, inv=f.investisseurs||[], tot=inv.reduce(function(a,i){return a+(+i.montant||0);},0);
   return '<div class="card" style="margin-bottom:14px"><div class="card-hd">🏷️ Dossier</div><div class="simu-params-body">'
@@ -26030,6 +26063,7 @@ function finTabMontage(f,E){
         +finSel('Courbe de ponte','courbe',f.courbe,[['lisse','Réaliste (lissée)'],['simu','Identique Simulation (paliers)']]))
     +finIn('Délai encaissement (mois)','delaiEncaiss',f.delaiEncaiss,1)+finIn('Valeur de marché du cheptel (F/tête)','prixPoulette',f.prixPoulette)
     +'</div></div>'
+    +finGrilleHtml(f)
     +'<div class="card" style="margin-bottom:14px"><div class="card-hd">💰 Périmètre financé</div><div class="simu-params-body">'
     +finIn(f.portee==='production'?'Horizon financé (semaines à venir)':(f.typeLot==='broiler'?'Financé jusqu\'à la semaine (abattage)':'Financé jusqu\'à la semaine (début ponte)'),'semPonte',f.semPonte,1)+finIn('Aléas / contingence (%)','contingence',f.contingence,0.5)+finIn('Frais de dossier (%)','fraisDossierPct',f.fraisDossierPct,0.1)
     +finIn('Montant forcé (F, 0 = auto)','montantManuel',f.montantManuel)
