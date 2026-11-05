@@ -25287,12 +25287,44 @@ function finFiscTxt(f){
     +' ; '+(T.on?'TVA collectée à '+pc(T.v)+' sur les ventes, déductible à '+pc(T.a)+' sur les achats et à '+pc(T.i)+' sur les investissements, déclarée chaque mois et payée '+(T.delai>0?T.delai+' mois après':'le même mois')+(T.remb?', crédit remboursé':', crédit reporté'):'TVA non modélisée (montants hors taxe)');
 }
 window.finSetTva=async function(k,v){ var r=window._fb.rec; if(!r) return; r.tva=Object.assign({},r.tva); r.tva[k]=(typeof v==='boolean')?v:(parseFloat(v)||0); await finSave(r); finRefresh(); };
+
+// ── Profil fiscal de la ferme : taux saisis une fois (avec le comptable), pré-remplis dans chaque nouveau dossier ──
+// Aucun taux n'est fourni par l'outil : le profil contient uniquement ce que la ferme y a enregistré.
+var FIN_FISC_CLES=['tauxIS','isDelai','isReport'];
+async function finFiscLire(){ try{ var all=await getAll(S.SETTINGS_APP), r=(all||[]).find(function(x){return x.key==='finbande_fisc';}); return r&&r.profil?r.profil:null; }catch(e){ return null; } }
+function finFiscAppliquer(rec,pf){
+  if(!pf) return rec;
+  rec.tauxIS=pf.tauxIS||0; rec.isDelai=pf.isDelai||0; rec.isReport=pf.isReport!==false;
+  rec.tva=Object.assign({},pf.tva); rec.fiscSource='profil de la ferme'+(pf.date?' ('+pf.date+')':'');
+  return rec;
+}
+function finFiscResume(pf){
+  if(!pf) return '';
+  var t=pf.tva||{};
+  return 'IS '+(pf.tauxIS||0)+' % · TVA '+(t.on?'assujetti : ventes '+(t.ventes||0)+' %, achats '+(t.achats||0)+' %, investissements '+(t.immos||0)+' %':'non assujetti');
+}
+window.finFiscPreremplir=async function(){
+  var r=window._fb.rec; if(!r) return; var pf=await finFiscLire();
+  if(!pf){ toast('Aucun profil fiscal enregistré : saisissez les taux puis « Enregistrer comme profil de la ferme »','err'); return; }
+  var deja=(+r.tauxIS>0)||(r.tva&&(r.tva.on||+r.tva.ventes>0||+r.tva.achats>0||+r.tva.immos>0));
+  if(deja&&!confirm('Les valeurs fiscales de ce dossier seront remplacées par le profil de la ferme :\n'+finFiscResume(pf)+'\n\nContinuer ?')) return;
+  finFiscAppliquer(r,pf); await finSave(r); finRefresh(); toast('✅ Fiscalité pré-remplie depuis le profil de la ferme — à confirmer avec votre comptable');
+};
+window.finFiscEnregistrer=async function(){
+  var r=window._fb.rec; if(!r) return; var u=null; try{ u=currentUser; }catch(e){}
+  if(!u||(u.role!=='admin'&&u.role!=='manager')){ toast('Seul un administrateur ou un responsable peut modifier le profil fiscal de la ferme','err'); return; }
+  var pf={tauxIS:+r.tauxIS||0,isDelai:+r.isDelai||0,isReport:r.isReport!==false,tva:Object.assign({},r.tva),date:new Date().toLocaleDateString('fr-FR'),par:finUserName()};
+  if(!confirm('Enregistrer comme profil fiscal de la ferme ?\n'+finFiscResume(pf)+'\n\nIl sera proposé à la création de chaque nouveau dossier (les dossiers existants ne changent pas).')) return;
+  try{ var all=await getAll(S.SETTINGS_APP), ex=(all||[]).find(function(x){return x.key==='finbande_fisc';}); if(ex) await updRec(S.SETTINGS_APP,ex.id,{key:'finbande_fisc',profil:pf}); else await addRec(S.SETTINGS_APP,{key:'finbande_fisc',profil:pf}); }catch(e){ toast('Enregistrement impossible','err'); return; }
+  window._finFiscPf=pf; finRefresh(); toast('✅ Profil fiscal de la ferme enregistré');
+};
 function finBlocFisc(f){
   var T=f.tva||{}, tv=function(k,l,st){ return '<div class="fg"><div class="sbl">'+l+'</div><input type="number" step="'+(st||'any')+'" value="'+esc(T[k]==null?'':T[k])+'" onchange="finSetTva(\''+k+'\',this.value)"></div>'; };
   var ck=function(k,l,v){ return '<label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" '+(v?'checked':'')+' onchange="finSetTva(\''+k+'\',this.checked)"> '+l+'</label>'; };
   return '<div class="card" style="margin-bottom:14px"><div class="card-hd"><span>🧾 Fiscalité : impôt sur les sociétés et TVA</span><span style="font-size:11px;color:var(--text3)">taux à saisir selon votre pays : aucun taux n\'est supposé</span></div>'
     +'<div class="simu-params-body">'+finIn('Impôt sur les sociétés (%) — 0 si exonéré','tauxIS',f.tauxIS||0,1)+finIn('Paiement de l\'impôt (mois après la clôture)','isDelai',f.isDelai||0,1)+finChk('Report des déficits sur les exercices suivants','isReport',f.isReport!==false,'finSetBool')+'</div>'
     +'<div class="simu-params-body" style="border-top:1px solid var(--border)">'+ck('on','Assujetti à la TVA (les montants du dossier sont alors hors taxe)',T.on)+tv('ventes','TVA sur les ventes (%)',0.5)+tv('achats','TVA sur achats et charges (%)',0.5)+tv('immos','TVA sur investissements (%)',0.5)+tv('delai','Paiement de la TVA (mois après la déclaration)',1)+ck('remb','Crédit de TVA remboursé (sinon reporté)',T.remb)+'</div>'
+    +'<div style="padding:8px 18px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px"><button class="btn btn-s btn-sm" onclick="finFiscPreremplir()"><i class="fas fa-wand-magic-sparkles"></i> Pré-remplir avec le profil de la ferme</button><button class="btn btn-s btn-sm" onclick="finFiscEnregistrer()"><i class="fas fa-floppy-disk"></i> Enregistrer ces valeurs comme profil de la ferme</button><span style="color:var(--text3)">'+(window._finFiscPf?'Profil enregistré le '+esc(window._finFiscPf.date||'')+' : '+esc(finFiscResume(window._finFiscPf)):'Aucun profil enregistré : saisissez les taux ci-dessus (avec votre comptable), puis enregistrez-les une fois pour tous les dossiers.')+'</span>'+(f.fiscSource?'<span class="badge b-a">Pré-rempli : '+esc(f.fiscSource)+' — à confirmer</span>':'')+'</div>'
     +'<div style="padding:0 18px 12px;font-size:11px;color:var(--text3)">Impôt calculé par exercice de 12 mois depuis le démarrage du dossier, charge comptabilisée à la clôture. TVA déclarée chaque mois (collectée à la facturation, déductible sur achats, charges externes et investissements ; personnel, intérêts et amortissements hors TVA). Ces éléments figurent dans le compte d\'exploitation, le bilan et la projection ; ils n\'entrent pas dans le calcul du remboursement des investisseurs (couverture de la dette, impayé, TRI) ni dans le plan de financement.</div></div>';
 }
 function finDotImmoAt(f,t){
@@ -25564,6 +25596,7 @@ window.finNew=async function(portee){
   var rec=Object.assign({},JSON.parse(JSON.stringify(FIN_DEFAULTS)),finDefauts(portee,type),{proprio:finUid()||null,proprioNom:finUserName(),portee:portee,typeLot:type,dateDebut:d,simu:simu,ts:Date.now(),
     nom:(portee==='production'?'Bande en production':'Nouvelle bande')+' n°'+n+' — '+d});
   var nom=prompt('Nom du dossier de financement :',rec.nom); if(nom===null) return; rec.nom=nom||rec.nom;
+  finFiscAppliquer(rec,await finFiscLire());
   rec.id=await addRec(S.FINBANDE,rec); window._fb={id:rec.id,tab:'montage'}; finRefresh(); toast('✅ Dossier créé'+(portee==='production'?' — choisissez le lot réel':' depuis la simulation'));
 };
 window.finSetPortee=async function(v){ var r=window._fb.rec; r.portee=v; Object.assign(r,finDefauts(v,r.typeLot)); if(v==='nouvelle') r.reel=null; await finSave(r); finRefresh(); };
@@ -26333,7 +26366,7 @@ window.finImprimer=async function(){
 };
 
 async function renderFinBande(ca){
-  var rec=await finLoad(), B=window._fb, cfg=await getExploitationSettings(); if(window._finDash===undefined) await finDashLoad(); window._finDev=cfg.devise||'FCFA'; finSetJuri(rec,cfg);
+  var rec=await finLoad(), B=window._fb, cfg=await getExploitationSettings(); if(window._finDash===undefined) await finDashLoad(); if(window._finFiscPf===undefined) window._finFiscPf=await finFiscLire(); window._finDev=cfg.devise||'FCFA'; finSetJuri(rec,cfg);
   var style='<style>.fb-wrap{flex:1;overflow-y:auto;padding:16px 20px}.fb-hero{background:linear-gradient(135deg,#152e22,#2b5f45,#4a8b68);color:#fff;border-radius:16px;padding:18px 24px;margin-bottom:14px}.fb-hero h2{font-size:18px;font-weight:800;margin:0 0 3px}.fb-hero p{font-size:12px;opacity:.75;margin:0}.fb-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.fb-tabs button{padding:7px 14px;border-radius:8px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);font-family:inherit}.fb-tabs button.active{background:var(--g2);color:#fff;border-color:var(--g2)}.fb-subtabs{display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 14px;padding-left:10px;border-left:3px solid var(--g2)}.fb-subtabs button{padding:5px 12px;border-radius:999px;border:1px solid var(--border);background:#fff;cursor:pointer;font-size:11.5px;font-weight:600;color:var(--text2);font-family:inherit}.fb-subtabs button.active{background:var(--g1,#2b5f45);color:#fff;border-color:var(--g1,#2b5f45)}.fb-nav{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.fb-wrap .sbl{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}.fb-wrap .simu-params-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:14px 18px}.fb-wrap .simu-params-body input,.fb-wrap .simu-params-body select,.fb-wrap td input,.fb-wrap td select{border:1.5px solid var(--border);border-radius:7px;padding:6px 10px;font-size:13px;font-family:inherit;width:100%;box-sizing:border-box}.fb-wrap .simu-detail-line{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #f0f0f0}@media(max-width:700px){.fb-wrap{padding:10px}}</style>';
   var head='<div class="fb-hero"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"><div><div style="font-size:8px;font-weight:700;letter-spacing:2px;opacity:.7">SANIX AVINEST PRO</div><h2>🤝 Financement de bande — Investisseurs</h2><p>Financer l\'alimentation jusqu\'à la ponte · remboursement adossé aux ventes d\'œufs · sans entrée au capital</p></div>'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'nouvelle\')"><i class="fas fa-plus"></i> Nouvelle bande</button><button class="btn btn-sm" style="background:#fff;color:#1a5c2a;font-weight:700" onclick="finNew(\'production\')"><i class="fas fa-egg"></i> Bande en production</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finLexique()"><i class="fas fa-book"></i> Lexique</button>'+(rec?'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finDup()"><i class="fas fa-copy"></i></button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finImprimerMenu()"><i class="fas fa-print"></i> Imprimer</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'pdf\')" title="Business plan PDF complet"><i class="fas fa-file-pdf"></i> PDF BP</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'word\')" title="Business plan Word"><i class="fas fa-file-word"></i> Word</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'excel\')" title="Business plan Excel"><i class="fas fa-file-excel"></i> Excel</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finExporter(\'ppt\')" title="Business plan PowerPoint"><i class="fas fa-file-powerpoint"></i> PowerPoint</button><button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="finArchiver()" title="Archiver ce dossier"><i class="fas fa-box-archive"></i></button>':'')+'</div></div>'
